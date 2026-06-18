@@ -2592,14 +2592,45 @@ def page_admin():
 
 
 # ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+# SIDEBAR — زر القفل السري في الأسفل
+# ══════════════════════════════════════════════════════════════
+with st.sidebar:
+    st.markdown("""
+<style>
+[data-testid="stSidebar"] {
+    background: rgba(2,6,23,0.97) !important;
+    border-right: 1px solid rgba(37,99,235,0.2) !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background: transparent !important;
+    border: none !important;
+    color: rgba(100,116,139,0.4) !important;
+    font-size: 1.1rem !important;
+    padding: 0.3rem !important;
+    min-height: unset !important;
+    width: auto !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    color: rgba(148,163,184,0.8) !important;
+    background: transparent !important;
+    border: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+    st.markdown('<div style="height:80vh;"></div>', unsafe_allow_html=True)
+    if st.button("🔒", key="secret_admin_btn"):
+        st.session_state["page"] = "admin"
+        st.rerun()
+
+# ══════════════════════════════════════════════════════════════
 # MAIN ROUTING
 # ══════════════════════════════════════════════════════════════
-
-# Check for admin panel via URL param
-_admin_param = st.query_params.get("admin", "")
-if _admin_param == "true":
+pg = st.session_state.get("page", "home")
+if pg == "admin":
     page_admin()
 else:
-    pg=st.session_state.get("page","home")
     {"home":page_home,"login":page_login,"learning":page_learning,"complete":page_complete,
-     "assessment":page_assessment,"results":page_results,"report":page_report}.get(pg,page_home)()
+     "assessment":page_assessment,"results":page_results,"report":page_report}.get(pg, page_home)()
+
+# تم الاستبدال في الأسفل
