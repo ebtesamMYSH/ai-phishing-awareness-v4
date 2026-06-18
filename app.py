@@ -2257,7 +2257,19 @@ def page_admin():
 #MainMenu,header,footer{visibility:hidden;}
 .stApp{background:radial-gradient(circle at top left,#0B1A0B 0%,#020617 40%,#020617 100%);color:white;}
 .block-container{max-width:1200px;padding-top:1.5rem;}
-.stButton>button{min-height:44px;font-weight:700!important;border-radius:10px!important;}
+.stButton>button{
+    min-height:44px;
+    font-weight:700!important;
+    border-radius:10px!important;
+    background:rgba(15,23,42,.8)!important;
+    color:#94A3B8!important;
+    border:1px solid rgba(37,99,235,.35)!important;
+}
+.stButton>button:hover{
+    background:rgba(11,79,168,.3)!important;
+    color:#E2E8F0!important;
+    border-color:#1EA7FF!important;
+}
 </style>""", unsafe_allow_html=True)
 
     # ── Authentication ──────────────────────────────────────────
@@ -2326,6 +2338,7 @@ def page_admin():
                             f'<div style="font-size:.85rem;font-weight:700;color:{"white" if is_sel else "#9CA3AF"};">{pv["label"]}</div>'
                             f'{"<div style=\"font-size:.7rem;color:#4ADE80;margin-top:.3rem;\">● ACTIVE</div>" if is_sel else ""}'
                             f'</div>', unsafe_allow_html=True)
+                st.markdown('<style>.stButton>button{background:rgba(15,23,42,.7)!important;color:#94A3B8!important;border:1px solid rgba(37,99,235,.3)!important;}</style>', unsafe_allow_html=True)
                 if st.button(f"Activate", key=f"adm_prov_{pk}", use_container_width=True):
                     st.session_state["ai_provider"] = pk
                     # Clear cached emails to regenerate with new provider
@@ -2595,33 +2608,38 @@ def page_admin():
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
-with st.sidebar:
-    st.markdown("""
+# زر القفل السري — مخفي في أسفل الصفحة الرئيسية فقط
+st.markdown("""
 <style>
-[data-testid="stSidebar"] {
-    background: rgba(2,6,23,0.97) !important;
-    border-right: 1px solid rgba(37,99,235,0.2) !important;
+#MainMenu,header,footer{visibility:hidden;}
+[data-testid="stSidebar"]{display:none !important;}
+.secret-lock-btn {
+    position: fixed;
+    bottom: 18px;
+    left: 18px;
+    z-index: 9999;
+    opacity: 0.12;
+    transition: opacity 0.3s ease;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    font-size: 1rem;
+    color: white;
+    padding: 6px;
+    line-height: 1;
 }
-[data-testid="stSidebar"] .stButton > button {
-    background: transparent !important;
-    border: none !important;
-    color: rgba(100,116,139,0.4) !important;
-    font-size: 1.1rem !important;
-    padding: 0.3rem !important;
-    min-height: unset !important;
-    width: auto !important;
-}
-[data-testid="stSidebar"] .stButton > button:hover {
-    color: rgba(148,163,184,0.8) !important;
-    background: transparent !important;
-    border: none !important;
-}
+.secret-lock-btn:hover { opacity: 0.35; }
 </style>
 """, unsafe_allow_html=True)
-    st.markdown('<div style="height:80vh;"></div>', unsafe_allow_html=True)
-    if st.button("🔒", key="secret_admin_btn"):
-        st.session_state["page"] = "admin"
-        st.rerun()
+
+if st.session_state.get("page","home") == "home":
+    col_lock = st.columns([20,1])
+    with col_lock[1]:
+        st.markdown('<div style="position:fixed;bottom:18px;left:18px;z-index:9999;">', unsafe_allow_html=True)
+        if st.button("🔒", key="secret_admin_btn", help=""):
+            st.session_state["page"] = "admin"
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════
 # MAIN ROUTING
