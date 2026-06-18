@@ -28,7 +28,7 @@ st.set_page_config(
     page_title="AI Phishing Awareness",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="auto"
 )
 
 for k, v in [("language","English"),("page","home"),("role",""),
