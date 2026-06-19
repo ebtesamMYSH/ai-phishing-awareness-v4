@@ -2333,11 +2333,18 @@ def page_admin():
 
     _dir = 'rtl' if _is_ar else 'ltr'
     _align = 'right' if _is_ar else 'left'
+    _align_opp = 'left' if _is_ar else 'right'
 
     st.markdown(f"""<style>
 #MainMenu,header,footer{{visibility:hidden;}}
 .stApp{{background:radial-gradient(circle at top left,#0B1A0B 0%,#020617 40%,#020617 100%);color:white;direction:{_dir};}}
 .block-container{{max-width:1200px;padding-top:1.5rem;direction:{_dir};text-align:{_align};}}
+.block-container div,.block-container span,.block-container p,.block-container label{{
+    direction:{_dir};
+}}
+[data-baseweb="tab-list"]{{direction:{_dir};}}
+[data-baseweb="tab-border"]{{direction:{_dir};}}
+.stTabs [data-baseweb="tab"]{{direction:{_dir};}}
 .stButton>button{{
     min-height:44px;
     font-weight:700!important;
@@ -2345,13 +2352,28 @@ def page_admin():
     background:rgba(15,23,42,.8)!important;
     color:#94A3B8!important;
     border:1px solid rgba(37,99,235,.35)!important;
+    direction:{_dir};
 }}
 .stButton>button:hover{{
     background:rgba(11,79,168,.3)!important;
     color:#E2E8F0!important;
     border-color:#1EA7FF!important;
 }}
+button[kind="primary"]{{
+    background:rgba(37,99,235,.18)!important;
+    color:#93C5FD!important;
+    border:1px solid rgba(37,99,235,.5)!important;
+}}
+button[kind="primary"]:hover{{
+    background:rgba(37,99,235,.28)!important;
+    color:#BFDBFE!important;
+}}
+.stTextInput input{{direction:{_dir};text-align:{_align};}}
 </style>""", unsafe_allow_html=True)
+
+    def _div(content, extra=""):
+        """صندوق نصي يحترم اتجاه اللغة الحالية"""
+        return f'<div dir="{_dir}" style="text-align:{_align};{extra}">{content}</div>'
 
     # ── Authentication ──────────────────────────────────────────
     if not st.session_state.get("admin_authenticated", False):
@@ -2409,26 +2431,29 @@ def page_admin():
 
         cur = st.session_state.get("ai_provider", "groq")
 
-        st.markdown(f'<div style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("select_provider")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("select_provider")}</div>', unsafe_allow_html=True)
         cols = st.columns(4)
         for i, (pk, pv) in enumerate(provider_info.items()):
             with cols[i]:
                 is_sel = cur == pk
-                bg = f"background:rgba(0,0,0,.3);border:2px solid {pv['color']};" if is_sel else "background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.15);"
-                st.markdown(f'<div style="{bg}border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;">'
-                            f'<div style="font-size:.85rem;font-weight:700;color:{"white" if is_sel else "#9CA3AF"};">{pv["label"]}</div>'
-                            f'{"<div style=\"font-size:.7rem;color:#4ADE80;margin-top:.3rem;\">● " + T("active") + "</div>" if is_sel else ""}'
+                bg = "background:rgba(37,99,235,.12);border:1px solid rgba(37,99,235,.4);" if is_sel else "background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.15);"
+                st.markdown(f'<div dir="{_dir}" style="{bg}border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;">'
+                            f'<div style="font-size:.85rem;font-weight:700;color:{"#E2E8F0" if is_sel else "#9CA3AF"};">{pv["label"]}</div>'
+                            f'{"<div style=\"font-size:.7rem;color:#60A5FA;margin-top:.3rem;\">● " + T("active") + "</div>" if is_sel else ""}'
                             f'</div>', unsafe_allow_html=True)
-                if st.button(T('activate_btn'), key=f"adm_prov_{pk}", use_container_width=True):
-                    st.session_state["ai_provider"] = pk
-                    # Clear cached emails to regenerate with new provider
-                    st.session_state["emails"] = {}
-                    st.session_state.pop("assess_emails", None)
-                    st.session_state["cache_version"] = int(__import__("time").time()) % 99999
-                    st.rerun()
+                if not is_sel:
+                    if st.button(T('activate_btn'), key=f"adm_prov_{pk}", use_container_width=True):
+                        st.session_state["ai_provider"] = pk
+                        # Clear cached emails to regenerate with new provider
+                        st.session_state["emails"] = {}
+                        st.session_state.pop("assess_emails", None)
+                        st.session_state["cache_version"] = int(__import__("time").time()) % 99999
+                        st.rerun()
+                else:
+                    st.markdown('<div style="height:44px;"></div>', unsafe_allow_html=True)
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("api_status")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("api_status")}</div>', unsafe_allow_html=True)
         key_cols = st.columns(4)
         for i, (pk, pv) in enumerate(provider_info.items()):
             with key_cols[i]:
@@ -2445,36 +2470,30 @@ def page_admin():
 
         col_diff, col_lang = st.columns(2)
         with col_diff:
-            st.markdown(f'<div style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("difficulty_lvl")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("difficulty_lvl")}</div>', unsafe_allow_html=True)
             diff_opts = {"easy": f"🟢 {T('easy')}", "medium": f"🟡 {T('medium')}", "hard": f"🔴 {T('hard')}"}
             cur_diff = st.session_state.get("difficulty", "medium")
             for dk, dl in diff_opts.items():
                 is_d = cur_diff == dk
-                if is_d:
-                    st.markdown(f'<div style="border:2px solid #4ADE80;border-radius:8px;padding:.7rem .8rem;margin-bottom:.3rem;'
-                                f'background:rgba(74,222,128,.1);text-align:center;">'
-                                f'<span style="color:#4ADE80;font-weight:700;">{dl} ✓</span></div>',
-                                unsafe_allow_html=True)
-                else:
-                    if st.button(f"{T('set_btn')} {dl}", key=f"adm_diff_{dk}", use_container_width=True):
+                label = f"{dl} ✓" if is_d else dl
+                if st.button(label, key=f"adm_diff_{dk}", use_container_width=True,
+                             type="primary" if is_d else "secondary"):
+                    if not is_d:
                         st.session_state["difficulty"] = dk
                         st.session_state["emails"] = {}
                         st.session_state["cache_version"] = int(__import__("time").time()) % 99999
                         st.rerun()
 
         with col_lang:
-            st.markdown(f'<div style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("language_lbl")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("language_lbl")}</div>', unsafe_allow_html=True)
             cur_lang = st.session_state.get("language", "English")
             lang_display = {"English": "English", "Arabic": "العربية"}
             for lk in ["English", "Arabic"]:
                 is_l = cur_lang == lk
-                if is_l:
-                    st.markdown(f'<div style="border:2px solid #4ADE80;border-radius:8px;padding:.7rem .8rem;margin-bottom:.3rem;'
-                                f'background:rgba(74,222,128,.1);text-align:center;">'
-                                f'<span style="color:#4ADE80;font-weight:700;">{lang_display[lk]} ✓</span></div>',
-                                unsafe_allow_html=True)
-                else:
-                    if st.button(f"{T('set_btn')} {lang_display[lk]}", key=f"adm_lang_{lk}", use_container_width=True):
+                label = f"{lang_display[lk]} ✓" if is_l else lang_display[lk]
+                if st.button(label, key=f"adm_lang_{lk}", use_container_width=True,
+                             type="primary" if is_l else "secondary"):
+                    if not is_l:
                         st.session_state["language"] = lk
                         st.session_state["emails"] = {}
                         st.rerun()
@@ -2703,40 +2722,70 @@ st.markdown("""
 <style>
 #MainMenu,header,footer{visibility:hidden;}
 [data-testid="stSidebar"]{display:none !important;}
-div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stButton"] > button[kind="secondary"]#secret_lock_marker),
-.secret-lock-wrap {
+
+/* استهداف دقيق لعنصر الزر السري عبر مفتاحه الفريد */
+div[data-testid="stButton"]:has(button[aria-describedby*="secret_admin_btn"]),
+div.element-container:has(button[kind]):has(#secret_admin_btn_anchor) {
     position: fixed !important;
-    bottom: 10px !important;
-    left: 10px !important;
+    bottom: 6px !important;
+    left: 6px !important;
     z-index: 99999 !important;
-    width: 30px !important;
+    width: 26px !important;
 }
-.secret-lock-wrap button {
+button[kind="secondary"]:has-text("🔒") {
     background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    font-size: 0.65rem !important;
-    color: rgba(255,255,255,0.10) !important;
-    padding: 2px !important;
-    min-height: unset !important;
-    height: 22px !important;
-    width: 22px !important;
-    line-height: 1 !important;
-}
-.secret-lock-wrap button:hover {
-    color: rgba(255,255,255,0.30) !important;
-    background: transparent !important;
-    border: none !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 if st.session_state.get("page","home") == "home":
-    st.markdown('<div class="secret-lock-wrap">', unsafe_allow_html=True)
-    if st.button("🔒", key="secret_admin_btn", help=""):
-        st.session_state["page"] = "admin"
-        st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
+    _lock_ph = st.empty()
+    with _lock_ph.container():
+        st.markdown("""
+<style>
+div[data-testid="stVerticalBlockBorderWrapper"]:last-of-type,
+.stApp > div > div > div > div:last-child div[data-testid="stButton"] {
+    position: fixed !important;
+    bottom: 6px !important;
+    left: 6px !important;
+    z-index: 99999 !important;
+    width: 24px !important;
+}
+</style>
+<div id="secret-lock-fixed" style="position:fixed;bottom:6px;left:6px;z-index:99999;width:24px;height:24px;"></div>
+<script>
+const btns = window.parent.document.querySelectorAll('button');
+for (const b of btns) {
+    if (b.innerText.trim() === '🔒') {
+        b.style.position = 'fixed';
+        b.style.bottom = '6px';
+        b.style.left = '6px';
+        b.style.zIndex = '99999';
+        b.style.background = 'transparent';
+        b.style.border = 'none';
+        b.style.boxShadow = 'none';
+        b.style.fontSize = '0.6rem';
+        b.style.color = 'rgba(255,255,255,0.10)';
+        b.style.padding = '2px';
+        b.style.minHeight = 'unset';
+        b.style.height = '18px';
+        b.style.width = '18px';
+        b.style.lineHeight = '1';
+        const wrapper = b.closest('div[data-testid="stButton"]');
+        if (wrapper) {
+            wrapper.style.position = 'fixed';
+            wrapper.style.bottom = '6px';
+            wrapper.style.left = '6px';
+            wrapper.style.zIndex = '99999';
+            wrapper.style.width = '20px';
+        }
+    }
+}
+</script>
+""", unsafe_allow_html=True)
+        if st.button("🔒", key="secret_admin_btn", help=""):
+            st.session_state["page"] = "admin"
+            st.rerun()
 
 # ══════════════════════════════════════════════════════════════
 # MAIN ROUTING
