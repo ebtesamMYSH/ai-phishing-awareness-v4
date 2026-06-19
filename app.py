@@ -2273,7 +2273,7 @@ def page_admin():
         "active":           {"en": "ACTIVE",                               "ar": "نشط"},
         "activate_btn":     {"en": "Activate",                             "ar": "تفعيل"},
         "api_status":       {"en": "API Keys Status",                      "ar": "حالة مفاتيح API"},
-        "not_set":          {"en": "Not set",                              "ar": "غير مُعد"},
+        "not_set":          {"en": "Pending setup",                          "ar": "بانتظار الإضافة"},
         "difficulty_lvl":   {"en": "Difficulty Level",                     "ar": "مستوى الصعوبة"},
         "language_lbl":     {"en": "Language",                             "ar": "اللغة"},
         "set_btn":          {"en": "Set",                                  "ar": "تطبيق"},
@@ -2382,17 +2382,24 @@ button[kind="primary"]:hover{{
 .stTextInput input{{
     direction:{_dir};
     text-align:{_align};
-    background:rgba(15,23,42,.5)!important;
+    background:transparent!important;
     color:#E2E8F0!important;
-    border:1px solid rgba(255,255,255,.15)!important;
-    border-radius:8px!important;
+    border:none!important;
+    box-shadow:none!important;
 }}
 .stTextInput input::placeholder{{color:#6B7280!important;}}
 .stTextInput>div>div,
-.stTextInput div[data-baseweb="input"],
 .stTextInput div[data-baseweb="base-input"]{{
     background:transparent!important;
     background-color:transparent!important;
+    border:none!important;
+    box-shadow:none!important;
+}}
+.stTextInput div[data-baseweb="input"]{{
+    background:rgba(15,23,42,.5)!important;
+    border:1px solid rgba(255,255,255,.15)!important;
+    border-radius:8px!important;
+    box-shadow:none!important;
 }}
 </style>""", unsafe_allow_html=True)
 
@@ -2668,18 +2675,25 @@ button[kind="primary"]:hover{{
 
         # تنسيق حقل الملاحظات بشكل شفاف مع إطار مثل باقي العناصر
         st.markdown("""<style>
-.stTextInput>div>div>input{
-    background:rgba(15,23,42,.5)!important;
+.stTextInput input{
+    background:transparent!important;
     color:#E2E8F0!important;
-    border:1px solid rgba(255,255,255,.15)!important;
-    border-radius:8px!important;
+    border:none!important;
+    box-shadow:none!important;
 }
-.stTextInput>div>div>input::placeholder{color:#6B7280!important;}
+.stTextInput input::placeholder{color:#6B7280!important;}
 .stTextInput>div>div,
-.stTextInput div[data-baseweb="input"],
 .stTextInput div[data-baseweb="base-input"]{
     background:transparent!important;
     background-color:transparent!important;
+    border:none!important;
+    box-shadow:none!important;
+}
+.stTextInput div[data-baseweb="input"]{
+    background:rgba(15,23,42,.5)!important;
+    border:1px solid rgba(255,255,255,.15)!important;
+    border-radius:8px!important;
+    box-shadow:none!important;
 }
 </style>""", unsafe_allow_html=True)
 
