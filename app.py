@@ -2526,8 +2526,8 @@ button[kind="primary"]:hover{{
             with cols[i]:
                 is_sel = cur == pk
                 status_line = f'<div style="font-size:.7rem;color:#9CA3AF;margin-top:.3rem;">● {T("active")}</div>' if is_sel else '<div style="font-size:.7rem;margin-top:.3rem;">&nbsp;</div>'
-                st.markdown(f'<div dir="{_dir}" style="background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.15);border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;min-height:64px;display:flex;flex-direction:column;justify-content:center;">'
-                            f'<div style="font-size:.85rem;font-weight:700;color:#9CA3AF;">{pv["label"]}</div>'
+                st.markdown(f'<div dir="{_dir}" style="background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.15);border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;height:84px;display:flex;flex-direction:column;justify-content:center;align-items:center;overflow:hidden;">'
+                            f'<div style="font-size:.85rem;font-weight:700;color:#9CA3AF;line-height:1.25;display:flex;align-items:center;justify-content:center;height:2.5em;">{pv["label"]}</div>'
                             f'{status_line}'
                             f'</div>', unsafe_allow_html=True)
                 if not is_sel:
