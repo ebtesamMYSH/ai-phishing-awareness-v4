@@ -2334,17 +2334,21 @@ def page_admin():
     _dir = 'rtl' if _is_ar else 'ltr'
     _align = 'right' if _is_ar else 'left'
     _align_opp = 'left' if _is_ar else 'right'
+    _flex_dir = 'row-reverse' if _is_ar else 'row'
 
     st.markdown(f"""<style>
 #MainMenu,header,footer{{visibility:hidden;}}
 .stApp{{background:radial-gradient(circle at top left,#0B1A0B 0%,#020617 40%,#020617 100%);color:white;direction:{_dir};}}
 .block-container{{max-width:1200px;padding-top:1.5rem;direction:{_dir};text-align:{_align};}}
+[data-testid="stMarkdownContainer"]{{direction:{_dir};text-align:{_align};}}
+[data-testid="stMarkdownContainer"] > div{{direction:{_dir};text-align:{_align};}}
 .block-container div,.block-container span,.block-container p,.block-container label{{
     direction:{_dir};
 }}
 [data-baseweb="tab-list"]{{direction:{_dir};}}
 [data-baseweb="tab-border"]{{direction:{_dir};}}
 .stTabs [data-baseweb="tab"]{{direction:{_dir};}}
+div[style*="justify-content:space-between"]{{flex-direction:{_flex_dir}!important;}}
 .stButton>button{{
     min-height:44px;
     font-weight:700!important;
@@ -2368,7 +2372,23 @@ button[kind="primary"]:hover{{
     background:rgba(37,99,235,.28)!important;
     color:#BFDBFE!important;
 }}
-.stTextInput input{{direction:{_dir};text-align:{_align};}}
+.stButton>button:disabled,.stButton>button[disabled]{{
+    background:rgba(37,99,235,.12)!important;
+    color:#60A5FA!important;
+    border:1px solid rgba(37,99,235,.4)!important;
+    opacity:1!important;
+    cursor:default!important;
+}}
+.stTextInput input{{
+    direction:{_dir};
+    text-align:{_align};
+    background:rgba(15,23,42,.5)!important;
+    color:#E2E8F0!important;
+    border:1px solid rgba(255,255,255,.15)!important;
+    border-radius:8px!important;
+}}
+.stTextInput input::placeholder{{color:#6B7280!important;}}
+.stTextInput>div>div{{background:transparent!important;}}
 </style>""", unsafe_allow_html=True)
 
     def _div(content, extra=""):
@@ -2407,7 +2427,7 @@ button[kind="primary"]:hover{{
     # MAIN ADMIN PANEL (after login)
     # ══════════════════════════════════════════════════════════
     st.markdown(f"""
-<div style="display:flex;justify-content:space-between;align-items:center;
+<div dir="{_dir}" style="display:flex;justify-content:space-between;align-items:center;
      padding:.8rem 1.2rem;border:1px solid rgba(34,197,94,.35);border-radius:14px;
      background:rgba(4,20,4,.6);margin-bottom:1.5rem;">
   <div style="font-size:1.3rem;font-weight:900;color:#F0FDF4;">{T('panel_title')}</div>
@@ -2437,9 +2457,10 @@ button[kind="primary"]:hover{{
             with cols[i]:
                 is_sel = cur == pk
                 bg = "background:rgba(37,99,235,.12);border:1px solid rgba(37,99,235,.4);" if is_sel else "background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.15);"
-                st.markdown(f'<div dir="{_dir}" style="{bg}border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;">'
+                status_line = f'<div style="font-size:.7rem;color:#60A5FA;margin-top:.3rem;">● {T("active")}</div>' if is_sel else '<div style="font-size:.7rem;margin-top:.3rem;">&nbsp;</div>'
+                st.markdown(f'<div dir="{_dir}" style="{bg}border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;min-height:64px;display:flex;flex-direction:column;justify-content:center;">'
                             f'<div style="font-size:.85rem;font-weight:700;color:{"#E2E8F0" if is_sel else "#9CA3AF"};">{pv["label"]}</div>'
-                            f'{"<div style=\"font-size:.7rem;color:#60A5FA;margin-top:.3rem;\">● " + T("active") + "</div>" if is_sel else ""}'
+                            f'{status_line}'
                             f'</div>', unsafe_allow_html=True)
                 if not is_sel:
                     if st.button(T('activate_btn'), key=f"adm_prov_{pk}", use_container_width=True):
@@ -2450,7 +2471,7 @@ button[kind="primary"]:hover{{
                         st.session_state["cache_version"] = int(__import__("time").time()) % 99999
                         st.rerun()
                 else:
-                    st.markdown('<div style="height:44px;"></div>', unsafe_allow_html=True)
+                    st.button(T('active'), key=f"adm_prov_{pk}_disabled", use_container_width=True, disabled=True)
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
         st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("api_status")}</div>', unsafe_allow_html=True)
@@ -2587,24 +2608,24 @@ button[kind="primary"]:hover{{
             rows.append(row)
 
         # Render table
-        st.markdown(f'<div style="font-weight:900;color:#D1FAE5;font-size:1.1rem;margin-bottom:1rem;">{T("score_title")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div dir="{_dir}" style="font-weight:900;color:#D1FAE5;font-size:1.1rem;margin-bottom:1rem;">{T("score_title")}</div>', unsafe_allow_html=True)
 
         # Header
         hcols = st.columns([2,1,1,1,1])
         headers_list = [T('metric_col'), "🟠 Groq", "🟣 Claude", "🟢 OpenAI", "🔵 Gemini"]
         for ci, hdr in enumerate(headers_list):
             with hcols[ci]:
-                st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.82rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.1);">{hdr}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#9CA3AF;font-size:.82rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.1);">{hdr}</div>', unsafe_allow_html=True)
 
         for row in rows:
             rcols = st.columns([2,1,1,1,1])
             for ci, cell in enumerate(row):
                 with rcols[ci]:
                     clr = "#D1FAE5" if ci == 0 else "#F0FDF4"
-                    st.markdown(f'<div style="color:{clr};font-size:.85rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.05);">{cell}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div dir="{_dir}" style="color:{clr};font-size:.85rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.05);">{cell}</div>', unsafe_allow_html=True)
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-size:.75rem;color:#6B7280;">{T("auto_manual_note")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div dir="{_dir}" style="font-size:.75rem;color:#6B7280;">{T("auto_manual_note")}</div>', unsafe_allow_html=True)
 
         if st.button(T('reset_metrics'), use_container_width=True):
             st.session_state["metrics"] = {}
@@ -2722,70 +2743,57 @@ st.markdown("""
 <style>
 #MainMenu,header,footer{visibility:hidden;}
 [data-testid="stSidebar"]{display:none !important;}
-
-/* استهداف دقيق لعنصر الزر السري عبر مفتاحه الفريد */
-div[data-testid="stButton"]:has(button[aria-describedby*="secret_admin_btn"]),
-div.element-container:has(button[kind]):has(#secret_admin_btn_anchor) {
-    position: fixed !important;
-    bottom: 6px !important;
-    left: 6px !important;
-    z-index: 99999 !important;
-    width: 26px !important;
-}
-button[kind="secondary"]:has-text("🔒") {
-    background: transparent !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
 if st.session_state.get("page","home") == "home":
-    _lock_ph = st.empty()
-    with _lock_ph.container():
-        st.markdown("""
-<style>
-div[data-testid="stVerticalBlockBorderWrapper"]:last-of-type,
-.stApp > div > div > div > div:last-child div[data-testid="stButton"] {
-    position: fixed !important;
-    bottom: 6px !important;
-    left: 6px !important;
-    z-index: 99999 !important;
-    width: 24px !important;
-}
-</style>
-<div id="secret-lock-fixed" style="position:fixed;bottom:6px;left:6px;z-index:99999;width:24px;height:24px;"></div>
-<script>
-const btns = window.parent.document.querySelectorAll('button');
-for (const b of btns) {
-    if (b.innerText.trim() === '🔒') {
-        b.style.position = 'fixed';
-        b.style.bottom = '6px';
-        b.style.left = '6px';
-        b.style.zIndex = '99999';
-        b.style.background = 'transparent';
-        b.style.border = 'none';
-        b.style.boxShadow = 'none';
-        b.style.fontSize = '0.6rem';
-        b.style.color = 'rgba(255,255,255,0.10)';
-        b.style.padding = '2px';
-        b.style.minHeight = 'unset';
-        b.style.height = '18px';
-        b.style.width = '18px';
-        b.style.lineHeight = '1';
-        const wrapper = b.closest('div[data-testid="stButton"]');
-        if (wrapper) {
-            wrapper.style.position = 'fixed';
-            wrapper.style.bottom = '6px';
-            wrapper.style.left = '6px';
-            wrapper.style.zIndex = '99999';
-            wrapper.style.width = '20px';
+    if st.button("🔒", key="secret_admin_btn", help=""):
+        st.session_state["page"] = "admin"
+        st.rerun()
+
+    # نستخدم MutationObserver لأن الزر قد يُعاد رسمه بعد تحميل الصفحة
+    import streamlit.components.v1 as components
+    components.html("""
+    <script>
+    function styleSecretLock() {
+        const doc = window.parent.document;
+        const btns = doc.querySelectorAll('button');
+        for (const b of btns) {
+            if (b.innerText.trim() === '🔒') {
+                b.style.setProperty('background', 'transparent', 'important');
+                b.style.setProperty('border', 'none', 'important');
+                b.style.setProperty('box-shadow', 'none', 'important');
+                b.style.setProperty('font-size', '0.6rem', 'important');
+                b.style.setProperty('color', 'rgba(255,255,255,0.10)', 'important');
+                b.style.setProperty('padding', '0px', 'important');
+                b.style.setProperty('min-height', 'unset', 'important');
+                b.style.setProperty('height', '16px', 'important');
+                b.style.setProperty('width', '16px', 'important');
+                b.style.setProperty('line-height', '1', 'important');
+                const wrapper = b.closest('div[data-testid="stButton"]') || b.closest('.element-container');
+                if (wrapper) {
+                    wrapper.style.setProperty('position', 'fixed', 'important');
+                    wrapper.style.setProperty('bottom', '4px', 'important');
+                    wrapper.style.setProperty('left', '4px', 'important');
+                    wrapper.style.setProperty('z-index', '99999', 'important');
+                    wrapper.style.setProperty('width', '18px', 'important');
+                    wrapper.style.setProperty('margin', '0', 'important');
+                    wrapper.style.setProperty('padding', '0', 'important');
+                    // أيضاً نضبط أي عنصر أب يحتوي على padding كبير
+                    let parent = wrapper.parentElement;
+                    if (parent) {
+                        parent.style.setProperty('position', 'static', 'important');
+                    }
+                }
+            }
         }
     }
-}
-</script>
-""", unsafe_allow_html=True)
-        if st.button("🔒", key="secret_admin_btn", help=""):
-            st.session_state["page"] = "admin"
-            st.rerun()
+    styleSecretLock();
+    const observer = new MutationObserver(styleSecretLock);
+    observer.observe(window.parent.document.body, {childList:true, subtree:true});
+    setInterval(styleSecretLock, 500);
+    </script>
+    """, height=0, width=0)
 
 # ══════════════════════════════════════════════════════════════
 # MAIN ROUTING
