@@ -2253,48 +2253,129 @@ def page_admin():
 
     ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD") or "admin2025"
 
-    st.markdown("""<style>
-#MainMenu,header,footer{visibility:hidden;}
-.stApp{background:radial-gradient(circle at top left,#0B1A0B 0%,#020617 40%,#020617 100%);color:white;}
-.block-container{max-width:1200px;padding-top:1.5rem;}
-.stButton>button{
+    # ── اللغة المختارة من المستخدم في الصفحة الرئيسية ──
+    _lang = st.session_state.get("language", "English")
+    _is_ar = (_lang == "Arabic")
+
+    _T = {
+        "admin_title":      {"en": "Admin Panel",                          "ar": "لوحة التحكم"},
+        "admin_subtitle":   {"en": "Researcher Access Only",               "ar": "للباحثين فقط"},
+        "pwd_placeholder":  {"en": "Enter admin password",                 "ar": "أدخل كلمة سر الإدارة"},
+        "login_btn":        {"en": "🔓 Login",                             "ar": "🔓 دخول"},
+        "back_btn":         {"en": "← Back to App",                       "ar": "→ رجوع للتطبيق"},
+        "wrong_pwd":        {"en": "❌ Incorrect password",                "ar": "❌ كلمة السر غير صحيحة"},
+        "panel_title":      {"en": "🔬 Admin Research Panel",              "ar": "🔬 لوحة البحث الإدارية"},
+        "authenticated":    {"en": "● Authenticated",                      "ar": "● تم تسجيل الدخول"},
+        "tab_provider":     {"en": "⚙️ Provider Control",                  "ar": "⚙️ التحكم بالمزوّد"},
+        "tab_score":        {"en": "📊 Score Card",                       "ar": "📊 بطاقة التقييم"},
+        "tab_manual":       {"en": "👍 Manual Ratings",                   "ar": "👍 التقييم اليدوي"},
+        "select_provider":  {"en": "Select Active AI Provider",            "ar": "اختر مزوّد الذكاء الاصطناعي النشط"},
+        "active":           {"en": "ACTIVE",                               "ar": "نشط"},
+        "activate_btn":     {"en": "Activate",                             "ar": "تفعيل"},
+        "api_status":       {"en": "API Keys Status",                      "ar": "حالة مفاتيح API"},
+        "not_set":          {"en": "Not set",                              "ar": "غير مُعد"},
+        "difficulty_lvl":   {"en": "Difficulty Level",                     "ar": "مستوى الصعوبة"},
+        "language_lbl":     {"en": "Language",                             "ar": "اللغة"},
+        "set_btn":          {"en": "Set",                                  "ar": "تطبيق"},
+        "easy":             {"en": "Easy",                                 "ar": "سهل"},
+        "medium":           {"en": "Medium",                               "ar": "متوسط"},
+        "hard":             {"en": "Hard",                                 "ar": "صعب"},
+        "clear_cache":      {"en": "🔄 Clear All Cached Emails (Force Regenerate)", "ar": "🔄 مسح كل الرسائل المخزّنة (توليد من جديد)"},
+        "cache_cleared":    {"en": "✅ Cache cleared — next generation will produce fresh content", "ar": "✅ تم مسح الذاكرة المؤقتة — التوليد القادم سينتج محتوى جديد"},
+        "logout_btn":       {"en": "🚪 Logout",                            "ar": "🚪 تسجيل خروج"},
+        "score_title":      {"en": "📊 Comparison Score Card",             "ar": "📊 بطاقة المقارنة"},
+        "metric_col":       {"en": "Metric",                               "ar": "المعيار"},
+        "speed_metric":     {"en": "⚡ Avg Speed (s)",                     "ar": "⚡ متوسط السرعة (ث)"},
+        "json_metric":      {"en": "✅ JSON Success Rate",                 "ar": "✅ نسبة نجاح JSON"},
+        "error_metric":     {"en": "🚫 Error Rate",                        "ar": "🚫 نسبة الأخطاء"},
+        "diversity_metric": {"en": "🔄 Unique Responses",                  "ar": "🔄 الردود الفريدة"},
+        "quality_metric":   {"en": "🎯 Quality",                          "ar": "🎯 الجودة"},
+        "difficulty_metric":{"en": "📊 Difficulty Level",                 "ar": "📊 مستوى الصعوبة"},
+        "arabic_metric":    {"en": "🌐 Arabic Quality",                   "ar": "🌐 جودة العربية"},
+        "medical_metric":   {"en": "🏥 Medical Realism",                  "ar": "🏥 الواقعية الطبية"},
+        "auto_manual_note": {"en": "Auto-tracked: Speed, JSON, Errors, Diversity | Manual: Quality, Difficulty, Arabic, Medical",
+                              "ar": "تلقائي: السرعة، JSON، الأخطاء، التنوع | يدوي: الجودة، الصعوبة، العربية، الطبي"},
+        "reset_metrics":    {"en": "🗑️ Reset All Metrics",                "ar": "🗑️ إعادة ضبط كل المعايير"},
+        "metrics_reset":    {"en": "✅ All metrics reset",                 "ar": "✅ تم إعادة ضبط كل المعايير"},
+        "rate_title":       {"en": "Rate the last generated content",      "ar": "قيّم آخر محتوى تم توليده"},
+        "active_provider":  {"en": "Active provider",                     "ar": "المزوّد النشط"},
+        "quality_label":    {"en": "🎯 Model Quality",                    "ar": "🎯 جودة النموذج"},
+        "quality_desc":     {"en": "How accurate and realistic is the phishing email?",
+                              "ar": "ما مدى دقة وواقعية رسالة التصيد؟"},
+        "diff_acc_label":   {"en": "📊 Difficulty Accuracy",              "ar": "📊 دقة الصعوبة"},
+        "diff_acc_desc":    {"en": "Does the difficulty level (Easy/Medium/Hard) feel right?",
+                              "ar": "هل مستوى الصعوبة (سهل/متوسط/صعب) مناسب؟"},
+        "arabic_label":     {"en": "🌐 Arabic Quality",                   "ar": "🌐 جودة اللغة العربية"},
+        "arabic_desc":      {"en": "How good is the Arabic language quality? (skip if English)",
+                              "ar": "ما مدى جودة اللغة العربية؟ (تخطّى إذا إنجليزي)"},
+        "medical_label":    {"en": "🏥 Medical Realism",                  "ar": "🏥 الواقعية الطبية"},
+        "medical_desc":     {"en": "How realistic is the healthcare/hospital context?",
+                              "ar": "ما مدى واقعية السياق الطبي/الصحي؟"},
+        "note_label":       {"en": "📝 Note (optional)",                  "ar": "📝 ملاحظة (اختياري)"},
+        "note_placeholder": {"en": "Any observation about this provider...",
+                              "ar": "أي ملاحظة حول هذا المزوّد..."},
+        "save_btn":         {"en": "💾 Save Ratings",                     "ar": "💾 حفظ التقييم"},
+        "ratings_saved":    {"en": "✅ Ratings saved for",                 "ar": "✅ تم حفظ التقييم لـ"},
+        "quick_rating":     {"en": "Quick Rating",                        "ar": "تقييم سريع"},
+        "good_btn":         {"en": "👍 Good (4/5 all)",                   "ar": "👍 جيد (4/5 للكل)"},
+        "avg_btn":          {"en": "😐 Average (3/5)",                   "ar": "😐 متوسط (3/5)"},
+        "poor_btn":         {"en": "👎 Poor (2/5 all)",                   "ar": "👎 ضعيف (2/5 للكل)"},
+        "saved_45":         {"en": "✅ Saved 4/5 for all metrics",         "ar": "✅ تم حفظ 4/5 لكل المعايير"},
+        "saved_35":         {"en": "✅ Saved 3/5 for all metrics",         "ar": "✅ تم حفظ 3/5 لكل المعايير"},
+        "saved_25":         {"en": "✅ Saved 2/5 for all metrics",         "ar": "✅ تم حفظ 2/5 لكل المعايير"},
+        "rating_history":   {"en": "Rating History for",                  "ar": "سجل التقييم لـ"},
+        "avg_label":        {"en": "avg",                                 "ar": "المتوسط"},
+        "ratings_label":    {"en": "ratings",                             "ar": "تقييم"},
+    }
+
+    def T(key):
+        return _T.get(key, {}).get("ar" if _is_ar else "en", key)
+
+    _dir = 'rtl' if _is_ar else 'ltr'
+    _align = 'right' if _is_ar else 'left'
+
+    st.markdown(f"""<style>
+#MainMenu,header,footer{{visibility:hidden;}}
+.stApp{{background:radial-gradient(circle at top left,#0B1A0B 0%,#020617 40%,#020617 100%);color:white;direction:{_dir};}}
+.block-container{{max-width:1200px;padding-top:1.5rem;direction:{_dir};text-align:{_align};}}
+.stButton>button{{
     min-height:44px;
     font-weight:700!important;
     border-radius:10px!important;
     background:rgba(15,23,42,.8)!important;
     color:#94A3B8!important;
     border:1px solid rgba(37,99,235,.35)!important;
-}
-.stButton>button:hover{
+}}
+.stButton>button:hover{{
     background:rgba(11,79,168,.3)!important;
     color:#E2E8F0!important;
     border-color:#1EA7FF!important;
-}
+}}
 </style>""", unsafe_allow_html=True)
 
     # ── Authentication ──────────────────────────────────────────
     if not st.session_state.get("admin_authenticated", False):
-        st.markdown("""
+        st.markdown(f"""
 <div style="max-width:420px;margin:6rem auto;padding:2.5rem;
      border:1px solid rgba(34,197,94,.4);border-radius:20px;
      background:linear-gradient(135deg,rgba(2,6,23,.97),rgba(4,20,4,.9));
      text-align:center;">
   <div style="font-size:2.5rem;margin-bottom:.5rem;">🔐</div>
-  <div style="font-size:1.3rem;font-weight:900;color:#F0FDF4;margin-bottom:.3rem;">Admin Panel</div>
-  <div style="font-size:.85rem;color:#6B7280;margin-bottom:1.5rem;">Researcher Access Only</div>
+  <div style="font-size:1.3rem;font-weight:900;color:#F0FDF4;margin-bottom:.3rem;">{T('admin_title')}</div>
+  <div style="font-size:.85rem;color:#6B7280;margin-bottom:1.5rem;">{T('admin_subtitle')}</div>
 </div>""", unsafe_allow_html=True)
-        pwd = st.text_input("Password", type="password", placeholder="Enter admin password",
+        pwd = st.text_input(T('pwd_placeholder'), type="password", placeholder=T('pwd_placeholder'),
                             label_visibility="collapsed")
         col1, col2 = st.columns([1,1])
         with col1:
-            if st.button("🔓 Login", use_container_width=True):
+            if st.button(T('login_btn'), use_container_width=True):
                 if pwd == ADMIN_PASSWORD:
                     st.session_state["admin_authenticated"] = True
                     st.rerun()
                 else:
-                    st.error("❌ Incorrect password")
+                    st.error(T('wrong_pwd'))
         with col2:
-            if st.button("← Back to App", use_container_width=True):
+            if st.button(T('back_btn'), use_container_width=True):
                 st.query_params.clear()
                 st.session_state["page"] = "home"
                 st.rerun()
@@ -2303,15 +2384,15 @@ def page_admin():
     # ══════════════════════════════════════════════════════════
     # MAIN ADMIN PANEL (after login)
     # ══════════════════════════════════════════════════════════
-    st.markdown("""
+    st.markdown(f"""
 <div style="display:flex;justify-content:space-between;align-items:center;
      padding:.8rem 1.2rem;border:1px solid rgba(34,197,94,.35);border-radius:14px;
      background:rgba(4,20,4,.6);margin-bottom:1.5rem;">
-  <div style="font-size:1.3rem;font-weight:900;color:#F0FDF4;">🔬 Admin Research Panel</div>
-  <div style="font-size:.8rem;color:#4ADE80;">● Authenticated</div>
+  <div style="font-size:1.3rem;font-weight:900;color:#F0FDF4;">{T('panel_title')}</div>
+  <div style="font-size:.8rem;color:#4ADE80;">{T('authenticated')}</div>
 </div>""", unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["⚙️ Provider Control", "📊 Score Card", "👍 Manual Ratings"])
+    tab1, tab2, tab3 = st.tabs([T('tab_provider'), T('tab_score'), T('tab_manual')])
 
     # ──────────────────────────────────────────────────────────
     # TAB 1 — Provider Control
@@ -2328,7 +2409,7 @@ def page_admin():
 
         cur = st.session_state.get("ai_provider", "groq")
 
-        st.markdown('<div style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">Select Active AI Provider</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("select_provider")}</div>', unsafe_allow_html=True)
         cols = st.columns(4)
         for i, (pk, pv) in enumerate(provider_info.items()):
             with cols[i]:
@@ -2336,10 +2417,9 @@ def page_admin():
                 bg = f"background:rgba(0,0,0,.3);border:2px solid {pv['color']};" if is_sel else "background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.15);"
                 st.markdown(f'<div style="{bg}border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;">'
                             f'<div style="font-size:.85rem;font-weight:700;color:{"white" if is_sel else "#9CA3AF"};">{pv["label"]}</div>'
-                            f'{"<div style=\"font-size:.7rem;color:#4ADE80;margin-top:.3rem;\">● ACTIVE</div>" if is_sel else ""}'
+                            f'{"<div style=\"font-size:.7rem;color:#4ADE80;margin-top:.3rem;\">● " + T("active") + "</div>" if is_sel else ""}'
                             f'</div>', unsafe_allow_html=True)
-                st.markdown('<style>.stButton>button{background:rgba(15,23,42,.7)!important;color:#94A3B8!important;border:1px solid rgba(37,99,235,.3)!important;}</style>', unsafe_allow_html=True)
-                if st.button(f"Activate", key=f"adm_prov_{pk}", use_container_width=True):
+                if st.button(T('activate_btn'), key=f"adm_prov_{pk}", use_container_width=True):
                     st.session_state["ai_provider"] = pk
                     # Clear cached emails to regenerate with new provider
                     st.session_state["emails"] = {}
@@ -2348,14 +2428,14 @@ def page_admin():
                     st.rerun()
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        st.markdown('<div style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">API Keys Status</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("api_status")}</div>', unsafe_allow_html=True)
         key_cols = st.columns(4)
         for i, (pk, pv) in enumerate(provider_info.items()):
             with key_cols[i]:
                 val = get_secret(pv["secret"])
                 has_key = bool(val and len(val) > 10)
                 dot = "🟢" if has_key else "🔴"
-                preview = f"...{val[-4:]}" if has_key else "Not set"
+                preview = f"...{val[-4:]}" if has_key else T('not_set')
                 st.markdown(f'<div style="border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:.7rem;text-align:center;">'
                             f'<div style="font-size:.75rem;color:#9CA3AF;margin-bottom:.3rem;">{pv["label"].split("—")[0].strip()}</div>'
                             f'<div style="font-size:.85rem;font-weight:700;color:white;">{dot} {preview}</div>'
@@ -2365,48 +2445,49 @@ def page_admin():
 
         col_diff, col_lang = st.columns(2)
         with col_diff:
-            st.markdown('<div style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">Difficulty Level</div>', unsafe_allow_html=True)
-            diff_opts = {"easy": "🟢 Easy", "medium": "🟡 Medium", "hard": "🔴 Hard"}
+            st.markdown(f'<div style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("difficulty_lvl")}</div>', unsafe_allow_html=True)
+            diff_opts = {"easy": f"🟢 {T('easy')}", "medium": f"🟡 {T('medium')}", "hard": f"🔴 {T('hard')}"}
             cur_diff = st.session_state.get("difficulty", "medium")
             for dk, dl in diff_opts.items():
                 is_d = cur_diff == dk
-                st.markdown(f'<div style="{"border:2px solid #4ADE80;" if is_d else "border:1px solid rgba(255,255,255,.15);"}'
-                            f'border-radius:8px;padding:.4rem .8rem;margin-bottom:.3rem;'
-                            f'background:{"rgba(74,222,128,.1)" if is_d else "transparent"};">'
-                            f'<span style="color:{"#4ADE80" if is_d else "#9CA3AF"};font-weight:700;">{dl}</span></div>',
-                            unsafe_allow_html=True)
-                if not is_d:
-                    if st.button(f"Set {dl}", key=f"adm_diff_{dk}", use_container_width=True):
+                if is_d:
+                    st.markdown(f'<div style="border:2px solid #4ADE80;border-radius:8px;padding:.7rem .8rem;margin-bottom:.3rem;'
+                                f'background:rgba(74,222,128,.1);text-align:center;">'
+                                f'<span style="color:#4ADE80;font-weight:700;">{dl} ✓</span></div>',
+                                unsafe_allow_html=True)
+                else:
+                    if st.button(f"{T('set_btn')} {dl}", key=f"adm_diff_{dk}", use_container_width=True):
                         st.session_state["difficulty"] = dk
                         st.session_state["emails"] = {}
                         st.session_state["cache_version"] = int(__import__("time").time()) % 99999
                         st.rerun()
 
         with col_lang:
-            st.markdown('<div style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">Language</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("language_lbl")}</div>', unsafe_allow_html=True)
             cur_lang = st.session_state.get("language", "English")
+            lang_display = {"English": "English", "Arabic": "العربية"}
             for lk in ["English", "Arabic"]:
                 is_l = cur_lang == lk
-                st.markdown(f'<div style="{"border:2px solid #4ADE80;" if is_l else "border:1px solid rgba(255,255,255,.15);"}'
-                            f'border-radius:8px;padding:.4rem .8rem;margin-bottom:.3rem;'
-                            f'background:{"rgba(74,222,128,.1)" if is_l else "transparent"};">'
-                            f'<span style="color:{"#4ADE80" if is_l else "#9CA3AF"};font-weight:700;">{lk}</span></div>',
-                            unsafe_allow_html=True)
-                if not is_l:
-                    if st.button(f"Set {lk}", key=f"adm_lang_{lk}", use_container_width=True):
+                if is_l:
+                    st.markdown(f'<div style="border:2px solid #4ADE80;border-radius:8px;padding:.7rem .8rem;margin-bottom:.3rem;'
+                                f'background:rgba(74,222,128,.1);text-align:center;">'
+                                f'<span style="color:#4ADE80;font-weight:700;">{lang_display[lk]} ✓</span></div>',
+                                unsafe_allow_html=True)
+                else:
+                    if st.button(f"{T('set_btn')} {lang_display[lk]}", key=f"adm_lang_{lk}", use_container_width=True):
                         st.session_state["language"] = lk
                         st.session_state["emails"] = {}
                         st.rerun()
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        if st.button("🔄 Clear All Cached Emails (Force Regenerate)", use_container_width=True):
+        if st.button(T('clear_cache'), use_container_width=True):
             st.session_state["emails"] = {}
             st.session_state.pop("assess_emails", None)
             st.session_state["cache_version"] = int(__import__("time").time()) % 99999
-            st.success("✅ Cache cleared — next generation will produce fresh content")
+            st.success(T('cache_cleared'))
             st.rerun()
 
-        if st.button("🚪 Logout", use_container_width=True):
+        if st.button(T('logout_btn'), use_container_width=True):
             st.session_state["admin_authenticated"] = False
             st.query_params.clear()
             st.rerun()
@@ -2433,22 +2514,20 @@ def page_admin():
         def avg(lst):
             return round(sum(lst)/len(lst), 2) if lst else None
 
-        # Build score card table
-        header_cols = ["Metric"] + [provider_labels.get(p, p) for p in ["groq","anthropic","openai","gemini"]]
         rows = []
 
         def get_m(p): return metrics.get(p, {})
         def get_man(p): return manual.get(p, {})
 
         # 1. Speed
-        speed_row = ["⚡ Avg Speed (s)"]
+        speed_row = [T('speed_metric')]
         for p in ["groq","anthropic","openai","gemini"]:
             speeds = get_m(p).get("speed", [])
             speed_row.append(f"{avg(speeds):.1f}s" if speeds else "—")
         rows.append(speed_row)
 
         # 2. JSON Success Rate
-        json_row = ["✅ JSON Success Rate"]
+        json_row = [T('json_metric')]
         for p in ["groq","anthropic","openai","gemini"]:
             m = get_m(p)
             total_j = m.get("json_ok",0) + m.get("json_fail",0)
@@ -2457,7 +2536,7 @@ def page_admin():
         rows.append(json_row)
 
         # 3. Error Rate
-        err_row = ["🚫 Error Rate"]
+        err_row = [T('error_metric')]
         for p in ["groq","anthropic","openai","gemini"]:
             m = get_m(p)
             calls = m.get("calls",0)
@@ -2467,7 +2546,7 @@ def page_admin():
         rows.append(err_row)
 
         # 4. Diversity (unique hashes)
-        div_row = ["🔄 Unique Responses"]
+        div_row = [T('diversity_metric')]
         for p in ["groq","anthropic","openai","gemini"]:
             hashes = get_m(p).get("hashes",[])
             calls  = get_m(p).get("calls",0)
@@ -2476,10 +2555,10 @@ def page_admin():
 
         # 5-8 Manual ratings
         for metric_key, metric_label in [
-            ("quality",    "🎯 Quality"),
-            ("difficulty", "📊 Difficulty Level"),
-            ("arabic",     "🌐 Arabic Quality"),
-            ("medical",    "🏥 Medical Realism"),
+            ("quality",    T('quality_metric')),
+            ("difficulty", T('difficulty_metric')),
+            ("arabic",     T('arabic_metric')),
+            ("medical",    T('medical_metric')),
         ]:
             row = [metric_label]
             for p in ["groq","anthropic","openai","gemini"]:
@@ -2489,11 +2568,11 @@ def page_admin():
             rows.append(row)
 
         # Render table
-        st.markdown('<div style="font-weight:900;color:#D1FAE5;font-size:1.1rem;margin-bottom:1rem;">📊 Comparison Score Card</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-weight:900;color:#D1FAE5;font-size:1.1rem;margin-bottom:1rem;">{T("score_title")}</div>', unsafe_allow_html=True)
 
         # Header
         hcols = st.columns([2,1,1,1,1])
-        headers_list = ["Metric", "🟠 Groq", "🟣 Claude", "🟢 OpenAI", "🔵 Gemini"]
+        headers_list = [T('metric_col'), "🟠 Groq", "🟣 Claude", "🟢 OpenAI", "🔵 Gemini"]
         for ci, hdr in enumerate(headers_list):
             with hcols[ci]:
                 st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.82rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.1);">{hdr}</div>', unsafe_allow_html=True)
@@ -2506,12 +2585,12 @@ def page_admin():
                     st.markdown(f'<div style="color:{clr};font-size:.85rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.05);">{cell}</div>', unsafe_allow_html=True)
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        st.markdown('<div style="font-size:.75rem;color:#6B7280;">Auto-tracked: Speed, JSON, Errors, Diversity | Manual: Quality, Difficulty, Arabic, Medical</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:.75rem;color:#6B7280;">{T("auto_manual_note")}</div>', unsafe_allow_html=True)
 
-        if st.button("🗑️ Reset All Metrics", use_container_width=True):
+        if st.button(T('reset_metrics'), use_container_width=True):
             st.session_state["metrics"] = {}
             st.session_state["manual_ratings"] = {}
-            st.success("✅ All metrics reset")
+            st.success(T('metrics_reset'))
             st.rerun()
 
     # ──────────────────────────────────────────────────────────
@@ -2522,8 +2601,8 @@ def page_admin():
         cur_prov = st.session_state.get("ai_provider", "groq")
         prov_label = provider_info.get(cur_prov, {}).get("label", cur_prov)
 
-        st.markdown(f'<div style="font-weight:900;color:#D1FAE5;margin-bottom:.3rem;">Rate the last generated content</div>'
-                    f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">Active provider: {prov_label}</div>',
+        st.markdown(f'<div style="font-weight:900;color:#D1FAE5;margin-bottom:.3rem;">{T("rate_title")}</div>'
+                    f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">{T("active_provider")}: {prov_label}</div>',
                     unsafe_allow_html=True)
 
         if "manual_ratings" not in st.session_state:
@@ -2534,14 +2613,25 @@ def page_admin():
             }
 
         manual_metrics = [
-            ("quality",    "🎯 Model Quality",        "How accurate and realistic is the phishing email?"),
-            ("difficulty", "📊 Difficulty Accuracy",  "Does the difficulty level (Easy/Medium/Hard) feel right?"),
-            ("arabic",     "🌐 Arabic Quality",       "How good is the Arabic language quality? (skip if English)"),
-            ("medical",    "🏥 Medical Realism",      "How realistic is the healthcare/hospital context?"),
+            ("quality",    T('quality_label'),     T('quality_desc')),
+            ("difficulty", T('diff_acc_label'),    T('diff_acc_desc')),
+            ("arabic",     T('arabic_label'),      T('arabic_desc')),
+            ("medical",    T('medical_label'),     T('medical_desc')),
         ]
 
         ratings_to_save = {}
         all_rated = True
+
+        # تنسيق حقل الملاحظات بشكل شفاف مع إطار مثل باقي العناصر
+        st.markdown("""<style>
+.stTextInput>div>div>input{
+    background:rgba(15,23,42,.6)!important;
+    color:#E2E8F0!important;
+    border:1px solid rgba(255,255,255,.15)!important;
+    border-radius:8px!important;
+}
+.stTextInput>div>div>input::placeholder{color:#6B7280!important;}
+</style>""", unsafe_allow_html=True)
 
         for mk, ml, mdesc in manual_metrics:
             st.markdown(f'<div style="margin-bottom:.2rem;"><span style="font-weight:700;color:#E2E8F0;">{ml}</span>'
@@ -2560,86 +2650,93 @@ def page_admin():
 
         col_note, _ = st.columns([2,1])
         with col_note:
-            note = st.text_input("📝 Note (optional)", placeholder="Any observation about this provider...",
+            note = st.text_input(T('note_label'), placeholder=T('note_placeholder'),
                                  key=f"note_{cur_prov}")
 
-        if st.button("💾 Save Ratings", use_container_width=True):
+        if st.button(T('save_btn'), use_container_width=True):
             for mk, val in ratings_to_save.items():
                 st.session_state["manual_ratings"][cur_prov][mk].append(val)
-            st.success(f"✅ Ratings saved for {prov_label}!")
+            st.success(f"{T('ratings_saved')} {prov_label}!")
             st.rerun()
 
         # Quick thumbs up/down shortcut
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
-        st.markdown('<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:.4rem;">Quick Rating</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:.4rem;">{T("quick_rating")}</div>', unsafe_allow_html=True)
         qc1, qc2, qc3 = st.columns(3)
         with qc1:
-            if st.button("👍 Good (4/5 all)", use_container_width=True, key="quick_good"):
+            if st.button(T('good_btn'), use_container_width=True, key="quick_good"):
                 for mk in ["quality","difficulty","arabic","medical"]:
                     st.session_state["manual_ratings"][cur_prov][mk].append(4)
-                st.success("✅ Saved 4/5 for all metrics")
+                st.success(T('saved_45'))
                 st.rerun()
         with qc2:
-            if st.button("😐 Average (3/5)", use_container_width=True, key="quick_avg"):
+            if st.button(T('avg_btn'), use_container_width=True, key="quick_avg"):
                 for mk in ["quality","difficulty","arabic","medical"]:
                     st.session_state["manual_ratings"][cur_prov][mk].append(3)
-                st.success("✅ Saved 3/5 for all metrics")
+                st.success(T('saved_35'))
                 st.rerun()
         with qc3:
-            if st.button("👎 Poor (2/5 all)", use_container_width=True, key="quick_bad"):
+            if st.button(T('poor_btn'), use_container_width=True, key="quick_bad"):
                 for mk in ["quality","difficulty","arabic","medical"]:
                     st.session_state["manual_ratings"][cur_prov][mk].append(2)
-                st.success("✅ Saved 2/5 for all metrics")
+                st.success(T('saved_25'))
                 st.rerun()
 
         # History summary
         st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
         man = st.session_state["manual_ratings"].get(cur_prov, {})
         if any(man.values()):
-            st.markdown(f'<div style="font-weight:700;color:#D1FAE5;margin-bottom:.4rem;">Rating History for {prov_label}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-weight:700;color:#D1FAE5;margin-bottom:.4rem;">{T("rating_history")} {prov_label}</div>', unsafe_allow_html=True)
             for mk, ml, _ in manual_metrics:
                 lst = man.get(mk, [])
                 if lst:
                     a = round(sum(lst)/len(lst),1)
-                    st.markdown(f'<div style="color:#9CA3AF;font-size:.82rem;">{ml}: avg {a}/5 ({len(lst)} ratings) {"⭐"*round(a)}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div style="color:#9CA3AF;font-size:.82rem;">{ml}: {T("avg_label")} {a}/5 ({len(lst)} {T("ratings_label")}) {"⭐"*round(a)}</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
-# زر القفل السري — مخفي في أسفل الصفحة الرئيسية فقط
+# زر القفل السري — أسفل يسار الصفحة الرئيسية فقط، صغير جداً وشفاف
 st.markdown("""
 <style>
 #MainMenu,header,footer{visibility:hidden;}
 [data-testid="stSidebar"]{display:none !important;}
-.secret-lock-btn {
-    position: fixed;
-    bottom: 18px;
-    left: 18px;
-    z-index: 9999;
-    opacity: 0.12;
-    transition: opacity 0.3s ease;
-    cursor: pointer;
-    background: transparent;
-    border: none;
-    font-size: 1rem;
-    color: white;
-    padding: 6px;
-    line-height: 1;
+div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stButton"] > button[kind="secondary"]#secret_lock_marker),
+.secret-lock-wrap {
+    position: fixed !important;
+    bottom: 10px !important;
+    left: 10px !important;
+    z-index: 99999 !important;
+    width: 30px !important;
 }
-.secret-lock-btn:hover { opacity: 0.35; }
+.secret-lock-wrap button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 0.65rem !important;
+    color: rgba(255,255,255,0.10) !important;
+    padding: 2px !important;
+    min-height: unset !important;
+    height: 22px !important;
+    width: 22px !important;
+    line-height: 1 !important;
+}
+.secret-lock-wrap button:hover {
+    color: rgba(255,255,255,0.30) !important;
+    background: transparent !important;
+    border: none !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
 if st.session_state.get("page","home") == "home":
-    col_lock = st.columns([20,1])
-    with col_lock[1]:
-        st.markdown('<div style="position:fixed;bottom:18px;left:18px;z-index:9999;">', unsafe_allow_html=True)
-        if st.button("🔒", key="secret_admin_btn", help=""):
-            st.session_state["page"] = "admin"
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div class="secret-lock-wrap">', unsafe_allow_html=True)
+    if st.button("🔒", key="secret_admin_btn", help=""):
+        st.session_state["page"] = "admin"
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════
 # MAIN ROUTING
