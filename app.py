@@ -31,9 +31,50 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
+# =============================================================
+# Persistent AI Provider Config (survives logout / new session)
+# -------------------------------------------------------------
+# ai_provider used to live only in st.session_state, which is
+# reset on every logout/login or new session. We now store the
+# admin's chosen provider in a small JSON file on disk so it
+# stays the single source of truth across all sessions.
+# =============================================================
+_PROVIDER_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "provider_config.json")
+_VALID_PROVIDERS = {"groq", "anthropic", "openai", "gemini"}
+
+def load_persistent_provider(default="groq"):
+    try:
+        with open(_PROVIDER_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        pk = data.get("ai_provider", default)
+        if pk in _VALID_PROVIDERS:
+            return pk
+    except Exception:
+        pass
+    return default
+
+def save_persistent_provider(pk):
+    if pk not in _VALID_PROVIDERS:
+        return
+    try:
+        with open(_PROVIDER_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"ai_provider": pk}, f)
+    except Exception:
+        # If the filesystem is read-only (some hosting setups), fail silently
+        # and keep relying on session_state for the current session only.
+        pass
+
+def set_active_provider(pk):
+    """Single entrypoint to change the active AI provider.
+    Updates session_state AND persists to disk so it survives
+    logout/login and new sessions/devices."""
+    st.session_state["ai_provider"] = pk
+    save_persistent_provider(pk)
+
 for k, v in [("language","English"),("page","home"),("role",""),
               ("example_index",0),("emails",{}),("difficulty","medium"),
-              ("user_name",""),("user_email",""),("ai_provider","groq"),
+              ("user_name",""),("user_email",""),
+              ("ai_provider", load_persistent_provider("groq")),
               ("admin_authenticated",False),
               ("metrics",{}),  # {provider: {speed:[], json_ok:int, json_fail:int, errors:int, calls:int, hashes:[]}}
               ("manual_ratings",{}),  # {provider: {quality:[], difficulty:[], arabic:[], medical:[]}}
@@ -1865,7 +1906,7 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
                     pcss = "diff-btn diff-btn-sel" if is_psel else "diff-btn"
                     st.markdown(f'<div class="{pcss}">', unsafe_allow_html=True)
                     if st.button(plbl, key=f"prov_{pk}", use_container_width=True):
-                        st.session_state["ai_provider"] = pk
+                        set_active_provider(pk)
                         st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size:.72rem;color:#64748B;margin-top:.3rem;direction:{dir_attr};">Active: <b style="color:#F59E0B;">{provider_options.get(cur_provider,"")}</b></div>', unsafe_allow_html=True)
@@ -2299,6 +2340,7 @@ def page_admin():
         "metrics_reset":    {"en": "✅ All metrics reset",                 "ar": "✅ تم إعادة ضبط كل المعايير"},
         "rate_title":       {"en": "Rate the last generated content",      "ar": "قيّم آخر محتوى تم توليده"},
         "active_provider":  {"en": "Active provider",                     "ar": "المزوّد النشط"},
+        "saved_permanently": {"en": "saved permanently",                  "ar": "محفوظ بشكل دائم"},
         "quality_label":    {"en": "🎯 Model Quality",                    "ar": "🎯 جودة النموذج"},
         "quality_desc":     {"en": "How accurate and realistic is the phishing email?",
                               "ar": "ما مدى دقة وواقعية رسالة التصيد؟"},
@@ -2448,6 +2490,21 @@ button[kind="primary"]:hover{{
 
     tab1, tab2, tab3 = st.tabs([T('tab_provider'), T('tab_score'), T('tab_manual')])
 
+    _persist_pk = load_persistent_provider("groq")
+    _persist_labels = {
+        "groq":      "🟠 Groq (LLaMA 3.3-70b)",
+        "anthropic": "🟣 Claude (claude-sonnet-4-6)",
+        "openai":    "🟢 OpenAI (GPT-4o)",
+        "gemini":    "🔵 Gemini",
+    }
+    st.markdown(f"""
+<div dir="{_dir}" style="display:flex;justify-content:space-between;align-items:center;
+     padding:.6rem 1.2rem;border:1px solid rgba(245,158,11,.5);border-radius:12px;
+     background:rgba(40,30,4,.5);margin-bottom:1rem;">
+  <div style="font-size:.85rem;color:#FCD34D;">💾 {T('active_provider')} ({T('saved_permanently')}):</div>
+  <div style="font-size:.95rem;font-weight:900;color:#FBBF24;">{_persist_labels.get(_persist_pk, _persist_pk)}</div>
+</div>""", unsafe_allow_html=True)
+
     # ──────────────────────────────────────────────────────────
     # TAB 1 — Provider Control
     # ──────────────────────────────────────────────────────────
@@ -2475,7 +2532,7 @@ button[kind="primary"]:hover{{
                             f'</div>', unsafe_allow_html=True)
                 if not is_sel:
                     if st.button(T('activate_btn'), key=f"adm_prov_{pk}", use_container_width=True):
-                        st.session_state["ai_provider"] = pk
+                        set_active_provider(pk)
                         # Clear cached emails to regenerate with new provider
                         st.session_state["emails"] = {}
                         st.session_state.pop("assess_emails", None)
