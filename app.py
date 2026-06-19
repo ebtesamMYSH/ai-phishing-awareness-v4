@@ -2388,7 +2388,12 @@ button[kind="primary"]:hover{{
     border-radius:8px!important;
 }}
 .stTextInput input::placeholder{{color:#6B7280!important;}}
-.stTextInput>div>div{{background:transparent!important;}}
+.stTextInput>div>div,
+.stTextInput div[data-baseweb="input"],
+.stTextInput div[data-baseweb="base-input"]{{
+    background:transparent!important;
+    background-color:transparent!important;
+}}
 </style>""", unsafe_allow_html=True)
 
     def _div(content, extra=""):
@@ -2456,10 +2461,9 @@ button[kind="primary"]:hover{{
         for i, (pk, pv) in enumerate(provider_info.items()):
             with cols[i]:
                 is_sel = cur == pk
-                bg = "background:rgba(37,99,235,.12);border:1px solid rgba(37,99,235,.4);" if is_sel else "background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.15);"
-                status_line = f'<div style="font-size:.7rem;color:#60A5FA;margin-top:.3rem;">● {T("active")}</div>' if is_sel else '<div style="font-size:.7rem;margin-top:.3rem;">&nbsp;</div>'
-                st.markdown(f'<div dir="{_dir}" style="{bg}border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;min-height:64px;display:flex;flex-direction:column;justify-content:center;">'
-                            f'<div style="font-size:.85rem;font-weight:700;color:{"#E2E8F0" if is_sel else "#9CA3AF"};">{pv["label"]}</div>'
+                status_line = f'<div style="font-size:.7rem;color:#9CA3AF;margin-top:.3rem;">● {T("active")}</div>' if is_sel else '<div style="font-size:.7rem;margin-top:.3rem;">&nbsp;</div>'
+                st.markdown(f'<div dir="{_dir}" style="background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.15);border-radius:12px;padding:.8rem;text-align:center;margin-bottom:.5rem;min-height:64px;display:flex;flex-direction:column;justify-content:center;">'
+                            f'<div style="font-size:.85rem;font-weight:700;color:#9CA3AF;">{pv["label"]}</div>'
                             f'{status_line}'
                             f'</div>', unsafe_allow_html=True)
                 if not is_sel:
@@ -2665,12 +2669,18 @@ button[kind="primary"]:hover{{
         # تنسيق حقل الملاحظات بشكل شفاف مع إطار مثل باقي العناصر
         st.markdown("""<style>
 .stTextInput>div>div>input{
-    background:rgba(15,23,42,.6)!important;
+    background:rgba(15,23,42,.5)!important;
     color:#E2E8F0!important;
     border:1px solid rgba(255,255,255,.15)!important;
     border-radius:8px!important;
 }
 .stTextInput>div>div>input::placeholder{color:#6B7280!important;}
+.stTextInput>div>div,
+.stTextInput div[data-baseweb="input"],
+.stTextInput div[data-baseweb="base-input"]{
+    background:transparent!important;
+    background-color:transparent!important;
+}
 </style>""", unsafe_allow_html=True)
 
         for mk, ml, mdesc in manual_metrics:
