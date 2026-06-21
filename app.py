@@ -1120,6 +1120,7 @@ DIFFICULTY: {diff_rule}
 LANGUAGE: {lang_rule}
 
 FORMAT: body=plain text only, \\n for line breaks, no HTML. "to"=email address only.
+IMPORTANT: never use the double-quote character (") anywhere inside any text value (subject/body/explanation/from). If you need to quote a word, use single quotes (') instead — a stray " inside a value breaks the JSON output.
 {"If phishing uses a link: put URL in suspicious_link AND in body. If attachment: filename in attachment field." if is_phishing else 'suspicious_link:"", attachment:""'}
 {"If legitimate: use real official domain (@hospital.org or @moh.gov.sa), no suspicious links, no urgent credential requests.' " if not is_phishing else ""}
 
@@ -1393,6 +1394,39 @@ def call_ai(prompt, max_tokens=1600):
 def call_groq(prompt, max_tokens=1600):
     return call_ai(prompt, max_tokens)
 
+def _escape_stray_inner_quotes(s):
+    """Best-effort repair for a common AI-generation failure: a literal
+    double-quote character used INSIDE a JSON string value (e.g. the model
+    quoting a word in Arabic/English text) instead of a properly escaped
+    \\" or a single quote. We walk the string and re-escape any double-quote
+    that doesn't actually look like a string delimiter (i.e. it isn't
+    immediately followed by a JSON structural character like , : } ] or
+    whitespace+one of those)."""
+    out = []
+    in_string = False
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == '"' and (i == 0 or s[i-1] != '\\'):
+            if not in_string:
+                in_string = True
+                out.append(c)
+            else:
+                # We're inside a string — decide if this quote is the
+                # closing delimiter or a stray quote inside the text.
+                j = i + 1
+                while j < n and s[j] in ' \t\r\n':
+                    j += 1
+                if j >= n or s[j] in ',:}]':
+                    in_string = False
+                    out.append(c)
+                else:
+                    out.append('\\"')
+        else:
+            out.append(c)
+        i += 1
+    return ''.join(out)
+
 def parse_json_response(raw):
     if "```" in raw:
         parts = raw.split("```")
@@ -1412,6 +1446,11 @@ def parse_json_response(raw):
         candidate = re.sub(r"(?<=\w)'(?=\w)", "\u2019", candidate)
         try:
             return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+        # Last resort: repair stray unescaped quotes inside string values
+        try:
+            return json.loads(_escape_stray_inner_quotes(candidate))
         except json.JSONDecodeError:
             pass
     raise json.JSONDecodeError("Cannot parse JSON", raw, 0)
