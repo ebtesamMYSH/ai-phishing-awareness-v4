@@ -1365,14 +1365,23 @@ def call_ai(prompt, max_tokens=1600):
 
         elif provider == "gemini":
             api_key = get_secret("GEMINI_API_KEY")
+            # Gemini 2.5 Flash is a "thinking" model: by default it spends
+            # part of maxOutputTokens on internal reasoning before writing
+            # the visible answer. With a small token budget, thinking alone
+            # could consume it all, leaving an empty text part (which is
+            # exactly the "char 0" JSON parse error seen above). We disable
+            # thinking (not needed for this task) and give a safe token
+            # floor, mirroring the same fix already applied for Claude.
+            gemini_max_tokens = max(max_tokens, 2400)
             resp = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
                 headers={"Content-Type": "application/json"},
                 json={
                     "contents": [{"parts": [{"text": system_prompt + "\n\n" + prompt}]}],
                     "generationConfig": {
-                        "maxOutputTokens": max_tokens,
-                        "temperature":     0.85
+                        "maxOutputTokens": gemini_max_tokens,
+                        "temperature":     0.85,
+                        "thinkingConfig":  {"thinkingBudget": 0}
                     }
                 },
                 timeout=60
@@ -1380,7 +1389,11 @@ def call_ai(prompt, max_tokens=1600):
             raw = resp.json()
             elapsed = time.time() - start_time
             try:
-                text = raw["candidates"][0]["content"]["parts"][0]["text"]
+                parts = raw["candidates"][0]["content"]["parts"]
+                text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+                if not text.strip():
+                    _record_metric(provider, elapsed, False, is_error=True)
+                    return {"error": {"message": f"Gemini returned no text content (finishReason={raw['candidates'][0].get('finishReason')}): {str(raw)[:300]}"}}
                 _record_metric(provider, elapsed, True, str(hash(text))[:8])
                 return {"choices": [{"message": {"content": text}}]}
             except (KeyError, IndexError):
