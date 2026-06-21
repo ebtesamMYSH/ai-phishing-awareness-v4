@@ -1313,6 +1313,12 @@ def call_ai(prompt, max_tokens=1600):
             return data
 
         elif provider == "anthropic":
+            # Claude needs a bigger token budget than the other providers for
+            # the same request: longer/more detailed answers (as observed)
+            # plus any internal reasoning blocks both draw from max_tokens.
+            # Without enough headroom, Arabic responses in particular were
+            # getting cut off before any real text was produced.
+            anthropic_max_tokens = max(max_tokens, 4096)
             resp = requests.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -1322,7 +1328,7 @@ def call_ai(prompt, max_tokens=1600):
                 },
                 json={
                     "model":      "claude-sonnet-4-6",
-                    "max_tokens": max_tokens,
+                    "max_tokens": anthropic_max_tokens,
                     "system":     system_prompt,
                     "messages":   [{"role": "user", "content": prompt}]
                 },
@@ -1331,11 +1337,26 @@ def call_ai(prompt, max_tokens=1600):
             raw = resp.json()
             elapsed = time.time() - start_time
             if "content" in raw and len(raw["content"]) > 0:
-                text = raw["content"][0].get("text", "")
+                # Claude can return multiple content blocks (e.g. a "thinking"
+                # block followed by the actual "text" block, especially for
+                # longer/more complex responses such as Arabic generations).
+                # Reading only content[0] silently returned an empty string
+                # in those cases. We now join ALL text-type blocks instead.
+                text = "".join(
+                    block.get("text", "")
+                    for block in raw["content"]
+                    if block.get("type") == "text"
+                )
+                if not text.strip():
+                    # No usable text block found at all — surface as an error
+                    # instead of returning an empty string that later fails
+                    # JSON parsing with a confusing "char 0" message.
+                    _record_metric(provider, elapsed, False, is_error=True)
+                    return {"error": {"message": f"Claude returned no text content (stop_reason={raw.get('stop_reason')}): {str(raw)[:300]}"}}
                 _record_metric(provider, elapsed, True, str(hash(text))[:8])
                 return {"choices": [{"message": {"content": text}}]}
-            _record_metric(provider, elapsed, False)
-            return {"error": raw}
+            _record_metric(provider, elapsed, False, is_error=True)
+            return {"error": {"message": str(raw)[:300]}}
 
         elif provider == "gemini":
             api_key = get_secret("GEMINI_API_KEY")
@@ -1528,10 +1549,13 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
     _, _, role_type = role_info
     if role_type == "other":
         return generate_other_assess_email(index, is_phishing, language, difficulty)
-    # FIX 2: max_tokens raised from 800 to 1200
+    # FIX: max_tokens raised again (1200 -> 2200). 1200 was too tight,
+    # especially for Arabic, which needs more tokens than English for the
+    # same content. Hitting the limit truncated the JSON mid-response,
+    # which is why every retry kept failing with the same parse error.
     for attempt in range(3):
         try:
-            data = call_groq(build_assess_prompt(role, index, is_phishing, language), max_tokens=1200)
+            data = call_groq(build_assess_prompt(role, index, is_phishing, language), max_tokens=2200)
             if "error" in data:
                 return {"error": data["error"].get("message", str(data["error"]))}
             result = parse_json_response(data["choices"][0]["message"]["content"].strip())
@@ -2134,7 +2158,7 @@ def page_assessment():
 def page_results():
     is_arabic=st.session_state["language"]=="Arabic"; da='rtl' if is_arabic else 'ltr'; TOTAL=10
     def tr(e,a): return a if is_arabic else e
-    st.markdown("""<style>#MainMenu,header,footer{visibility:hidden;}.stApp{background:radial-gradient(circle at top left,#0B2E68 0%,#020617 35%,#020617 100%);color:white;}.block-container{max-width:900px;padding-top:2rem;}.stButton>button{min-height:52px;background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;color:white !important;border:none !important;font-weight:800 !important;border-radius:12px !important;}</style>""",unsafe_allow_html=True)
+    st.markdown("""<style>#MainMenu,header,footer{visibility:hidden;}.stApp{background:radial-gradient(circle at top left,#0B2E68 0%,#020617 35%,#020617 100%);color:white;}.block-container{max-width:900px;padding-top:2rem;}.stButton>button{min-height:52px;background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;color:white !important;border:none !important;font-weight:800 !important;border-radius:12px !important;}div[style*="direction:rtl"]{text-align:right;}</style>""",unsafe_allow_html=True)
     answers=st.session_state.get("assess_answers",{}); pattern=st.session_state.get("assess_pattern",[True]*5+[False]*5); emails=st.session_state.get("assess_emails",{})
     score=sum(1 for i in range(TOTAL) if answers.get(i)==("phishing" if pattern[i] else "legitimate"))
     pct=int((score/TOTAL)*100)
@@ -2158,7 +2182,7 @@ def page_results():
 def page_report():
     is_arabic=st.session_state["language"]=="Arabic"; da='rtl' if is_arabic else 'ltr'; TOTAL=10
     def tp(e,a): return a if is_arabic else e
-    st.markdown(f"""<style>#MainMenu,header,footer{{visibility:hidden;}}.stApp{{background:radial-gradient(circle at top left,#0B2E68 0%,#020617 35%,#020617 100%);color:white;}}.block-container{{max-width:900px;padding-top:2rem;}}.stButton>button{{min-height:52px !important;font-weight:800 !important;border-radius:12px !important;background:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.55) !important;width:100% !important;}}.stButton>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border-color:#1EA7FF !important;}}</style>""",unsafe_allow_html=True)
+    st.markdown(f"""<style>#MainMenu,header,footer{{visibility:hidden;}}.stApp{{background:radial-gradient(circle at top left,#0B2E68 0%,#020617 35%,#020617 100%);color:white;}}.block-container{{max-width:900px;padding-top:2rem;}}.stButton>button{{min-height:52px !important;font-weight:800 !important;border-radius:12px !important;background:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.55) !important;width:100% !important;}}.stButton>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border-color:#1EA7FF !important;}}div[style*="direction:rtl"]{{text-align:right;}}</style>""",unsafe_allow_html=True)
     answers=st.session_state.get("assess_answers",{}); pattern=st.session_state.get("assess_pattern",[True]*5+[False]*5)
     role=st.session_state.get("role",""); lang=st.session_state.get("language","English")
     score=pc=lc=0; pt=sum(1 for p in pattern if p); lt=TOTAL-pt
