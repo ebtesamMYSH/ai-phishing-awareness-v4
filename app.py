@@ -1366,7 +1366,7 @@ def call_ai(prompt, max_tokens=1600):
         elif provider == "gemini":
             api_key = get_secret("GEMINI_API_KEY")
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
                 headers={"Content-Type": "application/json"},
                 json={
                     "contents": [{"parts": [{"text": system_prompt + "\n\n" + prompt}]}],
@@ -2599,7 +2599,7 @@ button[kind="primary"]:hover{{
             "groq":      {"label": "🟠 Groq — LLaMA 3.3-70b",       "secret": "GROQ_API_KEY",      "color": "#F97316"},
             "anthropic": {"label": "🟣 Claude — claude-sonnet-4-6",  "secret": "ANTHROPIC_API_KEY", "color": "#A855F7"},
             "openai":    {"label": "🟢 OpenAI — GPT-4o",             "secret": "OPENAI_API_KEY",    "color": "#22C55E"},
-            "gemini":    {"label": "🔵 Gemini — 2.0 Flash",          "secret": "GEMINI_API_KEY",    "color": "#3B82F6"},
+            "gemini":    {"label": "🔵 Gemini — 2.5 Flash",          "secret": "GEMINI_API_KEY",    "color": "#3B82F6"},
         }
 
         cur = st.session_state.get("ai_provider", "groq")
