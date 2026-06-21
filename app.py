@@ -1323,7 +1323,7 @@ def call_ai(prompt, max_tokens=1600):
             # plus any internal reasoning blocks both draw from max_tokens.
             # Without enough headroom, Arabic responses in particular were
             # getting cut off before any real text was produced.
-            anthropic_max_tokens = max(max_tokens, 4096)
+            anthropic_max_tokens = max(max_tokens, 2400)
             resp = requests.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
