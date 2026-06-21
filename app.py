@@ -2173,6 +2173,15 @@ def page_results():
         bc2="rgba(16,185,129,.5)" if ok else "rgba(239,68,68,.5)"; bg2="rgba(16,185,129,.05)" if ok else "rgba(239,68,68,.05)"
         ri="✅" if ok else "❌"; tl=tr("Phishing","تصيد") if pattern[i] else tr("Legitimate","شرعية"); ic="🚨" if pattern[i] else "✅"
         exp=re.sub(r'<[^>]+>','',em.get("explanation",""))
+        # FIX: bidi line-wrap issue — when an Arabic explanation contains an
+        # embedded Latin/domain substring (e.g. "emr-secure.xyz") and that
+        # substring happens to land at the start of a wrapped line, browsers
+        # can misrender its direction, making that line look like it starts
+        # from the left instead of the right. Wrapping each Latin/domain-like
+        # run with invisible Right-to-Left Marks (U+200F) keeps it anchored
+        # to the surrounding Arabic context regardless of where it wraps.
+        if is_arabic:
+            exp = re.sub(r'[A-Za-z0-9][A-Za-z0-9\.\-_/:@]*[A-Za-z0-9]', lambda m: '\u200f' + m.group(0) + '\u200f', exp)
         st.markdown(f'<div style="border:1px solid {bc2};border-radius:14px;padding:1.2rem 1.5rem;background:{bg2};margin-bottom:1rem;direction:{da};"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;flex-wrap:wrap;gap:.5rem;"><span style="font-weight:800;color:#E2E8F0;">{ri} {tr(f"Q{i+1}",f"س{i+1}")} — {html_lib.escape(em.get("subject",""))}</span><span style="background:{"rgba(239,68,68,.2)" if pattern[i] else "rgba(16,185,129,.2)"};color:{"#FCA5A5" if pattern[i] else "#6EE7B7"};padding:.2rem .8rem;border-radius:99px;font-size:.85rem;font-weight:700;">{ic} {tl}</span></div><div style="color:#94A3B8;font-size:.9rem;line-height:1.6;">{exp}</div></div>',unsafe_allow_html=True)
     st.markdown('<div style="height:1rem"></div>',unsafe_allow_html=True)
     if st.button(tr("Go to Report →","← الانتقال للتقرير"),key="go_report"):
