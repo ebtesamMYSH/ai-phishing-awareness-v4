@@ -758,11 +758,15 @@ This scenario is NON-NEGOTIABLE. Generate the email body, subject, and sender to
 {lang_rule}
 
 ━━━ FORMAT RULES ━━━
-- body: plain text only, use \\n for line breaks, NO HTML
+- body: plain text only, use \\n for line breaks, NO HTML. Keep it concise: 100-180 words maximum.
 - "to": email address only, nothing else
 - If attack uses a link: put URL in "suspicious_link" AND verbatim in body
 - If attack uses attachment: put filename in "attachment" (e.g. file.pdf, data.xlsx)
 - If social engineering only: "suspicious_link":"", "attachment":""
+- Each indicator "description": ONE short sentence, max ~20 words
+- "why_risky": maximum 2 short sentences
+- "learning_tip": ONE short, practical sentence
+- Be concise everywhere. Do not pad any field with extra explanation beyond what's asked.
 
 ━━━ RETURN ONLY VALID JSON ━━━
 CRITICAL: Output ONLY the JSON. No text before or after.
@@ -1119,7 +1123,7 @@ DIFFICULTY: {diff_rule}
 
 LANGUAGE: {lang_rule}
 
-FORMAT: body=plain text only, \\n for line breaks, no HTML. "to"=email address only.
+FORMAT: body=plain text only, \\n for line breaks, no HTML. "to"=email address only. Keep body concise: 100-180 words maximum. Keep "explanation" to 2-3 short sentences maximum.
 IMPORTANT: never use the double-quote character (") anywhere inside any text value (subject/body/explanation/from). If you need to quote a word, use single quotes (') instead — a stray " inside a value breaks the JSON output.
 {"If phishing uses a link: put URL in suspicious_link AND in body. If attachment: filename in attachment field." if is_phishing else 'suspicious_link:"", attachment:""'}
 {"If legitimate: use real official domain (@hospital.org or @moh.gov.sa), no suspicious links, no urgent credential requests.' " if not is_phishing else ""}
@@ -1502,6 +1506,7 @@ BODY PREVIEW: {body_preview}
 
 Your task: Generate ONLY the AI Tutor Analysis for this email.
 Difficulty hint: {diff_hint}
+Be concise: each indicator description is ONE short sentence (max ~20 words), why_risky is max 2 short sentences, learning_tip is ONE short sentence.
 
 RETURN ONLY VALID JSON — no text before or after:
 {{"indicators":[{{"number":1,"title":"indicator title","description":"detailed explanation"}},{{"number":2,"title":"indicator title","description":"detailed explanation"}},{{"number":3,"title":"indicator title","description":"detailed explanation"}}],"why_risky":"why this specific phishing email is dangerous for hospital staff","learning_tip":"practical tip for hospital staff to avoid this attack"}}"""
