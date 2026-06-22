@@ -3121,6 +3121,560 @@ button[kind="primary"]:hover{{
                     st.markdown(f'<div style="color:#9CA3AF;font-size:.82rem;">{ml}: {T("avg_label")} {a}/5 ({len(lst)} {T("ratings_label")}) {"⭐"*round(a)}</div>', unsafe_allow_html=True)
 
 
+
+
+# =============================================================
+# FINAL DIVERSITY + DIFFICULTY OVERRIDE — Study 3
+# -------------------------------------------------------------
+# This block intentionally overrides the earlier prompt/quality
+# functions before the Streamlit router runs. It keeps the UI and
+# provider code unchanged, but strengthens:
+# 1) unbounded learning generation,
+# 2) unbounded assessment generation,
+# 3) the 9-criterion difficulty contract,
+# 4) Arabic/English parity,
+# 5) analysis quality and attack-type diversity.
+# =============================================================
+
+ADVANCED_BANNED_DOMAIN_WORDS = {
+    "secure", "update", "verify", "verification", "login", "reset",
+    "password", "urgent", "alert", "account", "emr", "phish", "fake"
+}
+
+ATTACK_PLAYBOOK = {
+    "clinical": [
+        {"attack":"Credential Harvesting", "vector":"external portal link", "persuasion":"routine clinical workflow", "en":"patient-records access review", "ar":"مراجعة وصول السجلات الطبية"},
+        {"attack":"Attachment Malware", "vector":"PDF/DOCX/XLSM attachment", "persuasion":"patient safety", "en":"urgent patient report attachment", "ar":"مرفق تقرير مريض عاجل"},
+        {"attack":"QR Phishing", "vector":"QR code instruction", "persuasion":"mobile workflow", "en":"mobile clinical checklist QR", "ar":"رمز QR لقائمة تحقق سريرية"},
+        {"attack":"Authority Impersonation", "vector":"reply with sensitive data", "persuasion":"medical director authority", "en":"consultant/director request", "ar":"طلب من مدير أو استشاري"},
+        {"attack":"MFA / OTP Abuse", "vector":"OTP or MFA confirmation", "persuasion":"access continuity", "en":"MFA confirmation for clinical system", "ar":"تأكيد MFA لنظام سريري"},
+        {"attack":"Spear Phishing", "vector":"contextual link or reply", "persuasion":"personalized prior meeting", "en":"follow-up to department meeting", "ar":"متابعة لاجتماع القسم"},
+        {"attack":"Legitimate-Looking Compliance Phish", "vector":"policy acknowledgement", "persuasion":"compliance", "en":"infection-control acknowledgement", "ar":"إقرار مكافحة العدوى"},
+        {"attack":"Cloud Document Scam", "vector":"shared document", "persuasion":"collaboration", "en":"shared clinical handover document", "ar":"مستند تسليم سريري مشترك"},
+    ],
+    "admin": [
+        {"attack":"Invoice Fraud", "vector":"invoice attachment or portal", "persuasion":"payment deadline", "en":"supplier invoice approval", "ar":"اعتماد فاتورة مورد"},
+        {"attack":"BEC / Executive Impersonation", "vector":"reply or bank-transfer instruction", "persuasion":"executive authority", "en":"director payment request", "ar":"طلب دفع من مدير"},
+        {"attack":"Payroll Phishing", "vector":"bank-detail update", "persuasion":"salary continuity", "en":"payroll account confirmation", "ar":"تأكيد حساب الرواتب"},
+        {"attack":"Benefits Enrollment Scam", "vector":"benefits portal", "persuasion":"reward/opportunity", "en":"employee benefits enrollment", "ar":"التسجيل في مزايا الموظفين"},
+        {"attack":"Vendor Portal Scam", "vector":"supplier portal", "persuasion":"contract renewal", "en":"vendor contract renewal", "ar":"تجديد عقد مورد"},
+        {"attack":"Shared Document Scam", "vector":"document share", "persuasion":"administrative process", "en":"shared patient-files report", "ar":"تقرير ملفات مرضى مشترك"},
+        {"attack":"Insurance Portal Phish", "vector":"coverage verification", "persuasion":"claim processing", "en":"insurance claim validation", "ar":"التحقق من مطالبة تأمين"},
+        {"attack":"Meeting Invitation Scam", "vector":"calendar attachment/link", "persuasion":"routine meeting", "en":"accreditation review meeting", "ar":"اجتماع مراجعة الاعتماد"},
+    ],
+    "it": [
+        {"attack":"Credential Harvesting", "vector":"admin portal", "persuasion":"service continuity", "en":"network access review", "ar":"مراجعة وصول الشبكة"},
+        {"attack":"MFA Fatigue / OTP Abuse", "vector":"MFA approval request", "persuasion":"security validation", "en":"MFA push validation", "ar":"اعتماد إشعار MFA"},
+        {"attack":"Attachment Malware", "vector":"script/XLSM/DOCM attachment", "persuasion":"system repair", "en":"backup verification script", "ar":"سكربت تحقق النسخ الاحتياطي"},
+        {"attack":"CIO/CISO Impersonation", "vector":"reply with configuration/data", "persuasion":"executive pressure", "en":"security exception request", "ar":"طلب استثناء أمني"},
+        {"attack":"License Renewal Scam", "vector":"renewal portal", "persuasion":"service deadline", "en":"software license renewal", "ar":"تجديد ترخيص برنامج"},
+        {"attack":"Cloud Backup Scam", "vector":"cloud console link", "persuasion":"data protection", "en":"cloud backup access review", "ar":"مراجعة وصول النسخ السحابي"},
+        {"attack":"QR Phishing", "vector":"QR enrollment", "persuasion":"device enrollment", "en":"device compliance QR", "ar":"رمز امتثال الجهاز"},
+        {"attack":"Spear Phishing", "vector":"contextual reply/link", "persuasion":"known incident follow-up", "en":"follow-up to outage ticket", "ar":"متابعة تذكرة عطل"},
+    ],
+    "other": [
+        {"attack":"Mixed Department Phishing", "vector":"fresh mixed vector", "persuasion":"workplace routine", "en":"new hospital workflow", "ar":"إجراء مستشفى جديد"},
+        {"attack":"Vendor / HR / IT Scam", "vector":"link, attachment, reply, or QR", "persuasion":"authority or compliance", "en":"cross-department request", "ar":"طلب بين الأقسام"},
+        {"attack":"Legitimate-Looking Internal Process", "vector":"contextual workflow", "persuasion":"routine", "en":"ordinary internal process abused", "ar":"استغلال إجراء داخلي عادي"},
+    ]
+}
+
+LEGITIMATE_PLAYBOOK = {
+    "clinical": [
+        {"en":"shift schedule update", "ar":"تحديث جدول المناوبات", "sender":"Head Nurse / Clinical Operations"},
+        {"en":"infection-control guideline notice", "ar":"إشعار إرشادات مكافحة العدوى", "sender":"Infection Control Team"},
+        {"en":"CME workshop invitation", "ar":"دعوة ورشة تعليم طبي مستمر", "sender":"Medical Education"},
+        {"en":"lab downtime notice", "ar":"إشعار توقف مؤقت للمختبر", "sender":"Laboratory Department"},
+        {"en":"radiology protocol reminder", "ar":"تذكير ببروتوكول الأشعة", "sender":"Radiology Department"},
+    ],
+    "admin": [
+        {"en":"policy acknowledgement with no link", "ar":"إقرار سياسة بدون رابط", "sender":"HR Department"},
+        {"en":"procurement order confirmation", "ar":"تأكيد طلب مشتريات", "sender":"Procurement Department"},
+        {"en":"insurance training session", "ar":"جلسة تدريب التأمين", "sender":"Training Department"},
+        {"en":"meeting room change", "ar":"تغيير قاعة اجتماع", "sender":"Admin Office"},
+        {"en":"accreditation visit reminder", "ar":"تذكير بزيارة الاعتماد", "sender":"Quality Department"},
+    ],
+    "it": [
+        {"en":"scheduled maintenance notice", "ar":"إشعار صيانة مجدولة", "sender":"IT Department"},
+        {"en":"helpdesk ticket closure", "ar":"إغلاق تذكرة دعم", "sender":"IT Helpdesk"},
+        {"en":"approved patching window", "ar":"نافذة تحديث معتمدة", "sender":"Systems Team"},
+        {"en":"VPN maintenance reminder", "ar":"تذكير صيانة VPN", "sender":"Network Team"},
+        {"en":"security awareness training", "ar":"تدريب توعية أمنية", "sender":"Cybersecurity Office"},
+    ],
+    "other": [
+        {"en":"general hospital announcement", "ar":"إعلان مستشفى عام", "sender":"Hospital Administration"},
+        {"en":"training reminder", "ar":"تذكير تدريب", "sender":"Training Department"},
+        {"en":"safe operational update", "ar":"تحديث تشغيلي آمن", "sender":"Operations Office"},
+    ]
+}
+
+def _choice_no_recent(items, memory_key, label_getter=lambda x: str(x)):
+    recent = st.session_state.get(memory_key, [])
+    pool = [x for x in items if label_getter(x) not in recent]
+    if not pool:
+        pool = list(items)
+        recent = []
+    item = random.choice(pool)
+    label = label_getter(item)
+    st.session_state[memory_key] = (recent + [label])[-8:]
+    return item
+
+def get_generation_plan(role_type, is_phishing=True, is_ar=False, phase="learn"):
+    if is_phishing:
+        item = _choice_no_recent(
+            ATTACK_PLAYBOOK.get(role_type, ATTACK_PLAYBOOK["other"]),
+            f"plan_memory_{phase}_{role_type}_phish",
+            lambda x: f"{x['attack']}|{x['vector']}|{x['persuasion']}"
+        )
+        return {
+            "attack_type": item["attack"],
+            "scenario_seed": item["ar"] if is_ar else item["en"],
+            "vector": item["vector"],
+            "persuasion": item["persuasion"],
+        }
+    item = _choice_no_recent(
+        LEGITIMATE_PLAYBOOK.get(role_type, LEGITIMATE_PLAYBOOK["other"]),
+        f"plan_memory_{phase}_{role_type}_legit",
+        lambda x: f"{x['en']}|{x['sender']}"
+    )
+    return {
+        "attack_type": "Legitimate",
+        "scenario_seed": item["ar"] if is_ar else item["en"],
+        "vector": "safe internal communication",
+        "persuasion": "normal workplace communication",
+        "sender_hint": item["sender"],
+    }
+
+def get_role_unbounded_context(role_type, is_ar=False):
+    if is_ar:
+        return {
+            "clinical": "الدور سريري داخل مستشفى سعودي. يمكن أن تشمل البيئة: طبيب، تمريض، صيدلة، مختبر، أشعة، عيادات، طوارئ، عناية مركزة، سجلات مرضى، PACS، LIS، EMR، تسليم مناوبات، بروتوكولات وزارة الصحة.",
+            "admin": "الدور إداري داخل مستشفى سعودي. يمكن أن تشمل البيئة: استقبال، سكرتارية طبية، ملفات مرضى، تأمين، فوترة، مشتريات، موارد بشرية، اعتماد، عقود موردين، رواتب، اجتماعات إدارية.",
+            "it": "الدور تقني داخل مستشفى سعودي. يمكن أن تشمل البيئة: VPN، شبكات، خوادم، EMR، نسخ احتياطي، Active Directory، MFA، شهادات، جدار ناري، تراخيص، مكتب مساعدة، أمن سيبراني.",
+            "other": "الدور موظف عام داخل مستشفى سعودي. اختر قسمًا منطقيًا جديدًا في كل مرة: سريري، إداري، تقني، تشغيلي، دعم، تدريب، جودة.",
+        }.get(role_type, "موظف في مستشفى سعودي.")
+    return {
+        "clinical": "Clinical role in a Saudi hospital. Possible context: doctor, nurse, pharmacy, laboratory, radiology, clinics, ER, ICU, patient records, PACS, LIS, EMR, handover, MOH clinical protocols.",
+        "admin": "Administrative role in a Saudi hospital. Possible context: reception, medical secretary, patient records, insurance, billing, procurement, HR, accreditation, vendor contracts, payroll, administrative meetings.",
+        "it": "IT/Informatics role in a Saudi hospital. Possible context: VPN, networks, servers, EMR, backups, Active Directory, MFA, certificates, firewall, licenses, helpdesk, cybersecurity.",
+        "other": "General Saudi hospital employee. Choose a fresh logical department each time: clinical, administrative, technical, operations, support, training, quality.",
+    }.get(role_type, "Saudi hospital employee.")
+
+def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
+    """Final 9-criterion difficulty engine with strong separation."""
+    if is_ar:
+        if is_phishing:
+            rules = {
+                "easy": """
+مستوى مبتدئ — يجب أن يكون التصيد واضحًا جدًا عبر 9 معايير:
+1) النطاق: مزيف بوضوح، غريب، وغير قريب من الرسمي.
+2) الأخطاء: ضع بالضبط خطأين لغويين واضحين في جسم الرسالة.
+3) الإلحاح: تهديد مباشر خلال ساعات أو اليوم.
+4) التحية: عامة فقط مثل عزيزي الموظف/Dear Staff.
+5) المرسل: قسم عام أو اسم غير دقيق.
+6) الطلب: طلب واضح لكلمة مرور/بيانات دخول/تحديث حساب.
+7) السياق الداخلي: عام وضعيف، بلا تفاصيل شخصية.
+8) ناقل الهجوم: رابط واحد فقط أو مرفق واحد فقط.
+9) التكتيك: خوف وإلحاح مباشر.
+التحليل: اذكر Attack Type وRisk Level، واجعل أول سبب هو الطلب الحساس أو التهديد وليس الدومين دائمًا.
+""",
+                "medium": """
+مستوى متوسط — يجب أن يكون خادعًا لكن قابلًا للاكتشاف عبر 9 معايير:
+1) النطاق: مقبول ظاهريًا لكنه غير رسمي عند التدقيق.
+2) الأخطاء: خطأ واحد خفيف فقط أو صياغة غريبة بسيطة.
+3) الإلحاح: موعد مهني 24–72 ساعة بدون تهديد عدواني.
+4) التحية: شبه مخصصة بالاسم الأول أو الدور.
+5) المرسل: قسم/موظف يبدو معقولًا لكن توجد فجوة.
+6) الطلب: طلب غير معتاد لكنه ممكن في العمل.
+7) السياق الداخلي: تفصيل واحد منطقي مثل قسم/نظام/موعد.
+8) ناقل الهجوم: رابط أو مرفق أو طلب رد، مع هندسة اجتماعية خفيفة.
+9) التكتيك: مصداقية مهنية + ضغط زمني خفيف.
+التحليل: نوّع المؤشرات؛ لا تبدأ دائمًا بـ"نطاق غير مألوف".
+""",
+                "hard": """
+مستوى متقدم — يجب أن يبدو شبه شرعي وصعب الاكتشاف عبر 9 معايير:
+1) النطاق: قريب بذكاء أو يبدو كخدمة عمل خارجية، لكن ليس رسميًا. لا تستخدم كلمات مكشوفة مثل secure/update/verify/login/reset/password/urgent/alert/account/emr.
+2) الأخطاء: صفر أخطاء.
+3) الإلحاح: مهذب وخفي، بدون تهديد مباشر أو حروف كبيرة.
+4) التحية: مخصصة بالاسم والدور.
+5) المرسل: شخص/قسم واقعي جدًا مع توقيع مهني.
+6) الطلب: لا تطلب كلمة المرور مباشرة؛ اجعل الخطر في إجراء يبدو طبيعيًا: رد ببيانات، فتح مرفق، اعتماد MFA، مراجعة مستند، QR، أو بوابة.
+7) السياق الداخلي: Spear phishing بسياق خفيف مثل اجتماع سابق/مناوبة/تذكرة/مراجعة.
+8) ناقل الهجوم: ليس الرابط دائمًا؛ استخدم أحيانًا مرفق/QR/رد/مكالمة/اعتماد.
+9) التكتيك: سلطة أو ثقة أو روتين مهني، وليس خوفًا.
+التحليل: ركّز على السلوك والسياق والطلب، وليس الدومين فقط.
+""",
+            }
+        else:
+            rules = {
+                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط hospital.org أو moh.gov.sa، لا روابط خارجية، لا طلب بيانات حساسة، لا تهديد، سياق عمل بسيط وآمن.",
+                "medium": "رسالة شرعية متوسطة: نطاق رسمي فقط، موعد أو إجراء طبيعي، تفاصيل عمل واقعية، يمكن ذكر الإنترانت أو رقم تحويلة، ولا يوجد طلب كلمة مرور أو بيانات حساسة.",
+                "hard": "رسالة شرعية متقدمة: رسمية ومفصلة وقد تبدو مهمة أو عاجلة مهنيًا، لكنها آمنة تمامًا: نطاق رسمي، لا رابط خارجي مشبوه، لا بيانات حساسة، لا تهديد.",
+            }
+    else:
+        if is_phishing:
+            rules = {
+                "easy": """
+BEGINNER — make phishing obvious through 9 criteria:
+1) Domain: clearly fake and not close to official.
+2) Spelling: exactly two obvious mistakes in the body.
+3) Urgency: direct threat within hours/today.
+4) Greeting: generic only: Dear Staff/Dear Team.
+5) Sender: vague department or generic name.
+6) Request: obvious password/credential/account-update request.
+7) Insider context: weak and generic.
+8) Vector: one vector only: link OR attachment.
+9) Psychology: blunt fear and urgency.
+Analysis: include Attack Type and Risk Level. The first indicator should often be the sensitive request/threat, not always the domain.
+""",
+                "medium": """
+INTERMEDIATE — mixed red flags through 9 criteria:
+1) Domain: plausible but not official on inspection.
+2) Spelling: exactly one subtle mistake OR one slightly odd phrase.
+3) Urgency: professional 24–72 hour deadline, no aggressive threat.
+4) Greeting: semi-personal: first name or role.
+5) Sender: plausible but imperfect.
+6) Request: unusual but possible in workplace context.
+7) Insider context: one realistic department/system/deadline detail.
+8) Vector: link, attachment, or reply request with light social engineering.
+9) Psychology: professional credibility plus mild time pressure.
+Analysis: vary indicator order; do not always start with Unfamiliar Domain.
+""",
+                "hard": """
+ADVANCED — almost legitimate and hard to detect through 9 criteria:
+1) Domain: intelligently close to a workplace/health service, but not official. Do NOT use obvious words: secure/update/verify/login/reset/password/urgent/alert/account/emr.
+2) Spelling: zero mistakes.
+3) Urgency: polite and subtle only; no threat, no all-caps.
+4) Greeting: personalized with name and role/title.
+5) Sender: realistic person/department with professional signature.
+6) Request: never ask directly for a password; hide risk inside a normal-looking workflow: reply with data, open attachment, approve MFA, review document, scan QR, call number, or use portal.
+7) Insider context: light spear-phishing context such as prior meeting, shift, ticket, case review, or department workflow.
+8) Vector: not always link; sometimes attachment, QR, reply, phone call, MFA, or shared document.
+9) Psychology: authority, trust, routine compliance, or professional responsibility.
+Analysis: focus on behavior, context mismatch, role mismatch, data sensitivity, MFA/attachment risk—not domain only.
+""",
+            }
+        else:
+            rules = {
+                "easy": "Legitimate Beginner: official hospital.org or moh.gov.sa only, no external links, no sensitive request, no threat, simple safe workplace purpose.",
+                "medium": "Legitimate Intermediate: official domain only, normal deadline/process, realistic workflow detail, may mention intranet/extension, no credentials/payment request.",
+                "hard": "Legitimate Advanced: official and detailed, may look important or professionally urgent, but safe: official domain, no suspicious external link, no sensitive request, no threat.",
+            }
+    return rules.get(difficulty, rules.get("medium"))
+
+def get_analysis_contract(is_ar=False):
+    if is_ar:
+        return """
+قواعد التحليل التعليمي:
+- يجب أن تكون المؤشرات الثلاثة مختلفة فعلًا، ولا تبدأ دائمًا بالنطاق.
+- رتب الأولوية هكذا عند وجودها: طلب بيانات/كلمة مرور، بيانات مرضى، اعتماد MFA/OTP، تحويل مالي/فاتورة، مرفق أو QR، انتحال سلطة، عدم توافق الدور، نطاق خارجي، إلحاح، أخطاء.
+- يجب تضمين داخل النصوص: نوع الهجوم Attack Type، مستوى الخطورة Risk Level، وملاحظة مرتبطة بسياق الوظيفة.
+- لا تجعل "خطأ إملائي" سببًا رئيسيًا إذا يوجد طلب بيانات أو مرفق أو MFA أو تحويل مالي.
+"""
+    return """
+AI analysis rules:
+- The 3 indicators must be genuinely different; do not always start with the domain.
+- Prioritize indicators in this order when present: credential request, patient data, MFA/OTP abuse, financial/invoice request, attachment/QR risk, authority impersonation, role-context mismatch, external domain, urgency, spelling.
+- Include Attack Type, Risk Level, and one role-context note inside the indicator descriptions / why_risky.
+- Do not make spelling the main indicator when credentials, patient data, attachment, MFA, or financial risk exists.
+"""
+
+def build_prompt(role, index, language):
+    is_ar = (language == "Arabic")
+    difficulty = st.session_state.get("difficulty", "medium")
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    seed = random.randint(100000, 999999)
+    plan = get_generation_plan(role_type, is_phishing=True, is_ar=is_ar, phase="learn")
+    recipient_email = get_recipient(role, index, language, phase="learn") if role_type != "other" else f"staff.{seed}@hospital.org"
+    avoid_topics = get_avoid_list_text(role_type, "learn", is_ar)
+    avoid_domains = get_used_domains_text(role_type, "learn", is_ar)
+    role_context = get_role_unbounded_context(role_type, is_ar)
+    diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
+    analysis_contract = get_analysis_contract(is_ar)
+
+    if is_ar:
+        return f"""
+أنت مولّد أمثلة تعلم للتوعية بالتصيد في بيئة مستشفى سعودي.
+
+المطلوب: ولّد مثال تعلم واحد فقط. يجب أن يكون تصيدًا تعليميًا آمنًا ومحاكى.
+
+خطة التنوع لهذه المحاولة:
+- نوع الهجوم: {plan['attack_type']}
+- فكرة جديدة مفتوحة: {plan['scenario_seed']}
+- ناقل الهجوم المطلوب: {plan['vector']}
+- أسلوب الإقناع: {plan['persuasion']}
+
+قواعد إلزامية:
+- لا تستخدم قالبًا ثابتًا ولا تعيد صياغة مثال سابق.
+- لا تجعل كل شيء رابطًا؛ التزم بناقل الهجوم المطلوب إن كان مرفقًا/QR/ردًا/MFA/مكالمة.
+- اختر نطاقًا جديدًا واقعي الشكل. في المتقدم لا تستخدم كلمات مكشوفة في النطاق.
+- لا تستخدم النص الحرفي suspicious_link داخل body.
+- يجب أن يكون التحليل عميقًا ومتنوعًا، وليس Domain/Urgency/Spelling دائمًا.
+- أخرج JSON فقط.
+
+السياق:
+{role_context}
+المستلم: {recipient_email}
+رقم كسر التكرار: {seed}
+{avoid_topics}{avoid_domains}
+قواعد الصعوبة:
+{diff_rule}
+{analysis_contract}
+
+أخرج JSON بهذا الشكل فقط:
+{{
+  "email_type": "نوع الهجوم المحدد",
+  "attack_type": "{plan['attack_type']}",
+  "risk_level": "Low/Medium/High/Critical",
+  "confidence_score": "0-100%",
+  "from": "اسم مرسل واقعي <email@invented-domain>",
+  "to": "{recipient_email}",
+  "subject": "عنوان الرسالة",
+  "attachment": "اسم المرفق أو فراغ",
+  "body": "نص البريد الكامل",
+  "suspicious_text": "أخطر عبارة في الرسالة",
+  "suspicious_link": "الرابط المشبوه أو فراغ",
+  "indicators": [
+    {{"number": 1, "title": "نوع الهجوم / الطلب الخطر", "description": "شرح مرتبط بالسياق الوظيفي"}},
+    {{"number": 2, "title": "مؤشر سلوكي أو تقني مختلف", "description": "شرح قصير"}},
+    {{"number": 3, "title": "مؤشر ثالث مختلف", "description": "شرح قصير"}}
+  ],
+  "why_risky": "اذكر نوع الهجوم، مستوى الخطورة، ولماذا يهم هذا الدور داخل المستشفى",
+  "learning_tip": "نصيحة عملية قصيرة"
+}}
+"""
+    return f"""
+You generate phishing-awareness learning examples for a Saudi hospital.
+
+Task: Generate ONE simulated phishing learning email.
+
+Diversity plan for this attempt:
+- Attack Type: {plan['attack_type']}
+- Fresh scenario seed: {plan['scenario_seed']}
+- Required attack vector: {plan['vector']}
+- Persuasion style: {plan['persuasion']}
+
+Mandatory rules:
+- Do not use a fixed template or paraphrase a previous example.
+- Do not make every example a link; follow the required vector if it is attachment/QR/reply/MFA/phone/shared document.
+- Invent a new realistic-looking domain. For Advanced, avoid obvious domain words.
+- Never write the literal placeholder suspicious_link inside body.
+- The analysis must be varied and deep, not always Domain/Urgency/Spelling.
+- Return JSON only.
+
+Context:
+{role_context}
+Recipient: {recipient_email}
+Anti-repeat seed: {seed}
+{avoid_topics}{avoid_domains}
+Difficulty rules:
+{diff_rule}
+{analysis_contract}
+
+Return only this JSON structure:
+{{
+  "email_type": "specific attack type",
+  "attack_type": "{plan['attack_type']}",
+  "risk_level": "Low/Medium/High/Critical",
+  "confidence_score": "0-100%",
+  "from": "realistic sender name <email@invented-domain>",
+  "to": "{recipient_email}",
+  "subject": "email subject",
+  "attachment": "filename or empty string",
+  "body": "full email body",
+  "suspicious_text": "most suspicious phrase",
+  "suspicious_link": "suspicious URL or empty string",
+  "indicators": [
+    {{"number": 1, "title": "Attack type / risky request", "description": "role-context explanation"}},
+    {{"number": 2, "title": "different behavioral or technical clue", "description": "short explanation"}},
+    {{"number": 3, "title": "third different clue", "description": "short explanation"}}
+  ],
+  "why_risky": "include attack type, risk level, and why it matters for this hospital role",
+  "learning_tip": "short practical tip"
+}}
+"""
+
+def build_assess_prompt(role, index, is_phishing, language):
+    is_ar = (language == "Arabic")
+    difficulty = st.session_state.get("difficulty", "medium")
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    seed = random.randint(100000, 999999)
+    plan = get_generation_plan(role_type, is_phishing=is_phishing, is_ar=is_ar, phase="assess")
+    recipient_email = get_recipient(role, index, language, phase="assess") if role_type != "other" else f"staff.{seed}@hospital.org"
+    suffix = f"assess_{is_phishing}"
+    avoid_topics = get_avoid_list_text(role_type, suffix, is_ar)
+    avoid_domains = get_used_domains_text(role_type, suffix, is_ar)
+    role_context = get_role_unbounded_context(role_type, is_ar)
+    diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=is_phishing, is_ar=is_ar)
+
+    if is_ar:
+        label = "تصيد" if is_phishing else "شرعي"
+        legit_rule = "إذا كانت شرعية: استخدم hospital.org أو moh.gov.sa فقط، ولا تضع طلب بيانات حساسة أو تهديدًا أو رابطًا خارجيًا مشبوهًا."
+        return f"""
+أنت مولّد أسئلة اختبار للتوعية بالتصيد في بيئة مستشفى سعودي.
+
+المطلوب: ولّد رسالة اختبار واحدة. التصنيف الصحيح يجب أن يكون: {label}.
+
+خطة التنوع:
+- النوع/الفكرة: {plan['attack_type']} — {plan['scenario_seed']}
+- ناقل الرسالة: {plan['vector']}
+- أسلوب الإقناع/السياق: {plan['persuasion']}
+
+قواعد إلزامية:
+- لا تستخدم قوالب ثابتة.
+- لا تكرر نفس نوع السؤال أو نفس النطاق أو نفس أسلوب التحليل.
+- أسئلة الاختبار يجب أن تحتوي مزيجًا واقعيًا: تصيد وروابط ومرفقات وQR وردود وMFA ورسائل شرعية آمنة.
+- التفسير يجب أن يشرح التصنيف الصحيح بوضوح، مع ذكر نوع الهجوم أو سبب الشرعية.
+- أخرج JSON فقط.
+{legit_rule}
+
+السياق:
+{role_context}
+المستلم: {recipient_email}
+رقم كسر التكرار: {seed}
+{avoid_topics}{avoid_domains}
+قواعد الصعوبة:
+{diff_rule}
+
+أخرج JSON بهذا الشكل فقط:
+{{
+  "is_phishing": {str(is_phishing).lower()},
+  "email_type": "نوع الرسالة",
+  "attack_type": "{plan['attack_type']}",
+  "from": "اسم مرسل واقعي <email@domain>",
+  "to": "{recipient_email}",
+  "subject": "عنوان الرسالة",
+  "attachment": "اسم المرفق أو فراغ",
+  "body": "نص البريد الكامل",
+  "suspicious_text": "أخطر عبارة أو فراغ إذا شرعي",
+  "suspicious_link": "الرابط المشبوه أو فراغ",
+  "explanation": "شرح مختصر: هل هو تصيد أو شرعي، وما أقوى سببين للتصنيف"
+}}
+"""
+    label = "PHISHING" if is_phishing else "LEGITIMATE"
+    legit_rule = "If legitimate: use hospital.org or moh.gov.sa only; no sensitive-data request, no threat, no suspicious external link."
+    return f"""
+You generate assessment questions for phishing awareness in a Saudi hospital.
+
+Task: Generate ONE assessment email. Correct label must be: {label}.
+
+Diversity plan:
+- Type/idea: {plan['attack_type']} — {plan['scenario_seed']}
+- Message vector: {plan['vector']}
+- Persuasion/context: {plan['persuasion']}
+
+Mandatory rules:
+- Do not use fixed templates.
+- Do not repeat the same question type, domain, or analysis style.
+- Assessment must include a realistic mix across runs: phishing, links, attachments, QR, reply requests, MFA, and safe legitimate messages.
+- Explanation must clearly justify the correct label and mention the attack type or why it is safe.
+- Return JSON only.
+{legit_rule}
+
+Context:
+{role_context}
+Recipient: {recipient_email}
+Anti-repeat seed: {seed}
+{avoid_topics}{avoid_domains}
+Difficulty rules:
+{diff_rule}
+
+Return only this JSON structure:
+{{
+  "is_phishing": {str(is_phishing).lower()},
+  "email_type": "new email type",
+  "attack_type": "{plan['attack_type']}",
+  "from": "realistic sender name <email@domain>",
+  "to": "{recipient_email}",
+  "subject": "email subject",
+  "attachment": "filename or empty string",
+  "body": "full email body",
+  "suspicious_text": "most suspicious phrase or empty string if legitimate",
+  "suspicious_link": "suspicious URL or empty string",
+  "explanation": "brief explanation: phishing or legitimate, with the two strongest reasons"
+}}
+"""
+
+def get_generation_quality_issues(result, difficulty, is_phishing=True):
+    if not isinstance(result, dict):
+        return ["result is not a JSON object"]
+    body = result.get("body", "") or ""
+    subject = result.get("subject", "") or ""
+    sender = result.get("from", "") or ""
+    link = result.get("suspicious_link", "") or ""
+    attach = result.get("attachment", "") or ""
+    attack_type = result.get("attack_type", "") or result.get("email_type", "") or ""
+    combined = " ".join([body, subject, sender, link, attach, attack_type])
+    domains = extract_domains_from_result(result)
+    non_official = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
+    issues = []
+
+    if is_phishing:
+        has_vector = bool(non_official or attach or re.search(r'\bQR\b|رمز\s*QR|reply|رد\s|OTP|MFA|اتصل|call\s', combined, re.I))
+        if not has_vector:
+            issues.append("phishing item needs a clear vector: fake domain/link, attachment, QR, reply request, MFA/OTP, or phone request")
+        if difficulty == "easy":
+            if not _has_generic_greeting(body):
+                issues.append("Beginner must use a generic greeting")
+            if not re.search(r'password|credential|login|verify|account|bank|IBAN|OTP|MFA|كلمة مرور|بيانات الدخول|تحقق|حساب|آيبان|رمز', combined, re.I):
+                issues.append("Beginner needs an obvious sensitive request")
+            if not re.search(r'urgent|immediately|today|suspended|terminated|locked|عاجل|فورًا|اليوم|تعليق|إيقاف', combined, re.I):
+                issues.append("Beginner needs obvious urgency/threat")
+        elif difficulty == "medium":
+            if _contains_long_all_caps(combined):
+                issues.append("Intermediate must not use aggressive all-caps")
+            if re.search(r'permanent termination|within 1 hour|act now|account closed|إنهاء دائم|خلال ساعة|تصرف الآن', combined, re.I):
+                issues.append("Intermediate threat is too aggressive")
+        elif difficulty == "hard":
+            if _has_generic_greeting(body):
+                issues.append("Advanced must use a personalized greeting")
+            if _contains_long_all_caps(combined):
+                issues.append("Advanced must not contain all-caps")
+            if re.search(r'act now|failure to comply|account will be closed|enter your password|full credentials|تصرف الآن|سيتم إغلاق|أدخل كلمة المرور|بيانات الدخول كاملة', combined, re.I):
+                issues.append("Advanced contains beginner-style direct threat or password request")
+            if any(_domain_has_obvious_advanced_word(d) for d in non_official):
+                issues.append("Advanced fake domain is too obvious")
+            # Advanced should not be only an obvious link-verification email unless the context is spear-phishing.
+            if re.search(r'verify your account|account verification|تحقق من حسابك|تأكيد الحساب', combined, re.I) and not re.search(r'meeting|ticket|case|shift|review|اعتماد|اجتماع|تذكرة|مناوبة|مراجعة', combined, re.I):
+                issues.append("Advanced needs contextual spear-phishing, not generic account verification")
+    else:
+        bad = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
+        if bad:
+            issues.append("Legitimate item must not contain external or fake domains")
+        if re.search(r'password|credential|verify your account|enter your login|OTP|MFA|كلمة مرور|بيانات الدخول|تحقق من حسابك|رمز تحقق', combined, re.I):
+            issues.append("Legitimate item must not ask for credentials/MFA/account verification")
+        if re.search(r'suspended|terminated|locked|account closed|تعليق|إيقاف|إغلاق الحساب', combined, re.I):
+            issues.append("Legitimate item must not threaten account suspension")
+    return issues
+
+def get_system_prompt():
+    difficulty = st.session_state.get("difficulty", "medium")
+    role = st.session_state.get("role", "Clinical")
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    role_context = get_role_unbounded_context(role_type, False)
+    return f"""
+You are a cybersecurity training content generator for a Saudi healthcare phishing-awareness study.
+Role context: {role_context}
+Current difficulty: {difficulty}.
+
+Hard rules:
+- Return valid JSON only.
+- Keep all content safe, simulated, and educational.
+- Do not use fixed templates or memorized demonstration domains.
+- Generate varied healthcare workplace scenarios across links, attachments, QR, reply requests, MFA/OTP, phone requests, shared documents, invoice fraud, BEC, spear phishing, and legitimate internal messages.
+- For legitimate emails, use only hospital.org or moh.gov.sa and include no sensitive-data request, no threat, and no suspicious external link.
+- For phishing emails, use fake domains or simulated unsafe requests only. Do not impersonate a real private organization.
+- Beginner, Intermediate, and Advanced must be visibly different.
+- Arabic and English must have equal depth and quality.
+""".strip()
+
+# =============================================================
+# END FINAL DIVERSITY + DIFFICULTY OVERRIDE
+# =============================================================
+
 # ══════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
