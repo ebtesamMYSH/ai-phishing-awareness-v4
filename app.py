@@ -837,907 +837,375 @@ def remember_used_topic(role_type, key_suffix, topic_text):
 # FIX 1: build_prompt — upgraded to llama-3.3-70b-versatile
 # and enhanced difficulty rules with more detail
 # =============================================================
+def get_used_domains_text(role_type, key_suffix, is_ar):
+    """Return domains already generated in this session so the model avoids them."""
+    used = st.session_state.get(f"used_domains_{role_type}_{key_suffix}", [])
+    if not used:
+        return ""
+    items = "، ".join(used) if is_ar else ", ".join(used)
+    if is_ar:
+        return f"\nالنطاقات التي استُخدمت سابقًا في هذه الجلسة ويُمنع تكرارها أو استخدام نطاق قريب منها: {items}\n"
+    return f"\nDomains already used in this session. Do NOT reuse these domains or close variants: {items}\n"
+
+def extract_domains_from_result(result):
+    """Extract domains from generated email fields for session-level anti-repeat memory."""
+    if not isinstance(result, dict):
+        return []
+    text = " ".join(str(result.get(k, "")) for k in ["from", "body", "suspicious_link"])
+    domains = re.findall(r'(?:https?://)?(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}', text)
+    clean = []
+    for d in domains:
+        d = re.sub(r'^https?://', '', d).split('/')[0].strip().lower()
+        if d and d not in clean and d not in {"hospital.org", "moh.gov.sa"}:
+            clean.append(d)
+    return clean[:5]
+
+def remember_generated_artifacts(role_type, key_suffix, result):
+    """Remember topic + domains so later generations in the same session avoid repetition."""
+    remember_used_topic(role_type, key_suffix, result.get("email_type") or result.get("subject"))
+    domains = extract_domains_from_result(result)
+    if not domains:
+        return
+    key = f"used_domains_{role_type}_{key_suffix}"
+    current = st.session_state.get(key, [])
+    for d in domains:
+        if d not in current:
+            current.append(d)
+    st.session_state[key] = current[-30:]
+
+def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
+    """Nine explicit criteria so Beginner/Intermediate/Advanced are visibly different."""
+    if is_ar:
+        if is_phishing:
+            rules = {
+                "easy": """
+مستوى مبتدئ — يجب أن تكون علامات التصيد واضحة جدًا حسب 9 معايير:
+1) النطاق: مزيف بوضوح، لكن اختر نطاقًا جديدًا بالكامل ولا تستخدم أمثلة محفوظة.
+2) الأخطاء: بالضبط خطآن إملائيان واضحان في النص.
+3) الإلحاح: قوي جدًا مع تهديد مباشر واستخدام حروف كبيرة/صياغة صارخة عند الحاجة.
+4) التحية: عامة فقط مثل: عزيزي الموظف / Dear Staff.
+5) المرسل: اسم جهة عام أو غير دقيق.
+6) الطلب: طلب حساس واضح مثل كلمة مرور/بيانات دخول/رابط تحقق.
+7) المعرفة الداخلية: صفر، الرسالة عامة.
+8) التعقيد: ناقل هجوم واحد فقط.
+9) التكتيك النفسي: خوف وإلحاح مباشر.
+""",
+                "medium": """
+مستوى متوسط — يجب أن تكون العلامات مختلطة حسب 9 معايير:
+1) النطاق: مشبوه قليلًا، ليس فاضحًا، ويجب أن يكون جديدًا بالكامل.
+2) الأخطاء: خطأ إملائي واحد فقط وبشكل خفيف.
+3) الإلحاح: متوسط ومهني، بدون تهديد صريح.
+4) التحية: شبه مخصصة وتناسب الدور.
+5) المرسل: يبدو مقبولًا لكن فيه تفصيل مشكوك.
+6) الطلب: غير معتاد لكنه ممكن في بيئة العمل.
+7) المعرفة الداخلية: خفيفة مثل اسم قسم أو نظام.
+8) التعقيد: ناقل أساسي واحد مع لمسة اجتماعية خفيفة.
+9) التكتيك النفسي: مصداقية مهنية + ضغط زمني خفيف.
+""",
+                "hard": """
+مستوى متقدم — يجب أن تبدو الرسالة شبه شرعية حسب 9 معايير:
+1) النطاق: قريب جدًا من الشرعي مع فرق صغير واحد فقط، ويجب أن يكون جديدًا بالكامل.
+2) الأخطاء: صفر أخطاء لغوية أو إملائية.
+3) الإلحاح: مهذب وخفي فقط.
+4) التحية: مخصصة بالاسم والمسمى المناسب.
+5) المرسل: اسم شخص/قسم واقعي جدًا.
+6) الطلب: يبدو إجراءً طبيعيًا لكن يقود لخطر.
+7) المعرفة الداخلية: عالية ومحددة لكن غير مبالغ فيها.
+8) التعقيد: ممكن دمج تكتيكين بشكل طبيعي.
+9) التكتيك النفسي: ثقة/سلطة/روتين مهني بدون تهديد واضح.
+""",
+            }
+        else:
+            rules = {
+                "easy": "رسالة شرعية سهلة: رسمية وواضحة، نطاق hospital.org أو moh.gov.sa، لا روابط مشبوهة، لا طلب بيانات، لا تهديد، لا أخطاء.",
+                "medium": "رسالة شرعية متوسطة: تفاصيل عمل واقعية، قد تتضمن موعدًا أو إجراءً طبيعيًا، لكن بدون أي طلب حساس أو رابط خارجي.",
+                "hard": "رسالة شرعية متقدمة: شديدة الواقعية ومفصلة، قد تبدو مهمة أو عاجلة مهنيًا، لكنها آمنة تمامًا ولا تحتوي أي علامة تصيد.",
+            }
+    else:
+        if is_phishing:
+            rules = {
+                "easy": """
+BEGINNER difficulty — red flags must be very obvious using 9 criteria:
+1) Domain realism: clearly fake, but invent a brand-new domain; do not use memorized examples.
+2) Spelling: exactly two obvious spelling/grammar mistakes in the body.
+3) Urgency: strong threat and aggressive pressure.
+4) Greeting: generic only, such as Dear Staff or Dear Team.
+5) Sender credibility: vague or clearly suspicious sender.
+6) Sensitive request: obvious credential/password/payment/link request.
+7) Insider knowledge: none; generic message.
+8) Attack complexity: one simple attack vector only.
+9) Psychological tactic: blunt fear and urgency.
+""",
+                "medium": """
+INTERMEDIATE difficulty — mixed red flags using 9 criteria:
+1) Domain realism: slightly suspicious but not ridiculous, and brand-new.
+2) Spelling: exactly one subtle spelling mistake only.
+3) Urgency: moderate workplace urgency, no aggressive threats.
+4) Greeting: semi-personal and role-appropriate.
+5) Sender credibility: plausible but imperfect sender identity.
+6) Sensitive request: unusual but possible in workplace context.
+7) Insider knowledge: light department/system detail.
+8) Attack complexity: one main vector plus light social engineering.
+9) Psychological tactic: professional credibility plus mild deadline pressure.
+""",
+                "hard": """
+ADVANCED difficulty — almost legitimate using 9 criteria:
+1) Domain realism: very close to legitimate with one tiny change, and brand-new.
+2) Spelling: zero spelling or grammar mistakes.
+3) Urgency: subtle polite urgency only.
+4) Greeting: full name and correct role/title.
+5) Sender credibility: realistic person or department.
+6) Sensitive request: appears normal but creates risk.
+7) Insider knowledge: high and specific but not excessive.
+8) Attack complexity: may combine tactics naturally.
+9) Psychological tactic: authority/trust/routine process, no obvious threat.
+""",
+            }
+        else:
+            rules = {
+                "easy": "Legitimate beginner item: clearly safe official workplace email, official hospital.org or moh.gov.sa domain, no external link, no credentials, no threats.",
+                "medium": "Legitimate intermediate item: realistic workflow detail and a normal deadline, but no sensitive request and no suspicious external link.",
+                "hard": "Legitimate advanced item: highly realistic and detailed, may be important or time-sensitive, but still safe with official sender and no phishing indicators.",
+            }
+    return rules.get(difficulty, rules.get("medium"))
+
+def get_role_unbounded_context(role_type, is_ar=False):
+    """Role context only; not a scenario template list. The model must invent the actual scenario."""
+    if is_ar:
+        return {
+            "clinical": "الدور سريري داخل مستشفى سعودي: أطباء، تمريض، صيدلة، مختبر، أشعة، عيادات، طوارئ، عناية مركزة، سجلات طبية، أنظمة مرضى، بروتوكولات وزارة الصحة.",
+            "admin": "الدور إداري داخل مستشفى سعودي: استقبال، سكرتارية طبية، ملفات مرضى، تأمين، فوترة، مشتريات، موارد بشرية، اعتماد، جدولة، عقود موردين.",
+            "it": "الدور تقني داخل مستشفى سعودي: شبكات، VPN، خوادم، EMR، نسخ احتياطي، Active Directory، شهادات، جدار ناري، تراخيص، مكتب مساعدة، أمن سيبراني.",
+            "other": "الدور موظف عام في مستشفى سعودي. اختر بحرية قسمًا منطقيًا جديدًا في كل مرة: سريري أو إداري أو تقني أو تشغيلي.",
+        }.get(role_type, "الدور موظف في مستشفى سعودي.")
+    return {
+        "clinical": "Clinical role in a Saudi hospital: doctors, nurses, pharmacy, lab, radiology, clinics, ER, ICU, EMR, patient systems, MOH clinical protocols.",
+        "admin": "Administrative role in a Saudi hospital: reception, medical secretary, patient records, insurance, billing, procurement, HR, accreditation, scheduling, vendor contracts.",
+        "it": "IT/Informatics role in a Saudi hospital: network, VPN, servers, EMR, backups, Active Directory, certificates, firewall, licenses, helpdesk, cybersecurity.",
+        "other": "General Saudi hospital employee. Freely choose a fresh logical department each time: clinical, administrative, technical, operational, or support.",
+    }.get(role_type, "Saudi hospital employee.")
+
+# =============================================================
+# UNBOUNDED LEARNING PROMPT
+# No fixed templates. No fixed scenario pool. No example domains.
+# =============================================================
 def build_prompt(role, index, language):
-    is_ar      = (language == "Arabic")
+    is_ar = (language == "Arabic")
     difficulty = st.session_state.get("difficulty", "medium")
-    role_info  = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    role_desc, role_ctx, role_type = role_info
-    seed = st.session_state.get("cache_version", 13)
-    import time
-    session_seed = abs(hash(str(seed) + str(index) + str(time.time()))) % 99999
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    seed = random.randint(100000, 999999)
 
-    role_guidance = {
-        "clinical": (
-            "Doctors, nurses, pharmacists, lab technicians, radiologists in a Saudi hospital.",
-            "EMR systems, patient records, lab results, clinical schedules, pharmacy, medical devices, "
-            "surgery lists, vaccination records, ICU data, telemedicine, clinical protocols, MOH alerts, "
-            "medical training, infection control, blood bank, patient transfers.",
-            "Choose freely: credential theft link, malicious PDF/Excel/Word attachment, executive impersonation, "
-            "fake MOH/hospital alert, fake medical system update — MUST be medical/clinical content only."
-        ),
-        "admin": (
-            "Medical secretaries, receptionists, patient records clerks, insurance coordinators, "
-            "billing specialists, procurement officers, hospital administrators in Saudi healthcare.",
-            "Patient appointments, medical records, health insurance claims, hospital billing, "
-            "medical procurement, supplier invoices, staff policies, MOH compliance, accreditation, "
-            "patient registration, treatment authorizations, surgery scheduling.",
-            "Choose freely: fake appointment/insurance/billing portal link, malicious patient records PDF/Excel, "
-            "doctor/CEO impersonation, fake MOH audit, fake supplier invoice — MUST be healthcare admin content only."
-        ),
-        "it": (
-            "IT specialists, informatics officers, system administrators, cybersecurity staff in a Saudi hospital.",
-            "Hospital network, VPN, servers, EMR system, cloud backup, SSL certificates, firewall, "
-            "software licenses, IT helpdesk, endpoint security, database administration, network monitoring.",
-            "Choose freely: VPN/cloud/helpdesk credential theft link, malicious IT policy PDF/Excel, "
-            "CIO/CISO impersonation, fake SSL/firewall/license alert — MUST be healthcare IT content only."
-        ),
-        "other": (
-            "A general hospital employee in Saudi Arabia (could be any department).",
-            "Any hospital area: clinical (patient records, EMR), administrative (billing, insurance, payroll), or IT (network, systems, helpdesk).",
-            "Use the MANDATORY SCENARIO provided — it rotates across all three role types for maximum variety."
-        ),
-    }
-
-    # للـ Other: نحدد وظيفة دقيقة + قسم محدد + بريد مناسب لكل index
-    # EN: each profile now also carries an explicit name (EN/AR) that MATCHES
-    # the "recipient" email handle below. This is used to bind the greeting
-    # name inside the generated email body to the same person the email is
-    # actually addressed to — fixing the "Dear Nurse John" vs a totally
-    # different "to" address bug found during testing.
-    # AR: كل بروفايل الحين فيه اسم واضح (عربي/إنجليزي) يطابق عنوان البريد
-    # "recipient" تحت. نستخدمه لربط اسم التحية داخل نص الرسالة بنفس الشخص
-    # المرسل له البريد فعليًا — يحل خلل "Dear Nurse John" مع عنوان مختلف
-    # تمامًا ظهر أثناء الاختبار.
-    OTHER_JOB_PROFILES = [
-        # 0 — Admin
-        {
-            "r_desc": "a hospital billing and insurance coordinator (administrative staff)",
-            "r_ctx": "payroll, IBAN updates, health insurance (Tawuniya/Bupa/AXA), supplier invoices, procurement, hospital billing, staff HR notifications",
-            "r_guidance": "Generate an ADMINISTRATIVE phishing email. Topic MUST be one of: fake payroll/IBAN update, fake health insurance verification, fake supplier invoice, fake CEO financial request, fake HR notification. NEVER use clinical or IT topics.",
-            "recipient": "m.sultan.alghamdi@hospital.org",
-            "name_en": "Sultan Alghamdi", "name_ar": "سلطان الغامدي"
-        },
-        # 1 — IT
-        {
-            "r_desc": "a hospital network and systems support technician (IT staff)",
-            "r_ctx": "VPN access, hospital network accounts, SSL certificates, firewall, software licenses, IT helpdesk tickets, server maintenance, cybersecurity alerts",
-            "r_guidance": "Generate an IT/TECHNICAL phishing email. Topic MUST be one of: fake VPN re-authentication, fake SSL certificate expiry, fake network security alert, fake software license renewal, fake IT helpdesk request. NEVER use clinical or administrative topics.",
-            "recipient": "t.bandar.althubaiti@hospital.org",
-            "name_en": "Bandar Althubaiti", "name_ar": "بندر الثبيتي"
-        },
-        # 2 — Clinical
-        {
-            "r_desc": "a hospital pharmacist or lab technician (clinical staff)",
-            "r_ctx": "pharmacy dispensing system, lab results portal, patient medication records, clinical protocols, MOH drug circulars, infection control updates",
-            "r_guidance": "Generate a CLINICAL phishing email. Topic MUST be one of: fake pharmacy/lab system credential update, fake MOH clinical protocol alert, fake patient records access, fake medical director request. NEVER use administrative or IT topics.",
-            "recipient": "dr.khalid.alanazi@hospital.org",
-            "name_en": "Dr. Khalid Alanazi", "name_ar": "د. خالد العنزي"
-        },
-        # 3 — Admin
-        {
-            "r_desc": "a hospital medical procurement and supply chain officer (administrative staff)",
-            "r_ctx": "medical equipment procurement, supplier contracts, purchase orders, delivery confirmations, inventory management, MOH procurement compliance",
-            "r_guidance": "Generate an ADMINISTRATIVE phishing email. Topic MUST be one of: fake urgent supplier invoice (SAR amount), fake procurement portal login, fake contract renewal, fake supply order confirmation with malicious attachment. NEVER use clinical or IT topics.",
-            "recipient": "m.reem.alsabiei@hospital.org",
-            "name_en": "Reem Alsabiei", "name_ar": "ريم السبيعي"
-        },
-        # 4 — IT
-        {
-            "r_desc": "a hospital cybersecurity and systems administrator (IT staff)",
-            "r_ctx": "hospital firewall, server administration, database backups, endpoint security, Active Directory, cloud backup systems, EMR server maintenance",
-            "r_guidance": "Generate an IT/TECHNICAL phishing email. Topic MUST be one of: fake CIO/CISO urgent server request, fake firewall/security policy update, fake cloud backup credential alert, fake Active Directory password expiry, fake database admin request. NEVER use clinical or administrative topics.",
-            "recipient": "t.nadia.alsalmi@hospital.org",
-            "name_en": "Nadia Alsalmi", "name_ar": "نادية السالمي"
-        },
-        # 5 — Clinical
-        {
-            "r_desc": "a hospital radiologist or medical imaging technician (clinical staff)",
-            "r_ctx": "PACS imaging system, radiology reports, patient scan results, imaging department scheduling, MOH radiology protocols, medical imaging equipment",
-            "r_guidance": "Generate a CLINICAL phishing email. Topic MUST be one of: fake PACS system credential update, fake urgent patient scan results PDF, fake radiology department alert, fake MOH imaging protocol update. NEVER use administrative or IT topics.",
-            "recipient": "dr.fahad.aldosari@hospital.org",
-            "name_en": "Dr. Fahad Aldosari", "name_ar": "د. فهد الدوسري"
-        },
-    ]
-
-    _dummy_guidance = {
-    }
-    if role_type == "other":
-        profile = OTHER_JOB_PROFILES[index % len(OTHER_JOB_PROFILES)]
-        r_desc     = profile["r_desc"]
-        r_ctx      = profile["r_ctx"]
-        r_guidance = profile["r_guidance"]
-        # override الـ recipient للـ other حسب الـ profile
-        st.session_state[f"_other_recipient_{index}"] = profile["recipient"]
-        recipient_name  = profile["name_ar"] if is_ar else profile["name_en"]
-        recipient_email = profile["recipient"]
-    else:
-        r_desc, r_ctx, r_guidance = role_guidance.get(role_type, role_guidance["clinical"])
-        recip_pool = RECIPIENT_POOLS.get(role_type)
-        if recip_pool:
-            recip_order = get_session_random_order(len(recip_pool), f"recipient_order_{role_type}")
-            recip = recip_pool[recip_order[index % len(recip_order)]]
-            recipient_name  = recip["ar"] if is_ar else recip["en"]
-            recipient_email = recip["email"]
-        else:
-            recipient_name, recipient_email = None, None
-
-    # FIX 3: Enhanced difficulty rules — more detailed for both languages
-    if is_ar:
-        diff_rules = {
-            "easy": (
-                "مستوى مبتدئ — العلامات يجب أن تكون واضحة جداً ولا تخطئها:\n"
-                "- نطاق مزيف واضح تماماً (مثل hosp1tal-updates.xyz أو hospital.totally-fake.net أو secur3-login.com)\n"
-                "- خطأين إملائيين واضحين على الأقل في نص الرسالة (مثل: 'تسجيل الدخوول' أو 'عزيزي الموظفف')\n"
-                "- إلحاح مبالغ فيه بعبارات تحذيرية كبيرة (تصرف الآن! سيتم إغلاق حسابك خلال ساعة! موعد نهائي اليوم!)\n"
-                "- تحية عامة فقط: 'عزيزي الموظف' أو 'عزيزي المستخدم' — ممنوع استخدام الاسم أو المسمى الوظيفي\n"
-                "- طلب صريح ومشبوه جداً (شارك كلمة المرور، أدخل بياناتك الكاملة، أرسل رقم الهوية)\n"
-                "- عنوان المرسل واضح الزيف (مثل: noreply@hospital-secure.xyz)\n"
-                "- معرفة داخلية: صفر — رسالة عامة تصلح لأي موظف بأي مكان\n"
-                "- ناقل هجوم واحد فقط وبسيط (رابط أو طلب مباشر، مايصير اثنين معًا)\n"
-                "- التلاعب النفسي: خوف وإلحاح مباشر وفاضح فقط، بدون أي ذكاء بالأسلوب"
-            ),
-            "medium": (
-                "مستوى متوسط — صعوبة معتدلة، بعض العلامات واضحة وبعضها يحتاج تمعّناً:\n"
-                "- نطاق مشبوه نسبياً لكن ليس واضح الزيف تماماً (مثل hospital-hr-portal.net أو moh-notifications.com)\n"
-                "- أسلوب شبه مهني مع علامة تحذيرية واحدة أو اثنتين في الصياغة\n"
-                "- خطأ إملائي واحد بسيط أو جملة غير طبيعية في السياق\n"
-                "- إلحاح معتدل ('يرجى الرد بنهاية الأسبوع' أو 'يجب التحديث قبل يوم الاثنين')\n"
-                "- تحية شبه شخصية (اللقب الوظيفي صح لكن الاسم أحياناً خاطئ أو عام)\n"
-                "- الطلب غير عادي لكن ليس مستحيلاً في بيئة العمل\n"
-                "- معرفة داخلية: بسيطة (يذكر اسم القسم أو نظام عام يستخدمه الدور، بدون تفاصيل شخصية دقيقة)\n"
-                "- ناقل هجوم واحد رئيسي، ممكن يضاف له طلب اجتماعي خفيف ثانوي\n"
-                "- التلاعب النفسي: مزيج خفيف بين الإلحاح والمصداقية المهنية"
-            ),
-            "hard": (
-                "مستوى متقدم — العلامات خفية جداً، الرسالة تبدو حقيقية تقريباً:\n"
-                "- نطاق يشبه الحقيقي مع تغيير بسيط جداً لا يُلاحَظ بسهولة (مثل hosp1tal.org أو hospital-sa.net أو moh.gov-sa.com)\n"
-                "- لغة عربية فصحى مهنية سليمة تماماً، صفر أخطاء إملائية أو نحوية\n"
-                "- إلحاح خفيف ومهني جداً ('نرجو الاطلاع قبل نهاية يوم العمل' أو 'للحفاظ على أمان حسابك')\n"
-                "- تحية بالاسم الكامل والمسمى الوظيفي الدقيق\n"
-                "- علامة تحذيرية واحدة فقط وخفية للغاية — كل شيء آخر يبدو حقيقياً تماماً\n"
-                "- المحتوى ذو صلة مباشرة بعمل المستلم ويوحي بمعرفة داخلية\n"
-                "- معرفة داخلية: عالية — يذكر تفاصيل تبدو حقيقية ومحددة (مشروع جارٍ، اسم مديره الحقيقي بالسياق، توقيت يتوافق مع جدوله)\n"
-                "- ممكن دمج أكثر من ناقل هجوم بذكاء (رابط + طلب اجتماعي بنفس الرسالة) بدون أن يبان مبالغًا فيه\n"
-                "- التلاعب النفسي: استغلال السلطة أو الثقة المهنية بدون إلحاح ظاهر إطلاقًا — نغمة تعاون عادية تخلي القارئ يتجاوب بدون شك"
-            ),
-        }
-    else:
-        diff_rules = {
-            "easy": (
-                "BEGINNER difficulty — red flags must be VERY obvious and easy to spot:\n"
-                "- Clearly fake domain (e.g. hosp1tal-updates.xyz, hospital.totally-fake.net, secur3-login.com)\n"
-                "- At least 2 obvious spelling/grammar mistakes in the body text\n"
-                "- Aggressive ALL-CAPS urgency with alarming language (ACT NOW! YOUR ACCOUNT WILL BE CLOSED! DEADLINE TODAY!)\n"
-                "- Generic greeting only: 'Dear Staff' or 'Dear User' — never use recipient's name or job title\n"
-                "- Blatantly suspicious request (share your password, enter full credentials, send your ID number)\n"
-                "- Sender address obviously fake (e.g. noreply@hospital-secure.xyz)\n"
-                "- Insider knowledge: ZERO — generic message that would fit any employee anywhere\n"
-                "- Attack vectors: only ONE, simple (a link OR a direct request, never combined)\n"
-                "- Psychological tactic: blunt fear and urgency only, no subtlety whatsoever"
-            ),
-            "medium": (
-                "INTERMEDIATE difficulty — some flags obvious, some require careful reading:\n"
-                "- Slightly suspicious domain that looks almost real (e.g. hospital-hr-portal.net, moh-notifications.com)\n"
-                "- Mostly professional tone with 1-2 red flags in wording\n"
-                "- One minor spelling error or awkward sentence that feels slightly off\n"
-                "- Moderate urgency with a deadline ('Please respond by end of week' or 'Update required before Monday')\n"
-                "- Semi-personal greeting — correct job title but name is generic or slightly wrong\n"
-                "- Request is unusual but not impossible in a workplace context\n"
-                "- Insider knowledge: light (mentions the department name or a system relevant to the role, no precise personal detail)\n"
-                "- Attack vectors: one main vector, optionally with a light secondary social-engineering ask\n"
-                "- Psychological tactic: a light blend of urgency and professional credibility"
-            ),
-            "hard": (
-                "ADVANCED difficulty — red flags extremely subtle, email looks almost completely legitimate:\n"
-                "- Nearly real domain with only one tiny character change (e.g. hosp1tal.org, hospital-sa.net, moh.gov-sa.com)\n"
-                "- Perfect professional English, zero spelling or grammar errors\n"
-                "- Subtle, polite urgency only ('Kindly review before end of business day' or 'To keep your account secure')\n"
-                "- Personalised greeting with full name and exact job title\n"
-                "- Only ONE subtle red flag — everything else looks completely legitimate\n"
-                "- Content directly relevant to recipient's work, implying insider knowledge\n"
-                "- Insider knowledge: HIGH — references something that feels real and specific (an ongoing project, the real manager's name in context, timing that matches their schedule)\n"
-                "- Attack vectors: may cleverly combine more than one (e.g. a link AND a social-engineering ask in the same message) without feeling excessive\n"
-                "- Psychological tactic: exploits authority or professional trust with NO visible urgency at all — a normal, cooperative tone that makes the reader comply without suspicion"
-            ),
-        }
-
-    diff_rule = diff_rules.get(difficulty, diff_rules["medium"])
+    recipient_email = get_recipient(role, index, language, phase="learn") if role_type != "other" else f"staff.{seed}@hospital.org"
+    avoid_topics = get_avoid_list_text(role_type, "learn", is_ar)
+    avoid_domains = get_used_domains_text(role_type, "learn", is_ar)
+    role_context = get_role_unbounded_context(role_type, is_ar)
+    diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
 
     if is_ar:
-        lang_rule = (
-            "اللغة: عربية فصحى فقط في كل النصوص (subject/body/indicators/why_risky/learning_tip).\n"
-            "استثناء: عناوين البريد الإلكتروني والروابط (http://...) والنطاقات تبقى لاتينية، وأسماء أنظمة تقنية معروفة (VPN, EMR, SSL) ممكن تبقى بالإنجليزي.\n"
-            "ممنوع تمامًا: أي كلمة أو جملة إنجليزية كاملة وسط الجملة العربية (مثال على خطأ يجب تجنبه: كتابة \"NOW, HOUR\" أو أي تحذير بالإنجليزي وسط نص عربي بالكامل).\n"
-            "قبل إرسال الرد، تأكد إن كل جملة بحقل body/subject/indicators مكتوبة بالعربية بالكامل من أول الجملة لآخرها، بدون أي قفزة لغة بالنص.\n"
-            "حقل 'to': البريد الإلكتروني فقط بدون أي نص."
-        )
-        from_ex  = "اسم المرسل <fake@domain.com>"
-        body_ex  = "نص الرسالة بالعربية الفصحى"
-        ind_t_ex = "عنوان المؤشر"
-        ind_d_ex = "وصف تقني تفصيلي"
-    else:
-        lang_rule = "Language: English only throughout. No Arabic or foreign characters in text fields."
-        from_ex  = "Sender Name <fake@domain.com>"
-        body_ex  = "email body in English"
-        ind_t_ex = "indicator title"
-        ind_d_ex = "detailed technical explanation"
+        return f"""
+أنت مولّد أمثلة تدريبية للتوعية بالتصيد في بيئة مستشفى سعودي.
 
-    # EN: FIX 7 (upgraded) — scenario selection now uses a session-shuffled
-    # order instead of a fixed `index % len(forced)` mapping, so "example
-    # slot #N" no longer always lands on the same scenario across sessions.
-    # "other" role keeps the old fixed mapping since its scenario list is
-    # positionally paired 1:1 with OTHER_JOB_PROFILES.
-    # AR: التعديل على FIX 7 — اختيار السيناريو الآن يستخدم ترتيبًا مخلوطًا
-    # خاصًا بالجلسة بدل الربط الثابت `index % len(forced)`، حتى "خانة المثال
-    # رقم N" ما تطلع لها نفس السيناريو بكل الجلسات. دور "Other" يبقى بالربط
-    # الثابت القديم لأن قائمته مرتبطة موضعيًا 1:1 مع OTHER_JOB_PROFILES.
-    # EN: FIX 7 (upgraded again) — TRUE OPEN-ENDED GENERATION for
-    # clinical/admin/it: instead of picking literal pre-written scenario
-    # text, we pick a broad CATEGORY (session-shuffled, no repeats within
-    # the session) and tell the model to INVENT a brand-new specific
-    # scenario inside it, different from anything generated earlier this
-    # session. "other" keeps the old fixed/profile-paired scenarios.
-    # AR: التعديل النهائي على FIX 7 — توليد مفتوح فعليًا لسريري/إداري/تقني:
-    # بدل اختيار نص سيناريو جاهز، نختار فئة عامة (مخلوطة لكل جلسة، بدون
-    # تكرار داخل الجلسة) ونطلب من الموديل يخترع سيناريو جديد محدد بداخلها،
-    # مختلف عن أي شي تولّد قبل بهذي الجلسة. دور "Other" يبقى على نظامه القديم.
-    if role_type == "other":
-        forced = FORCED_SCENARIOS.get(role_type, FORCED_SCENARIOS["admin"])
-        forced_scenario = forced[index % len(forced)]
-        scenario_instruction = forced_scenario["ar"] if is_ar else forced_scenario["en"]
-    else:
-        categories = OPEN_CATEGORIES.get(role_type, OPEN_CATEGORIES["clinical"])
-        cat_order = get_session_random_order(len(categories), f"category_order_{role_type}")
-        category = categories[cat_order[index % len(cat_order)]]
-        category_text = category["ar"] if is_ar else category["en"]
-        avoid_text = get_avoid_list_text(role_type, "learn", is_ar)
-        # EN: keeping the Saudi-healthcare flavor — the old fixed scenarios
-        # explicitly named things like MOH, Tawuniya/Bupa, and SAR amounts,
-        # which open-ended generation was losing since the categories
-        # alone don't force that local context. This line brings it back
-        # without giving up the open-ended variety.
-        # AR: نحافظ على الطابع السعودي — السيناريوهات الثابتة القديمة كانت
-        # تذكر وزارة الصحة وTawuniya/Bupa ومبالغ SAR صريحًا، وهذا ضاع شوي
-        # بالتوليد المفتوح لأن الفئات بذاتها ما تفرض هذا السياق المحلي.
-        # هذا السطر يرجّعه بدون التضحية بالتنوع المفتوح.
-        if is_ar:
-            saudi_context = (
-                "اربط السيناريو بسياق سعودي واقعي حيث يلائم: وزارة الصحة (MOH)، "
-                "شركات التأمين الصحي السعودية (Tawuniya/Bupa Arabia/MedGulf)، مبالغ بالريال السعودي (SAR)، "
-                "ونطاقات تبدو سعودية حيث يصلح (.sa أو moh.gov.sa)."
-            )
-        else:
-            saudi_context = (
-                "Anchor the scenario in realistic Saudi healthcare context where relevant: the Ministry of Health (MOH), "
-                "Saudi health insurance providers (Tawuniya/Bupa Arabia/MedGulf), amounts in Saudi Riyals (SAR), "
-                "and Saudi-looking domains where it fits (.sa or moh.gov.sa)."
-            )
-        if is_ar:
-            scenario_instruction = (
-                f"الفئة العامة: {category_text}\n"
-                f"اخترع سيناريو تصيد جديد ومحدد وواقعي ضمن هذي الفئة — لست مقيدًا بقالب معيّن. "
-                f"كن مبدعًا بالتفاصيل المحددة (اسم النظام، اسم المرسل، السبب، الرابط أو المرفق، المبلغ لو وجد). "
-                f"{saudi_context} "
-                f"يجب أن يكون مختلفًا تمامًا عن أي سيناريو سابق بهذي الجلسة.{avoid_text}"
-            )
-        else:
-            scenario_instruction = (
-                f"Broad category: {category_text}\n"
-                f"Invent a brand-new, specific, realistic phishing scenario within this category — you are NOT limited to a fixed template. "
-                f"Be creative with the specific details (system name, sender identity, pretext, link or attachment, amount if relevant). "
-                f"{saudi_context} "
-                f"It must be clearly different from any scenario already generated earlier in this session.{avoid_text}"
-            )
+المطلوب: ولّد مثال تعلم واحد فقط لتصيد إلكتروني.
 
-    # EN: build the RECIPIENT instruction block (empty string if this role
-    # has no bound recipient, which shouldn't normally happen now).
-    # AR: نبني سطر تعليمات المستلم (نص فاضي لو الدور ماله مستلم مربوط،
-    # وهذا ماراح يصير عادة بعد هذا التعديل).
-    if recipient_name and recipient_email:
-        if is_ar:
-            recipient_block = f"\n━━━ المستلم (ثابت — لا تغيّره) ━━━\nاسم المستلم بالتحية: {recipient_name}\nحقل \"to\": {recipient_email}\nمهم: التحية بنص الرسالة يجب تخاطب نفس الاسم أعلاه بالضبط، ومايصير اسم مختلف.\n"
-        else:
-            recipient_block = f"\n━━━ RECIPIENT (fixed — do not change) ━━━\nGreeting name to use: {recipient_name}\n\"to\" field value: {recipient_email}\nIMPORTANT: the greeting inside the body MUST address this exact name — never invent a different name.\n"
-    else:
-        recipient_block = ""
+قواعد مهمة جدًا:
+- لا تستخدم أي قالب ثابت.
+- لا تستخدم أي نطاق من أمثلة محفوظة أو نطاقات تكررت سابقًا.
+- اختر فكرة جديدة من الصفر: نظام، مرسل، سبب، رابط، رسالة، وتحليل.
+- يجب أن تكون الفكرة مناسبة للدور والسياق، لكنها غير مكررة.
+- ممنوع استخدام النص الحرفي: suspicious_link داخل body. ضع رابطًا حقيقي الشكل.
+- أخرج JSON فقط بدون Markdown.
 
-    return f"""You are a cybersecurity expert creating phishing awareness training for Saudi healthcare.
-
-TRAINING EXAMPLE #{index + 1} of 6 | Variety seed: {session_seed}
-
-━━━ TARGET ━━━
-Role: {r_desc}
-Context: {r_ctx}
-{recipient_block}
-━━━ YOUR TASK — MANDATORY SCENARIO ━━━
-You MUST generate this EXACT scenario type — do NOT substitute or change it:
-{scenario_instruction}
-
-This scenario is NON-NEGOTIABLE. Generate the email body, subject, and sender to match this specific scenario exactly.
-
-━━━ DIFFICULTY ━━━
+السياق:
+{role_context}
+المستلم: {recipient_email}
+رقم عشوائي لكسر التكرار: {seed}
+{avoid_topics}{avoid_domains}
+قواعد الصعوبة:
 {diff_rule}
 
-━━━ LANGUAGE ━━━
-{lang_rule}
+أخرج JSON بهذا الشكل فقط:
+{{
+  "email_type": "اسم نوع التصيد الجديد",
+  "from": "اسم مرسل واقعي <email@invented-domain>",
+  "to": "{recipient_email}",
+  "subject": "عنوان الرسالة",
+  "attachment": "اسم المرفق أو فراغ",
+  "body": "نص البريد الكامل",
+  "suspicious_text": "أخطر عبارة في الرسالة",
+  "suspicious_link": "الرابط المشبوه أو فراغ",
+  "indicators": [
+    {{"number": 1, "title": "علامة 1", "description": "شرح قصير"}},
+    {{"number": 2, "title": "علامة 2", "description": "شرح قصير"}},
+    {{"number": 3, "title": "علامة 3", "description": "شرح قصير"}}
+  ],
+  "why_risky": "لماذا الرسالة خطيرة",
+  "learning_tip": "نصيحة تعليمية قصيرة"
+}}
+"""
+    return f"""
+You generate phishing-awareness learning examples for a Saudi hospital.
 
-━━━ FORMAT RULES ━━━
-- body: plain text only, use \\n for line breaks, NO HTML. Keep it concise: 100-180 words maximum.
-- "to": email address only, nothing else
-- If attack uses a link: put URL in "suspicious_link" AND verbatim in body
-- If attack uses attachment: put filename in "attachment" (e.g. file.pdf, data.xlsx)
-- If social engineering only: "suspicious_link":"", "attachment":""
-- Each indicator "description": ONE short sentence, max ~20 words
-- "why_risky": maximum 2 short sentences
-- "learning_tip": ONE short, practical sentence
-- Be concise everywhere. Do not pad any field with extra explanation beyond what's asked.
+Task: Generate ONE new phishing learning email.
 
-━━━ RETURN ONLY VALID JSON ━━━
-CRITICAL: Output ONLY the JSON. No text before or after.
-{{"email_type":"attack type name","from":"{from_ex}","to":"employee@hospital.org","subject":"subject line","attachment":"filename or empty","body":"{body_ex}","suspicious_text":"most suspicious phrase","suspicious_link":"url or empty","indicators":[{{"number":1,"title":"{ind_t_ex}","description":"{ind_d_ex}"}},{{"number":2,"title":"{ind_t_ex}","description":"{ind_d_ex}"}},{{"number":3,"title":"{ind_t_ex}","description":"{ind_d_ex}"}}],"why_risky":"why dangerous for this role","learning_tip":"practical tip for this role"}}"""
+Critical rules:
+- Do NOT use a fixed template.
+- Do NOT use memorized example domains or domains already used in this session.
+- Invent a fresh scenario from scratch: system, sender, reason, domain, message, and AI analysis.
+- The idea must fit the role context but must not repeat previous topics.
+- Never write the literal placeholder suspicious_link inside body. Use a realistic-looking URL.
+- Return JSON only. No Markdown.
+
+Context:
+{role_context}
+Recipient: {recipient_email}
+Anti-repeat random seed: {seed}
+{avoid_topics}{avoid_domains}
+Difficulty rules:
+{diff_rule}
+
+Return only this JSON structure:
+{{
+  "email_type": "new phishing type name",
+  "from": "realistic sender name <email@invented-domain>",
+  "to": "{recipient_email}",
+  "subject": "email subject",
+  "attachment": "filename or empty string",
+  "body": "full email body",
+  "suspicious_text": "most suspicious phrase",
+  "suspicious_link": "suspicious URL or empty string",
+  "indicators": [
+    {{"number": 1, "title": "Indicator 1", "description": "short explanation"}},
+    {{"number": 2, "title": "Indicator 2", "description": "short explanation"}},
+    {{"number": 3, "title": "Indicator 3", "description": "short explanation"}}
+  ],
+  "why_risky": "why this email is risky",
+  "learning_tip": "short practical learning tip"
+}}
+"""
 
 # =============================================================
-# FIX 2 + FIX 3: build_assess_prompt — tokens raised to 1200,
-# difficulty rules expanded to match build_prompt detail level
+# UNBOUNDED ASSESSMENT PROMPT
+# Phishing and legitimate questions are generated dynamically.
 # =============================================================
 def build_assess_prompt(role, index, is_phishing, language):
-    is_ar      = (language == "Arabic")
+    is_ar = (language == "Arabic")
     difficulty = st.session_state.get("difficulty", "medium")
-    role_info  = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    role_desc, role_ctx, role_type = role_info
-    seed = st.session_state.get("cache_version", 13)
-    import time
-    session_seed = abs(hash(str(seed) + str(index) + str(is_phishing) + str(time.time()))) % 99999
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    seed = random.randint(100000, 999999)
 
-    # EN: same recipient-binding fix as the learning phase (build_prompt) —
-    # pick one (name, email) pair for this slot from RECIPIENT_POOLS using a
-    # SEPARATE session-order key ("assess_recipient_order_...") so the
-    # assessment phase's picks don't have to match the learning phase's.
-    # AR: نفس إصلاح ربط اسم المستلم اللي بمرحلة التعلم — نختار زوج (اسم،بريد)
-    # لهذي الخانة من RECIPIENT_POOLS بمفتاح ترتيب جلسة مستقل خاص بالاختبار،
-    # حتى لا يلزم تطابق اختيارات الاختبار مع اختيارات مرحلة التعلم.
-    recip_pool = RECIPIENT_POOLS.get(role_type)
-    if recip_pool:
-        recip_order = get_session_random_order(len(recip_pool), f"assess_recipient_order_{role_type}")
-        recip = recip_pool[recip_order[index % len(recip_order)]]
-        recipient_name, recipient_email = (recip["ar"] if is_ar else recip["en"]), recip["email"]
-    else:
-        recipient_name, recipient_email = None, None
-
-    role_guidance = {
-        "clinical": (
-            "a nurse, doctor, pharmacist, or lab technician in a Saudi hospital",
-            "EMR, patient records, lab results, pharmacy, clinical schedules, MOH alerts, medical devices, surgery"
-        ),
-        "admin": (
-            "a medical secretary, receptionist, patient records clerk, insurance coordinator, or billing specialist in Saudi healthcare",
-            "patient appointments, medical records, health insurance, hospital billing, medical procurement, MOH compliance"
-        ),
-        "it": (
-            "an IT specialist, system administrator, or cybersecurity officer in a Saudi hospital",
-            "hospital network, VPN, servers, EMR system, cloud backup, SSL, firewall, software licenses, IT helpdesk"
-        ),
-        "other": (
-            "a general hospital employee in Saudi Arabia (any department)",
-            "clinical areas (EMR, patient records), administrative tasks (billing, insurance, payroll), or IT systems (network, helpdesk)"
-        ),
-    }
-    r_desc, r_ctx = role_guidance.get(role_type, role_guidance["other"])
-
-    # FIX 3+10: diff_rules مطابقة للتعلم — مخصصة لكل دور
-    # ══════════════════════════════════════════════════════
-    # diff_rules — مطابقة لقسم التعلم تماماً
-    # مخصصة لكل دور في كل مستوى (AR + EN)
-    # ══════════════════════════════════════════════════════
-    role_domains = {
-        "admin":    {"easy": "hosp1tal-hr.xyz / moh-pay.net",
-                     "medium": "hospital-hr-portal.net / moh-billing.com",
-                     "hard":   "moh.gov-sa.com / hosp1tal.org"},
-        "clinical": {"easy": "emr-secure.xyz / medrecords.net",
-                     "medium": "emr-health-sa.net / moh-clinic.com",
-                     "hard":   "hosp1tal-clinic.org / moh.gov.sa-health.com"},
-        "it":       {"easy": "vpn-update.xyz / sysadmin-alert.net",
-                     "medium": "vpn-hospital-sa.net / itsupport-moh.com",
-                     "hard":   "hosp1tal-it.org / moh-itsupport.sa.com"},
-        "other":    {"easy": "hospital-alert.xyz / hosp1tal-secure.net",
-                     "medium": "hospital-portal-sa.net / moh-staff.com",
-                     "hard":   "hosp1tal.org / moh.gov-sa.com"},
-    }
-    rd = role_domains.get(role_type, role_domains["admin"])
+    recipient_email = get_recipient(role, index, language, phase="assess") if role_type != "other" else f"staff.{seed}@hospital.org"
+    suffix = f"assess_{is_phishing}"
+    avoid_topics = get_avoid_list_text(role_type, suffix, is_ar)
+    avoid_domains = get_used_domains_text(role_type, suffix, is_ar)
+    role_context = get_role_unbounded_context(role_type, is_ar)
+    diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=is_phishing, is_ar=is_ar)
 
     if is_ar:
-        diff_rules = {
-            "easy": (
-                "مستوى مبتدئ — العلامات يجب أن تكون واضحة جداً ولا تخطئها:\n"
-                f"- نطاق مزيف واضح تماماً مناسب للدور (مثل {rd['easy']})\n"
-                "- خطأين إملائيين واضحين على الأقل في نص الرسالة\n"
-                "- إلحاح مبالغ فيه بعبارات كبيرة (تصرف الآن! حسابك سيُغلق! موعد نهائي اليوم!)\n"
-                "- تحية عامة فقط: 'عزيزي الموظف' أو 'عزيزي الفريق' — ممنوع الاسم\n"
-                "- طلب صريح ومشبوه جداً (شارك كلمة المرور، أدخل بياناتك كاملة)\n"
-                "- عنوان المرسل واضح الزيف\n"
-                "- معرفة داخلية: صفر — رسالة عامة تصلح لأي موظف\n"
-                "- ناقل هجوم واحد فقط وبسيط\n"
-                "- التلاعب النفسي: خوف وإلحاح مباشر فقط، بدون ذكاء بالأسلوب"
-            ),
-            "medium": (
-                "مستوى متوسط — صعوبة معتدلة، بعض العلامات تحتاج تمعّناً:\n"
-                f"- نطاق مشبوه نسبياً مناسب للدور (مثل {rd['medium']})\n"
-                "- أسلوب شبه مهني مع علامة تحذيرية واحدة أو اثنتين فقط\n"
-                "- خطأ إملائي واحد بسيط فقط في النص\n"
-                "- إلحاح معتدل ('يرجى الرد بنهاية الأسبوع') — ممنوع ALL CAPS\n"
-                "- تحية شبه شخصية (اللقب صح لكن الاسم أحياناً عام أو خاطئ)\n"
-                "- الطلب غير عادي لكن ليس مستحيلاً في بيئة العمل\n"
-                "- معرفة داخلية: بسيطة (اسم القسم أو نظام عام للدور، بدون تفاصيل شخصية)\n"
-                "- ناقل هجوم رئيسي واحد، ممكن طلب اجتماعي ثانوي خفيف معه\n"
-                "- التلاعب النفسي: مزيج خفيف بين الإلحاح والمصداقية المهنية"
-            ),
-            "hard": (
-                "مستوى متقدم — العلامات خفية جداً، الرسالة تبدو حقيقية تقريباً:\n"
-                f"- نطاق يشبه الحقيقي مع تغيير بسيط جداً مناسب للدور (مثل {rd['hard']})\n"
-                "- لغة عربية فصحى مهنية سليمة تماماً، صفر أخطاء إملائية\n"
-                "- صفر ALL CAPS — أسلوب مهني هادئ تماماً\n"
-                "- إلحاح خفيف ومهني فقط ('نرجو الاطلاع قبل نهاية يوم العمل')\n"
-                "- تحية بالاسم الكامل والمسمى الوظيفي الدقيق\n"
-                "- علامة تحذيرية واحدة فقط وخفية — كل شيء آخر يبدو حقيقياً تماماً\n"
-                "- معرفة داخلية: عالية — تفاصيل تبدو حقيقية ومحددة (مشروع جارٍ، اسم مدير حقيقي بالسياق)\n"
-                "- ممكن دمج أكثر من ناقل هجوم بذكاء بدون مبالغة\n"
-                "- التلاعب النفسي: استغلال السلطة/الثقة المهنية بدون إلحاح ظاهر إطلاقًا"
-            ),
-        }
-    else:
-        diff_rules = {
-            "easy": (
-                "BEGINNER difficulty — red flags VERY obvious and easy to spot:\n"
-                f"- Clearly fake domain suited to the role (e.g. {rd['easy']})\n"
-                "- At least 2 obvious spelling/grammar mistakes in the body\n"
-                "- Aggressive ALL-CAPS urgency (ACT NOW! DEADLINE TODAY! ACCOUNT WILL BE CLOSED!)\n"
-                "- Generic greeting only: 'Dear Staff' or 'Dear Team' — NEVER use name\n"
-                "- Blatantly suspicious request (share password, enter full credentials)\n"
-                "- Sender address obviously fake\n"
-                "- Insider knowledge: ZERO — generic message\n"
-                "- Attack vectors: only ONE, simple\n"
-                "- Psychological tactic: blunt fear/urgency only, no subtlety"
-            ),
-            "medium": (
-                "INTERMEDIATE difficulty — some flags obvious, some need careful reading:\n"
-                f"- Slightly suspicious domain suited to role (e.g. {rd['medium']})\n"
-                "- Mostly professional tone with 1-2 red flags only\n"
-                "- EXACTLY 1 minor spelling mistake — just one subtle error\n"
-                "- Moderate urgency only: 'Please respond by end of week' — NO ALL-CAPS\n"
-                "- Semi-personal greeting matching role (correct title, name slightly off)\n"
-                "- Request unusual but not impossible in workplace context\n"
-                "- Insider knowledge: light (department name or role-relevant system, no precise personal detail)\n"
-                "- Attack vectors: one main vector, maybe a light secondary social-engineering ask\n"
-                "- Psychological tactic: light blend of urgency and professional credibility"
-            ),
-            "hard": (
-                "ADVANCED difficulty — red flags extremely subtle, email looks almost completely real:\n"
-                f"- Nearly real domain with ONE tiny change suited to role (e.g. {rd['hard']})\n"
-                "- ZERO spelling or grammar mistakes — perfect professional language\n"
-                "- ZERO ALL-CAPS — completely normal professional tone throughout\n"
-                "- Subtle polite urgency only: 'Kindly review before end of business day'\n"
-                "- Full name + exact job title matching the role in greeting\n"
-                "- ONLY ONE subtle red flag (the domain) — everything else perfectly legitimate\n"
-                "- Insider knowledge: HIGH — references something real-feeling and specific (ongoing project, real manager's name in context)\n"
-                "- Attack vectors: may cleverly combine more than one without feeling excessive\n"
-                "- Psychological tactic: exploits authority/professional trust with NO visible urgency at all"
-            ),
-        }
-    diff_rule = diff_rules.get(difficulty, diff_rules["medium"])
+        label = "تصيد" if is_phishing else "شرعي"
+        official = "إذا كانت الرسالة شرعية: استخدم فقط hospital.org أو moh.gov.sa، ولا تضع روابط خارجية أو طلب بيانات حساسة."
+        return f"""
+أنت مولّد أسئلة اختبار للتوعية بالتصيد في بيئة مستشفى سعودي.
 
-    # تعريف task_p و task_l — يُستخدمان كـ "Additional context" في الـ prompt
-    if is_ar:
-        task_p = f"ولّد رسالة تصيد إلكتروني واقعية تستهدف {r_desc}. اتبع السيناريو الإجباري أعلاه بدقة."
-        task_l = f"ولّد بريد إلكتروني شرعي وطبيعي من بيئة عمل {r_desc}. استخدم نطاق رسمي (@hospital.org أو @moh.gov.sa). لا علامات تصيد إطلاقاً."
-    else:
-        task_p = f"Generate a realistic phishing email targeting {r_desc}. Follow the MANDATORY SCENARIO above exactly."
-        task_l = f"Generate a realistic legitimate workplace email for {r_desc}. Use official domain (@hospital.org or @moh.gov.sa). Zero suspicious elements — must look completely normal."
+المطلوب: ولّد رسالة اختبار واحدة. التصنيف الصحيح يجب أن يكون: {label}.
 
-    task = task_p if is_phishing else task_l
+قواعد مهمة جدًا:
+- لا تستخدم قوالب ثابتة.
+- لا تستخدم أي نطاق من أمثلة محفوظة أو نطاقات تكررت سابقًا.
+- اختر سيناريو جديدًا من الصفر ومناسبًا للدور.
+- يجب أن يكون الاختبار متوازنًا: الرسائل الشرعية آمنة فعلًا، ورسائل التصيد فيها علامات حسب مستوى الصعوبة.
+- ممنوع استخدام النص الحرفي: suspicious_link داخل body.
+- أخرج JSON فقط بدون Markdown.
+{official}
 
-    # FIX 7b: Forced scenario for assessment based on index + is_phishing
-    # ══════════════════════════════════════════════
-    # ASSESSMENT SCENARIOS — مخصصة لكل دور مع تنويع
-    # ══════════════════════════════════════════════
-    assess_scenarios = {
-        "admin": {
-            True: [
-                "MANDATORY PHISHING — Admin/Billing: Fake supplier invoice for medical equipment. Vary: supplier name (MedSupply Co./Gulf Medical/Al-Rashid Medical), equipment type (surgical instruments/lab supplies/radiology equipment/ICU monitors), invoice amount (SAR 75,000–200,000), PDF filename. Target: billing or procurement admin.",
-                "MANDATORY PHISHING — Admin/Insurance: Fake health insurance portal — re-verify staff coverage. Vary: provider name (Tawuniya/Bupa Arabia/MedGulf/AXA), claim type (annual renewal/coverage update/reimbursement), suspicious link URL. Target: insurance coordinator.",
-                "MANDATORY PHISHING — Admin/HR: Fake payroll system — salary on hold until bank details updated. Vary: bank detail type (IBAN/account number/branch code), deadline (end of month/within 48h/before 15th), sender name. Target: HR or billing staff.",
-                "MANDATORY PHISHING — Admin/Executive: Hospital CEO or Director impersonation — urgent financial transfer or sensitive payroll data request. Vary: director name, amount, urgency reason. Pure social engineering, no link needed. Target: admin manager.",
-                "MANDATORY PHISHING — Admin/Procurement: Fake medical procurement portal — supplier contract must be renewed via suspicious link. Vary: supplier type, contract value, deadline, suspicious URL. Target: procurement officer.",
-            ],
-            False: [
-                "MANDATORY LEGITIMATE — Admin: Routine weekly patient appointment schedule reminder from department head. Official @hospital.org sender. No links, no requests, no urgency.",
-                "MANDATORY LEGITIMATE — Admin/HR: Upcoming mandatory staff training notice (fire safety/CPR/MOH compliance). Official @hospital.org sender. Informational only.",
-                "MANDATORY LEGITIMATE — Admin/Procurement: Approved medical supply order confirmed and dispatched. Official @hospital.org sender. No suspicious links.",
-                "MANDATORY LEGITIMATE — Admin/Payroll: Monthly payslip notification from official HR system. Official @hospital.org sender. Standard routine notification.",
-                "MANDATORY LEGITIMATE — Admin: Departmental meeting invitation from manager about next week. Official @hospital.org sender. Normal business communication.",
-            ],
-        },
-        "clinical": {
-            True: [
-                "MANDATORY PHISHING — Clinical/EMR: Fake EMR credential harvest. Vary: system name (EMR/Patient Portal/Clinical System/HealthRecord), suspicious link URL, ONE spelling mistake (credintials OR urgant OR acces OR imediatly — never use recived). Address to Dr. or Nurse.",
-                "MANDATORY PHISHING — Clinical/PDF: Malicious patient lab results PDF. Vary: patient department (ICU/oncology/cardiology/radiology/pediatrics), patient case reference, PDF filename (patient_results_XXXX.pdf), doctor name. Include one spelling mistake.",
-                "MANDATORY PHISHING — Clinical/MOH: Fake MOH clinical protocol requiring immediate link click. Vary: protocol topic (infection control/COVID update/MRSA alert/vaccination/antimicrobial resistance), MOH official name, suspicious link URL.",
-                "MANDATORY PHISHING — Clinical/Impersonation: Medical director or chief of staff impersonation — urgent patient data or system credentials request. Vary: director name, specialty (Surgery/Internal Medicine/Emergency/Oncology), specific request. Pure social engineering.",
-                "MANDATORY PHISHING — Clinical/Excel: Malicious clinical duty roster Excel. Vary: schedule period (next month/Ramadan/Q2/holiday coverage), head nurse name, Excel filename. Request to enable macros.",
-            ],
-            False: [
-                "MANDATORY LEGITIMATE — Clinical: Next week shift schedule update from head nurse. Official @hospital.org sender. No links, no requests. Normal clinical communication.",
-                "MANDATORY LEGITIMATE — Clinical: Patient case review reminder for ward round or MDT meeting. Official @hospital.org sender. Routine clinical workflow, no suspicious elements.",
-                "MANDATORY LEGITIMATE — Clinical/MOH: MOH mandatory training reminder (CPD/BLS/infection control). Official @moh.gov.sa or @hospital.org sender. Informational only.",
-                "MANDATORY LEGITIMATE — Clinical: Updated infection control guidelines from infection control team. Official @hospital.org sender. Policy update only, no links.",
-                "MANDATORY LEGITIMATE — Clinical: Department meeting invitation from medical director about clinical protocols. Official @hospital.org sender. Normal professional communication.",
-            ],
-        },
-        "it": {
-            True: [
-                "MANDATORY PHISHING — IT/VPN: Fake VPN re-authentication alert. Vary: VPN name (Cisco AnyConnect/FortiClient/Pulse Secure/GlobalProtect), suspicious portal URL, urgency reason (security update/certificate renewal/mandatory re-auth). Target: IT specialist.",
-                "MANDATORY PHISHING — IT/SSL: Fake SSL certificate expiry for hospital system. Vary: affected system (hospital website/patient portal/EMR login/staff intranet/lab system), renewal deadline, suspicious link URL. Target: system administrator.",
-                "MANDATORY PHISHING — IT/Helpdesk: Fake helpdesk ticket requesting remote access or credentials. Vary: ticket reference number, reported issue (server outage/network fault/EMR performance), requester name. Target: IT helpdesk staff.",
-                "MANDATORY PHISHING — IT/CIO: CIO or CISO impersonation — urgent server credentials or disable security settings. Vary: executive name, specific system (firewall/server/database), urgency reason. Pure social engineering. Target: IT specialist.",
-                "MANDATORY PHISHING — IT/License: Fake software license renewal portal. Vary: software name (antivirus/EMR/Windows Server/database license), expiry urgency (24h/end of day/this week), suspicious renewal URL. Target: IT admin.",
-            ],
-            False: [
-                "MANDATORY LEGITIMATE — IT: Scheduled server maintenance notice for next weekend. Official @hospital.org sender. Informational only, no credentials needed.",
-                "MANDATORY LEGITIMATE — IT: Software update announcement for hospital systems (antivirus/Windows/EMR patch). Official @hospital.org sender. Standard IT notification.",
-                "MANDATORY LEGITIMATE — IT: Network upgrade scheduled notification from IT department. Official @hospital.org sender. Informational, no action required.",
-                "MANDATORY LEGITIMATE — IT/Helpdesk: IT helpdesk ticket resolution confirmation — issue resolved. Official @hospital.org sender. Closing notification only.",
-                "MANDATORY LEGITIMATE — IT: Cybersecurity awareness training reminder for IT staff. Official @hospital.org or @moh.gov.sa sender. Training schedule only.",
-            ],
-        },
-        "other": {
-            True: [
-                "MANDATORY PHISHING — Mixed/Admin: Fake supplier invoice for medical equipment — urgent payment request. Vary: supplier name, equipment type, invoice amount (SAR 50,000–150,000), PDF filename. Target: general hospital employee.",
-                "MANDATORY PHISHING — Mixed/Clinical: Fake hospital system login credential harvest. Vary: system name (EMR/staff portal/scheduling system), suspicious URL, ONE spelling mistake. Target: general hospital employee.",
-                "MANDATORY PHISHING — Mixed/IT: Fake hospital network or cybersecurity alert — urgent credential update. Vary: alert type (security breach/VPN expiry/account lockout), suspicious portal URL. Target: general hospital employee.",
-                "MANDATORY PHISHING — Mixed/Admin: Fake payroll notification — salary on hold until bank details updated. Vary: bank detail type, urgency deadline, sender name. Target: general hospital employee.",
-                "MANDATORY PHISHING — Mixed/Clinical: Fake MOH health directive — immediate acknowledgment via link. Vary: directive topic (vaccination/safety/compliance), MOH official name, suspicious URL. Target: general hospital employee.",
-            ],
-            False: [
-                "MANDATORY LEGITIMATE — Mixed: Routine weekly work schedule update from department head. Official @hospital.org sender. No suspicious elements.",
-                "MANDATORY LEGITIMATE — Mixed/HR: Staff training reminder from HR (safety/compliance/professional development). Official @hospital.org sender. Informational only.",
-                "MANDATORY LEGITIMATE — Mixed: Hospital policy update notice from administration. Official @hospital.org sender. No links, no requests.",
-                "MANDATORY LEGITIMATE — Mixed/Payroll: Monthly payslip notification from official HR system. Official @hospital.org sender. Standard notification.",
-                "MANDATORY LEGITIMATE — Mixed: Team meeting or briefing invitation from manager. Official @hospital.org sender. Normal workplace communication.",
-            ],
-        },
-    }
-    role_assess = assess_scenarios.get(role_type, assess_scenarios["admin"])
-    phish_list  = role_assess[True]
-    legit_list  = role_assess[False]
+السياق:
+{role_context}
+المستلم: {recipient_email}
+رقم عشوائي لكسر التكرار: {seed}
+{avoid_topics}{avoid_domains}
+قواعد الصعوبة:
+{diff_rule}
 
-    # FIX 8: حساب الـ rank الصحيح بدلاً من index الكلي
-    # نحتاج نعرف "هذا الـ phishing/legit الثاني أم الثالث؟"
-    # نستخدم assess_pattern من session_state إذا متوفر
-    pattern = st.session_state.get("assess_pattern", [])
-    if pattern and index < len(pattern):
-        if is_phishing:
-            # عدد الأسئلة الـ phishing قبل هذا السؤال
-            rank = sum(1 for i in range(index) if pattern[i] == True)
-        else:
-            # عدد الأسئلة الـ legit قبل هذا السؤال
-            rank = sum(1 for i in range(index) if pattern[i] == False)
-    else:
-        rank = index
+أخرج JSON بهذا الشكل فقط:
+{{
+  "is_phishing": {str(is_phishing).lower()},
+  "email_type": "نوع الرسالة الجديد",
+  "from": "اسم مرسل واقعي <email@domain>",
+  "to": "{recipient_email}",
+  "subject": "عنوان الرسالة",
+  "attachment": "اسم المرفق أو فراغ",
+  "body": "نص البريد الكامل",
+  "suspicious_text": "أخطر عبارة أو فراغ إذا شرعي",
+  "suspicious_link": "الرابط المشبوه أو فراغ",
+  "explanation": "شرح مختصر يوضح لماذا التصنيف صحيح"
+}}
+"""
+    label = "PHISHING" if is_phishing else "LEGITIMATE"
+    official = "If legitimate: use only hospital.org or moh.gov.sa, no external links, no sensitive-data request, and no threats."
+    return f"""
+You generate assessment questions for phishing awareness in a Saudi hospital.
 
-    # EN: open-ended generation for clinical/admin/it (same mechanism as
-    # build_prompt) — "other" keeps the original fixed assess_scenarios
-    # lists below since they're paired with its job profiles.
-    # AR: توليد مفتوح لسريري/إداري/تقني (نفس آلية build_prompt) — دور
-    # "Other" يبقى على قوائم assess_scenarios الثابتة تحت لأنها مرتبطة
-    # ببروفايلاته الوظيفية.
-    use_open = role_type != "other"
-    if use_open:
-        categories = OPEN_CATEGORIES.get(role_type, OPEN_CATEGORIES["clinical"])
-        cat_order = get_session_random_order(len(categories), f"assess_category_order_{role_type}_{is_phishing}")
-        category = categories[cat_order[rank % len(cat_order)]]
-        category_text = category["ar"] if is_ar else category["en"]
-        avoid_text = get_avoid_list_text(role_type, f"assess_{is_phishing}", is_ar)
-        # EN/AR: same Saudi-context reinforcement as build_prompt — see the
-        # comment there for why this line exists.
-        if is_ar:
-            saudi_context = (
-                "اربط السيناريو بسياق سعودي واقعي حيث يلائم: وزارة الصحة (MOH)، "
-                "شركات التأمين الصحي السعودية (Tawuniya/Bupa Arabia/MedGulf)، مبالغ بالريال السعودي (SAR)، "
-                "ونطاقات تبدو سعودية حيث يصلح (.sa أو moh.gov.sa)."
-            )
-        else:
-            saudi_context = (
-                "Anchor the scenario in realistic Saudi healthcare context where relevant: the Ministry of Health (MOH), "
-                "Saudi health insurance providers (Tawuniya/Bupa Arabia/MedGulf), amounts in Saudi Riyals (SAR), "
-                "and Saudi-looking domains where it fits (.sa or moh.gov.sa)."
-            )
-        if is_ar:
-            if is_phishing:
-                forced_task = (
-                    f"الفئة العامة: {category_text}\n"
-                    f"اخترع سيناريو تصيد جديد ومحدد وواقعي ضمن هذي الفئة. كن مبدعًا بالتفاصيل (اسم النظام، المرسل، السبب، الرابط/المرفق). "
-                    f"{saudi_context} "
-                    f"يجب أن يكون مختلفًا تمامًا عن أي سيناريو تصيد سابق بهذي الجلسة.{avoid_text}"
-                )
-            else:
-                forced_task = (
-                    f"الفئة العامة: {category_text}\n"
-                    f"اخترع بريدًا شرعيًا عاديًا وواقعيًا ضمن هذي الفئة (مرسل رسمي @hospital.org أو @moh.gov.sa، بدون أي علامة تصيد). "
-                    f"{saudi_context} "
-                    f"يجب أن يكون مختلفًا عن أي بريد شرعي سابق بهذي الجلسة.{avoid_text}"
-                )
-        else:
-            if is_phishing:
-                forced_task = (
-                    f"Broad category: {category_text}\n"
-                    f"Invent a brand-new, specific, realistic phishing scenario within this category. Be creative with details (system name, sender, pretext, link/attachment). "
-                    f"{saudi_context} "
-                    f"It must be clearly different from any phishing scenario already generated earlier in this session.{avoid_text}"
-                )
-            else:
-                forced_task = (
-                    f"Broad category: {category_text}\n"
-                    f"Invent a normal, realistic LEGITIMATE email within this category (official @hospital.org or @moh.gov.sa sender, zero phishing red flags). "
-                    f"{saudi_context} "
-                    f"It must be different from any legitimate email already generated earlier in this session.{avoid_text}"
-                )
-    elif is_phishing:
-        # EN: session-randomized order instead of fixed rank % len(...),
-        # same variety fix applied here as in build_prompt.
-        # AR: ترتيب عشوائي خاص بالجلسة بدل الربط الثابت rank % len(...)،
-        # نفس إصلاح التنوع المطبّق في build_prompt.
-        order = get_session_random_order(len(phish_list), f"assess_scenario_order_{role_type}_phish")
-        forced_task_raw = phish_list[order[rank % len(order)]]
-    else:
-        order = get_session_random_order(len(legit_list), f"assess_scenario_order_{role_type}_legit")
-        forced_task_raw = legit_list[order[rank % len(order)]]
+Task: Generate ONE assessment email. Correct label must be: {label}.
 
-    # FIX 9: ترجمة forced_task حسب اللغة
-    ASSESS_TRANSLATIONS = {
-        # ── Admin phishing ──────────────────────────────────────
-        "MANDATORY PHISHING — Admin/Billing: Fake supplier invoice for medical equipment. Vary: supplier name (MedSupply Co./Gulf Medical/Al-Rashid Medical), equipment type (surgical instruments/lab supplies/radiology equipment/ICU monitors), invoice amount (SAR 75,000–200,000), PDF filename. Target: billing or procurement admin.":
-            "إجباري تصيد — إداري/فواتير: فاتورة مورد معدات طبية مزيفة. غيّر: اسم المورد (MedSupply/الخليج الطبي/الرشيد الطبي)، نوع المعدات (أجهزة جراحية/مستلزمات مختبر/أجهزة تصوير/أجهزة ICU)، المبلغ (75,000–200,000 ريال)، اسم ملف PDF. الهدف: موظف فوترة أو مشتريات.",
-        "MANDATORY PHISHING — Admin/Insurance: Fake health insurance portal — re-verify staff coverage. Vary: provider name (Tawuniya/Bupa Arabia/MedGulf/AXA), claim type (annual renewal/coverage update/reimbursement), suspicious link URL. Target: insurance coordinator.":
-            "إجباري تصيد — إداري/تأمين: بوابة تأمين صحي مزيفة لإعادة التحقق من التغطية. غيّر: اسم شركة التأمين (التعاونية/بوبا/ميدغلف/AXA)، نوع الطلب (تجديد/تحديث تغطية/استرداد)، رابط مشبوه. الهدف: منسق تأمين.",
-        "MANDATORY PHISHING — Admin/HR: Fake payroll system — salary on hold until bank details updated. Vary: bank detail type (IBAN/account number/branch code), deadline (end of month/within 48h/before 15th), sender name. Target: HR or billing staff.":
-            "إجباري تصيد — إداري/رواتب: نظام رواتب مزيف — الراتب موقوف حتى تحديث البيانات البنكية. غيّر: نوع البيانات (IBAN/رقم الحساب/رمز الفرع)، الموعد النهائي (نهاية الشهر/48 ساعة/قبل الـ15)، اسم المرسل. الهدف: موظف HR أو فوترة.",
-        "MANDATORY PHISHING — Admin/Executive: Hospital CEO or Director impersonation — urgent financial transfer or sensitive payroll data request. Vary: director name, amount, urgency reason. Pure social engineering, no link needed. Target: admin manager.":
-            "إجباري تصيد — إداري/مدير: انتحال هوية المدير التنفيذي — طلب تحويل مالي عاجل أو بيانات رواتب حساسة. غيّر: اسم المدير، المبلغ، سبب الاستعجال. هندسة اجتماعية بحتة. الهدف: مدير إداري.",
-        "MANDATORY PHISHING — Admin/Procurement: Fake medical procurement portal — supplier contract must be renewed via suspicious link. Vary: supplier type, contract value, deadline, suspicious URL. Target: procurement officer.":
-            "إجباري تصيد — إداري/مشتريات: بوابة مشتريات طبية مزيفة — تجديد عقد مورد عبر رابط مشبوه. غيّر: نوع المورد، قيمة العقد، الموعد النهائي، الرابط المشبوه. الهدف: مسؤول مشتريات.",
-        # ── Admin legit ─────────────────────────────────────────
-        "MANDATORY LEGITIMATE — Admin: Routine weekly patient appointment schedule reminder from department head. Official @hospital.org sender. No links, no requests, no urgency.":
-            "إجباري شرعي — إداري: تذكير روتيني أسبوعي بجدول مواعيد المرضى من رئيس القسم. مرسل رسمي @hospital.org. بدون روابط أو طلبات.",
-        "MANDATORY LEGITIMATE — Admin/HR: Upcoming mandatory staff training notice (fire safety/CPR/MOH compliance). Official @hospital.org sender. Informational only.":
-            "إجباري شرعي — إداري/موارد بشرية: إشعار تدريب إلزامي قادم (سلامة/إسعافات/امتثال). مرسل رسمي @hospital.org. للإعلام فقط.",
-        "MANDATORY LEGITIMATE — Admin/Procurement: Approved medical supply order confirmed and dispatched. Official @hospital.org sender. No suspicious links.":
-            "إجباري شرعي — إداري/مشتريات: تأكيد اعتماد وشحن طلب توريد طبي. مرسل رسمي @hospital.org. بدون روابط مشبوهة.",
-        "MANDATORY LEGITIMATE — Admin/Payroll: Monthly payslip notification from official HR system. Official @hospital.org sender. Standard routine notification.":
-            "إجباري شرعي — إداري/رواتب: إشعار راتب شهري من نظام الموارد البشرية الرسمي. مرسل رسمي @hospital.org. إشعار روتيني عادي.",
-        "MANDATORY LEGITIMATE — Admin: Departmental meeting invitation from manager about next week. Official @hospital.org sender. Normal business communication.":
-            "إجباري شرعي — إداري: دعوة اجتماع قسم من المدير للأسبوع القادم. مرسل رسمي @hospital.org. تواصل عمل عادي.",
-        # ── Clinical phishing ───────────────────────────────────
-        "MANDATORY PHISHING — Clinical/EMR: Fake EMR credential harvest. Vary: system name (EMR/Patient Portal/Clinical System/HealthRecord), suspicious link URL, ONE spelling mistake (credintials OR urgant OR acces OR imediatly — never use recived). Address to Dr. or Nurse.":
-            "إجباري تصيد — سريري/EMR: سرقة بيانات نظام السجلات الطبية. غيّر: اسم النظام (EMR/بوابة المريض/النظام السريري)، الرابط المشبوه، خطأ إملائي واحد (اختر: تسجيـل/عاجلة/وصلت). خاطب الدكتور أو الممرض.",
-        "MANDATORY PHISHING — Clinical/PDF: Malicious patient lab results PDF. Vary: patient department (ICU/oncology/cardiology/radiology/pediatrics), patient case reference, PDF filename (patient_results_XXXX.pdf), doctor name. Include one spelling mistake.":
-            "إجباري تصيد — سريري/PDF: مرفق PDF خبيث لنتائج مختبر مريض. غيّر: القسم (ICU/أورام/قلب/أشعة/أطفال)، رقم الحالة، اسم ملف PDF، اسم الطبيب. ضمّن خطأً إملائياً واحداً.",
-        "MANDATORY PHISHING — Clinical/MOH: Fake MOH clinical protocol requiring immediate link click. Vary: protocol topic (infection control/COVID update/MRSA alert/vaccination/antimicrobial resistance), MOH official name, suspicious link URL.":
-            "إجباري تصيد — سريري/وزارة: بروتوكول سريري مزيف من وزارة الصحة يستلزم نقر رابط فوري. غيّر: موضوع البروتوكول (مكافحة عدوى/كوفيد/MRSA/تطعيمات)، اسم المسؤول، الرابط المشبوه.",
-        "MANDATORY PHISHING — Clinical/Impersonation: Medical director or chief of staff impersonation — urgent patient data or system credentials request. Vary: director name, specialty (Surgery/Internal Medicine/Emergency/Oncology), specific request. Pure social engineering.":
-            "إجباري تصيد — سريري/انتحال: انتحال هوية المدير الطبي — طلب عاجل لبيانات مرضى أو بيانات دخول الأنظمة. غيّر: اسم المدير، التخصص (جراحة/باطنية/طوارئ/أورام)، الطلب المحدد.",
-        "MANDATORY PHISHING — Clinical/Excel: Malicious clinical duty roster Excel. Vary: schedule period (next month/Ramadan/Q2/holiday coverage), head nurse name, Excel filename. Request to enable macros.":
-            "إجباري تصيد — سريري/Excel: جدول مناوبات سريري مزيف كملف Excel خبيث. غيّر: الفترة (رمضان/الربع الثاني/الإجازات)، اسم رئيسة التمريض، اسم الملف. اطلب تفعيل الماكرو.",
-        # ── Clinical legit ──────────────────────────────────────
-        "MANDATORY LEGITIMATE — Clinical: Next week shift schedule update from head nurse. Official @hospital.org sender. No links, no requests. Normal clinical communication.":
-            "إجباري شرعي — سريري: تحديث جدول المناوبة للأسبوع القادم من رئيسة التمريض. مرسل رسمي @hospital.org. بدون روابط أو طلبات.",
-        "MANDATORY LEGITIMATE — Clinical: Patient case review reminder for ward round or MDT meeting. Official @hospital.org sender. Routine clinical workflow, no suspicious elements.":
-            "إجباري شرعي — سريري: تذكير بمراجعة حالة مريض لجولة الزيارة أو اجتماع الفريق. مرسل رسمي @hospital.org. روتين سريري عادي.",
-        "MANDATORY LEGITIMATE — Clinical/MOH: MOH mandatory training reminder (CPD/BLS/infection control). Official @moh.gov.sa or @hospital.org sender. Informational only.":
-            "إجباري شرعي — سريري/وزارة: تذكير التدريب الإلزامي من وزارة الصحة (CPD/BLS/مكافحة عدوى). مرسل رسمي @moh.gov.sa. للإعلام فقط.",
-        "MANDATORY LEGITIMATE — Clinical: Updated infection control guidelines from infection control team. Official @hospital.org sender. Policy update only, no links.":
-            "إجباري شرعي — سريري: تحديث إرشادات مكافحة العدوى من الفريق المختص. مرسل رسمي @hospital.org. تحديث سياسة فقط.",
-        "MANDATORY LEGITIMATE — Clinical: Department meeting invitation from medical director about clinical protocols. Official @hospital.org sender. Normal professional communication.":
-            "إجباري شرعي — سريري: دعوة اجتماع قسم من المدير الطبي لمناقشة البروتوكولات. مرسل رسمي @hospital.org. تواصل مهني عادي.",
-        # ── IT phishing ─────────────────────────────────────────
-        "MANDATORY PHISHING — IT/VPN: Fake VPN re-authentication alert. Vary: VPN name (Cisco AnyConnect/FortiClient/Pulse Secure/GlobalProtect), suspicious portal URL, urgency reason (security update/certificate renewal/mandatory re-auth). Target: IT specialist.":
-            "إجباري تصيد — تقني/VPN: تنبيه إعادة مصادقة VPN مزيف. غيّر: اسم الـ VPN (Cisco AnyConnect/FortiClient/Pulse Secure)، الرابط المشبوه، سبب الاستعجال. الهدف: متخصص تقنية معلومات.",
-        "MANDATORY PHISHING — IT/SSL: Fake SSL certificate expiry for hospital system. Vary: affected system (hospital website/patient portal/EMR login/staff intranet/lab system), renewal deadline, suspicious link URL. Target: system administrator.":
-            "إجباري تصيد — تقني/SSL: انتهاء شهادة SSL مزيف لنظام المستشفى. غيّر: النظام المتأثر (الموقع/بوابة المريض/EMR/الإنترانت)، الموعد النهائي، الرابط المشبوه. الهدف: مدير النظام.",
-        "MANDATORY PHISHING — IT/Helpdesk: Fake helpdesk ticket requesting remote access or credentials. Vary: ticket reference number, reported issue (server outage/network fault/EMR performance), requester name. Target: IT helpdesk staff.":
-            "إجباري تصيد — تقني/مكتب المساعدة: تذكرة مكتب مساعدة مزيفة تطلب وصولاً عن بُعد أو بيانات دخول. غيّر: رقم التذكرة، المشكلة المُبلَّغة (انقطاع الخادم/عطل الشبكة/أداء EMR)، اسم مقدم الطلب.",
-        "MANDATORY PHISHING — IT/CIO: CIO or CISO impersonation — urgent server credentials or disable security settings. Vary: executive name, specific system (firewall/server/database), urgency reason. Pure social engineering. Target: IT specialist.":
-            "إجباري تصيد — تقني/مدير: انتحال هوية مدير تقنية المعلومات — بيانات خادم عاجلة أو تعطيل إعدادات أمان. غيّر: اسم المدير، النظام المحدد (جدار ناري/خادم/قاعدة بيانات)، سبب الاستعجال.",
-        "MANDATORY PHISHING — IT/License: Fake software license renewal portal. Vary: software name (antivirus/EMR/Windows Server/database license), expiry urgency (24h/end of day/this week), suspicious renewal URL. Target: IT admin.":
-            "إجباري تصيد — تقني/ترخيص: بوابة تجديد ترخيص برنامج مزيفة. غيّر: اسم البرنامج (مضاد الفيروسات/EMR/Windows Server)، مدى الإلحاح (24 ساعة/نهاية اليوم/هذا الأسبوع)، الرابط المشبوه.",
-        # ── IT legit ────────────────────────────────────────────
-        "MANDATORY LEGITIMATE — IT: Scheduled server maintenance notice for next weekend. Official @hospital.org sender. Informational only, no credentials needed.":
-            "إجباري شرعي — تقني: إشعار صيانة خادم مجدولة للعطلة القادمة. مرسل رسمي @hospital.org. للإعلام فقط، لا حاجة لبيانات دخول.",
-        "MANDATORY LEGITIMATE — IT: Software update announcement for hospital systems (antivirus/Windows/EMR patch). Official @hospital.org sender. Standard IT notification.":
-            "إجباري شرعي — تقني: إعلان تحديث برنامج لأنظمة المستشفى (مضاد الفيروسات/ويندوز/تحديث EMR). مرسل رسمي @hospital.org. إشعار تقني عادي.",
-        "MANDATORY LEGITIMATE — IT: Network upgrade scheduled notification from IT department. Official @hospital.org sender. Informational, no action required.":
-            "إجباري شرعي — تقني: إشعار ترقية شبكة مجدولة من قسم تقنية المعلومات. مرسل رسمي @hospital.org. للإعلام فقط.",
-        "MANDATORY LEGITIMATE — IT/Helpdesk: IT helpdesk ticket resolution confirmation — issue resolved. Official @hospital.org sender. Closing notification only.":
-            "إجباري شرعي — تقني/مكتب المساعدة: تأكيد حل تذكرة مكتب المساعدة. مرسل رسمي @hospital.org. إشعار إغلاق فقط.",
-        "MANDATORY LEGITIMATE — IT: Cybersecurity awareness training reminder for IT staff. Official @hospital.org or @moh.gov.sa sender. Training schedule only.":
-            "إجباري شرعي — تقني: تذكير تدريب الوعي الأمني لموظفي تقنية المعلومات. مرسل رسمي @hospital.org. جدول تدريب فقط.",
-        # ── Other phishing ──────────────────────────────────────
-        "MANDATORY PHISHING — Mixed/Admin: Fake supplier invoice for medical equipment — urgent payment request. Vary: supplier name, equipment type, invoice amount (SAR 50,000–150,000), PDF filename. Target: general hospital employee.":
-            "إجباري تصيد — مختلط/إداري: فاتورة مورد طبية مزيفة — طلب دفع عاجل. غيّر: اسم المورد، نوع المعدات، المبلغ (50,000–150,000 ريال)، اسم PDF. الهدف: موظف عام.",
-        "MANDATORY PHISHING — Mixed/Clinical: Fake hospital system login credential harvest. Vary: system name (EMR/staff portal/scheduling system), suspicious URL, ONE spelling mistake. Target: general hospital employee.":
-            "إجباري تصيد — مختلط/سريري: سرقة بيانات دخول نظام المستشفى. غيّر: اسم النظام (EMR/بوابة الموظف/جدول المناوبات)، الرابط المشبوه، خطأ إملائي واحد. الهدف: موظف عام.",
-        "MANDATORY PHISHING — Mixed/IT: Fake hospital network or cybersecurity alert — urgent credential update. Vary: alert type (security breach/VPN expiry/account lockout), suspicious portal URL. Target: general hospital employee.":
-            "إجباري تصيد — مختلط/تقني: تنبيه أمني مزيف للشبكة — تحديث بيانات دخول عاجل. غيّر: نوع التنبيه (اختراق/انتهاء VPN/قفل الحساب)، الرابط المشبوه. الهدف: موظف عام.",
-        "MANDATORY PHISHING — Mixed/Admin: Fake payroll notification — salary on hold until bank details updated. Vary: bank detail type, urgency deadline, sender name. Target: general hospital employee.":
-            "إجباري تصيد — مختلط/إداري: إشعار راتب مزيف — موقوف حتى تحديث البيانات البنكية. غيّر: نوع البيانات البنكية، الموعد النهائي، اسم المرسل. الهدف: موظف عام.",
-        "MANDATORY PHISHING — Mixed/Clinical: Fake MOH health directive — immediate acknowledgment via link. Vary: directive topic (vaccination/safety/compliance), MOH official name, suspicious URL. Target: general hospital employee.":
-            "إجباري تصيد — مختلط/سريري: توجيه صحي مزيف من وزارة الصحة — تأكيد فوري عبر رابط. غيّر: موضوع التوجيه (تطعيمات/سلامة/امتثال)، اسم المسؤول، الرابط. الهدف: موظف عام.",
-        # ── Other legit ─────────────────────────────────────────
-        "MANDATORY LEGITIMATE — Mixed: Routine weekly work schedule update from department head. Official @hospital.org sender. No suspicious elements.":
-            "إجباري شرعي — مختلط: تحديث جدول عمل أسبوعي روتيني من رئيس القسم. مرسل رسمي @hospital.org. بدون عناصر مشبوهة.",
-        "MANDATORY LEGITIMATE — Mixed/HR: Staff training reminder from HR (safety/compliance/professional development). Official @hospital.org sender. Informational only.":
-            "إجباري شرعي — مختلط/HR: تذكير تدريب موظفين من الموارد البشرية (سلامة/امتثال/تطوير). مرسل رسمي @hospital.org. للإعلام فقط.",
-        "MANDATORY LEGITIMATE — Mixed: Hospital policy update notice from administration. Official @hospital.org sender. No links, no requests.":
-            "إجباري شرعي — مختلط: إشعار تحديث سياسة المستشفى من الإدارة. مرسل رسمي @hospital.org. بدون روابط أو طلبات.",
-        "MANDATORY LEGITIMATE — Mixed/Payroll: Monthly payslip notification from official HR system. Official @hospital.org sender. Standard notification.":
-            "إجباري شرعي — مختلط/رواتب: إشعار راتب شهري من نظام الموارد البشرية الرسمي. مرسل رسمي @hospital.org. إشعار عادي.",
-        "MANDATORY LEGITIMATE — Mixed: Team meeting or briefing invitation from manager. Official @hospital.org sender. Normal workplace communication.":
-            "إجباري شرعي — مختلط: دعوة اجتماع فريق أو إحاطة من المدير. مرسل رسمي @hospital.org. تواصل عمل عادي.",
-    }
-    if not use_open:
-        if is_ar:
-            forced_task = ASSESS_TRANSLATIONS.get(forced_task_raw, forced_task_raw)
-        else:
-            forced_task = forced_task_raw
-    # (when use_open is True, `forced_task` was already built fully
-    # localized above — nothing more to do here)
+Critical rules:
+- Do NOT use fixed templates.
+- Do NOT use memorized example domains or domains already used in this session.
+- Invent a fresh scenario from scratch that fits the role.
+- The assessment must be balanced: legitimate emails must be truly safe, phishing emails must show red flags according to difficulty.
+- Never write the literal placeholder suspicious_link inside body. Use a realistic-looking URL when phishing needs a link.
+- Return JSON only. No Markdown.
+{official}
 
-    # FIX 10: lang_rule مطابق للتعلم
-    if is_ar:
-        lang_rule = (
-            "اللغة: عربية فصحى فقط في كل النصوص (subject/body/explanation).\n"
-            "استثناء: عناوين البريد الإلكتروني والروابط (http://...) والنطاقات تبقى لاتينية.\n"
-            "ممنوع تمامًا: أي كلمة أو جملة إنجليزية كاملة وسط الجملة العربية (مثال على خطأ يجب تجنبه: كتابة \"NOW, HOUR\" أو أي تحذير بالإنجليزي وسط نص عربي بالكامل).\n"
-            "قبل إرسال الرد، تأكد إن كل جملة بحقل body/subject/explanation مكتوبة بالعربية بالكامل من أول الجملة لآخرها، بدون أي قفزة لغة بالنص.\n"
-            "حقل 'to': البريد الإلكتروني فقط بدون أي نص."
-        )
-    else:
-        lang_rule = "Language: English only throughout. No Arabic or foreign characters in text fields. Email addresses and URLs stay Latin."
+Context:
+{role_context}
+Recipient: {recipient_email}
+Anti-repeat random seed: {seed}
+{avoid_topics}{avoid_domains}
+Difficulty rules:
+{diff_rule}
 
-    # تعريف المتغيرات المستخدمة في JSON template
-    if is_ar:
-        from_ex = "اسم المرسل <email@domain.com>"
-        subj_ex = "موضوع الرسالة"
-        body_ex = "نص الرسالة بالعربية الفصحى"
-        expl    = "اشرح بوضوح لماذا هذا البريد " + ("تصيد إلكتروني وما هي علاماته التحذيرية" if is_phishing else "شرعي وآمن وما الذي يجعله موثوقاً")
-    else:
-        from_ex = "Sender Name <email@domain.com>"
-        subj_ex = "subject line"
-        body_ex = "email body in English"
-        expl    = f"Clearly explain why this email is {'phishing and identify the red flags' if is_phishing else 'legitimate and safe'}"
-
-    if recipient_name and recipient_email:
-        if is_ar:
-            recipient_block = f"\n\nالمستلم (ثابت — لا تغيّره):\nاسم المستلم بالتحية: {recipient_name}\nحقل \"to\": {recipient_email}\nمهم: التحية بنص الرسالة يجب تخاطب نفس الاسم أعلاه بالضبط."
-        else:
-            recipient_block = f"\n\nRECIPIENT (fixed — do not change):\nGreeting name to use: {recipient_name}\n\"to\" field value: {recipient_email}\nIMPORTANT: the greeting inside the body MUST address this exact name."
-    else:
-        recipient_block = ""
-
-    return f"""Phishing awareness assessment email for Saudi healthcare. Seed:{session_seed}
-
-TARGET: {r_desc}
-CONTEXT: {r_ctx}
-{recipient_block}
-
-TASK — MANDATORY SCENARIO (do NOT change this):
-{forced_task}
-Additional context: {task}
-
-DIFFICULTY: {diff_rule}
-
-LANGUAGE: {lang_rule}
-
-FORMAT: body=plain text only, \\n for line breaks, no HTML. "to"=email address only. Keep body concise: 100-180 words maximum. Keep "explanation" to 2-3 short sentences maximum.
-IMPORTANT: never use the double-quote character (") anywhere inside any text value (subject/body/explanation/from). If you need to quote a word, use single quotes (') instead — a stray " inside a value breaks the JSON output.
-{"If phishing uses a link: put URL in suspicious_link AND in body. If attachment: filename in attachment field." if is_phishing else 'suspicious_link:"", attachment:""'}
-{"If legitimate: use real official domain (@hospital.org or @moh.gov.sa), no suspicious links, no urgent credential requests.' " if not is_phishing else ""}
-
-RETURN ONLY VALID JSON:
-{{"is_phishing":{"true" if is_phishing else "false"},"from":"{from_ex}","to":"employee@hospital.org","subject":"{subj_ex}","attachment":"","body":"{body_ex}","suspicious_link":"","explanation":"{expl}"}}"""
+Return only this JSON structure:
+{{
+  "is_phishing": {str(is_phishing).lower()},
+  "email_type": "new email type",
+  "from": "realistic sender name <email@domain>",
+  "to": "{recipient_email}",
+  "subject": "email subject",
+  "attachment": "filename or empty string",
+  "body": "full email body",
+  "suspicious_text": "most suspicious phrase or empty string if legitimate",
+  "suspicious_link": "suspicious URL or empty string",
+  "explanation": "brief explanation of why the correct label is correct"
+}}
+"""
 
 def get_system_prompt():
     """
-    FIX 4+5: System prompt يُقيّد النموذج بصرامة حسب الصعوبة والـ role.
-    - FIX 4: قواعد الصعوبة (Easy/Medium/Hard)
-    - FIX 5: تعليمات الـ role لضمان أن التحية والمحتوى مناسبان للدور
+    System prompt without fixed domain examples.
+    The detailed 9-criteria difficulty rules live inside build_prompt/build_assess_prompt.
     """
     difficulty = st.session_state.get("difficulty", "medium")
-    role       = st.session_state.get("role", "Clinical")
-    role_info  = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    role = st.session_state.get("role", "Clinical")
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
+    role_context = get_role_unbounded_context(role_type, False)
 
-    # تعليمات الـ role للتحية والمحتوى
-    role_greetings = {
-        "clinical": (
-            "TARGET ROLE: Clinical staff (nurses, doctors, pharmacists, lab technicians).\n"
-            "GREETING: Use 'Dear Dr. [Name]' or 'Dear Nurse [Name]' — medical titles only.\n"
-            "CONTENT: Must relate to EMR systems, patient records, clinical schedules, lab results, pharmacy, MOH medical alerts, medical device updates, or clinical protocols.\n"
-            "DO NOT use administrative, billing, or IT content."
-        ),
-        "admin": (
-            "TARGET ROLE: Administrative/management staff — pick ONE specific sub-role each time (rotate between them):\n"
-            "  - Medical Secretary: manages doctor schedules, correspondence, referral letters\n"
-            "  - Receptionist: patient check-in, phone calls, appointment booking\n"
-            "  - Patient Records Clerk: patient files, medical history, document archiving\n"
-            "  - Insurance Coordinator: health insurance claims, pre-authorizations, coverage updates\n"
-            "  - Billing Specialist: invoices, payments, accounts receivable, supplier contracts\n"
-            "  - Procurement Officer: medical equipment orders, supplier relationships, purchase orders\n"
-            "  - Hospital Administrator: staff HR policies, MOH accreditation, budget approvals\n\n"
-            "GREETING: Match the sub-role — e.g. 'Dear Ms. Reem,' / 'Dear Medical Secretary,' / 'Dear Ms. Al-Zahrani,' — NEVER use 'Dr.' or medical titles.\n\n"
-            "CONTENT: Choose a DIFFERENT scenario each time — rotate through these varied attack types:\n"
-            "  1. Fake health insurance portal — update employee coverage or re-submit denied claims\n"
-            "  2. Fake supplier invoice — urgent payment for medical equipment delivery\n"
-            "  3. Fake payroll/HR system — update bank account or salary information\n"
-            "  4. Fake patient appointment system — verify login after system migration\n"
-            "  5. Fake MOH accreditation request — upload required compliance documents\n"
-            "  6. Fake HR policy acknowledgment — click link to confirm new leave/overtime policy\n"
-            "  7. Fake medical procurement portal — renew supplier contract before expiry\n"
-            "  8. CEO/director impersonation — urgent financial transfer or sensitive data request\n\n"
-            "DO NOT repeat the same scenario. DO NOT use clinical (lab/pharmacy/EMR) or IT infrastructure content."
-        ),
-        "it": (
-            "TARGET ROLE: IT/Informatics staff (IT specialist, system administrator, cybersecurity officer).\n"
-            "GREETING: Use 'Dear [Name],' or 'Dear IT Team,' or 'Dear Mr./Ms. [Name]' — NOT 'Dr.'.\n"
-            "CONTENT: Must relate to VPN access, network infrastructure, server maintenance, EMR system updates, SSL certificates, firewall rules, software licenses, IT helpdesk, or endpoint security.\n"
-            "DO NOT use clinical or administrative content."
-        ),
-        "other": (
-            "TARGET ROLE: General hospital employee — could be from any department.\n"
-            "GREETING: Use 'Dear [Name],' or 'Dear Colleague,' — avoid specific titles like 'Dr.' unless the scenario requires it.\n"
-            "CONTENT: Follow the MANDATORY SCENARIO exactly — it already specifies the department context (admin/clinical/IT). Generate content that any hospital employee could plausibly receive.\n"
-            "The scenario rotates across all three role types to ensure maximum variety."
-        ),
-    }
-    role_instruction = role_greetings.get(role_type, role_greetings["admin"])
+    return f"""
+You are a cybersecurity training content generator for a Saudi healthcare phishing-awareness study.
+Role context: {role_context}
+Current difficulty: {difficulty}.
 
-    sys_prompts = {
-        "easy": (
-            "You are a cybersecurity trainer generating phishing email examples.\n\n"
-            f"{role_instruction}\n\n"
-            "EASY level RULES — ALL mandatory:\n"
-            f"1. Use a CLEARLY FAKE domain suited to the role (admin: hosp1tal-hr.xyz / moh-pay.net | clinical: emr-secure.xyz / medrecords.net | it: vpn-update.xyz / sysadmin-alert.net)\n"
-            "2. Include EXACTLY 2 obvious spelling mistakes in the body\n"
-            "3. Use ALL-CAPS for at least 2 sentences — aggressive urgency\n"
-            "4. Generic greeting ONLY: \'Dear Staff\' or \'Dear Team\' — NO personal name\n"
-            "5. Blatant suspicious request matching the scenario (urgent payment / share password / enter credentials)\n"
-            "These rules are NON-NEGOTIABLE."
-        ),
-        "medium": (
-            "You are a cybersecurity trainer generating phishing email examples.\n\n"
-            f"{role_instruction}\n\n"
-            "MEDIUM level RULES — ALL mandatory:\n"
-            f"1. Use a slightly suspicious domain (admin: hospital-hr-portal.net / moh-billing.com | clinical: emr-health-sa.net / moh-clinic.com | it: vpn-hospital-sa.net / itsupport-moh.com)\n"
-            "2. Include EXACTLY 1 minor spelling mistake — subtle, one word only\n"
-            "3. ZERO ALL-CAPS — use normal sentence case throughout\n"
-            "4. Moderate urgency only: \'Please respond by end of week\' — no threatening language\n"
-            "5. Semi-personal greeting matching sub-role (e.g. \'Dear Ms. Al-Zahrani,\')\n"
-            "6. Unusual but plausible request for the workplace context\n"
-            "These rules are NON-NEGOTIABLE. NO ALL-CAPS under any circumstances."
-        ),
-        "hard": (
-            "You are a cybersecurity trainer generating phishing email examples.\n\n"
-            f"{role_instruction}\n\n"
-            "HARD level RULES — ALL mandatory:\n"
-            f"1. Domain with ONE tiny change only (admin: hosp1tal.org / moh.gov-sa.com | clinical: moh.gov.sa-health.com / hosp1tal-clinic.org | it: hosp1tal-it.org / moh-itsupport.sa.com)\n"
-            "2. ZERO spelling or grammar mistakes — flawless professional language\n"
-            "3. ZERO ALL-CAPS — completely professional tone throughout\n"
-            "4. Polite subtle urgency ONLY: \'Kindly review before end of business day\'\n"
-            "5. Full name + exact job title in greeting matching the sub-role\n"
-            "6. ONLY ONE subtle red flag (the domain) — everything else perfectly legitimate\n"
-            "These rules are NON-NEGOTIABLE. The email must look almost completely real."
-        ),
-    }
-    return sys_prompts.get(difficulty, sys_prompts["medium"])
-
+Hard rules:
+- Return valid JSON only.
+- Do not include Markdown or commentary.
+- Do not use fixed templates.
+- Do not reuse familiar demonstration domains.
+- Invent fresh, realistic healthcare workplace scenarios.
+- Keep content safe and educational.
+- For legitimate emails, use only official domains such as hospital.org or moh.gov.sa and include no suspicious credential/payment/link behavior.
+- For phishing emails, generate a clearly educational simulated phishing example with a fake domain and no real organization impersonation beyond generic hospital/MOH-style training context.
+""".strip()
 
 def _init_provider_metrics(provider):
     """Initialize metrics dict for a provider if not present"""
@@ -2039,54 +1507,36 @@ RETURN ONLY VALID JSON — no text before or after:
 
 
 def generate_other_email(index, language, difficulty):
-    """يولّد إيميل Other من الـ static template ويضيف AI Analysis"""
-    import copy
-    template = copy.deepcopy(OTHER_TEMPLATES[index % len(OTHER_TEMPLATES)])
-    email_data = template["email"]
-    
-    # نطلب الـ AI Analysis من اللـ LLM
+    """Dynamic Other learning email. No static templates."""
     try:
-        prompt = build_other_analysis_prompt(email_data, language, difficulty)
-        analysis = call_groq(prompt)
-        
-        # ندمج الإيميل الجاهز مع الـ analysis
-        email_data["indicators"] = analysis.get("indicators", [
-            {"number": 1, "title": "Suspicious Domain", "description": "The sender's domain is clearly fake and not affiliated with the hospital."},
-            {"number": 2, "title": "Aggressive Urgency", "description": "The email uses ALL-CAPS and threatening language to pressure the recipient."},
-            {"number": 3, "title": "Request for Credentials", "description": "Legitimate systems never ask for passwords or credentials via email."}
-        ])
-        email_data["why_risky"] = analysis.get("why_risky", "This phishing email targets hospital staff to steal sensitive credentials.")
-        email_data["learning_tip"] = analysis.get("learning_tip", "Always verify the sender's domain and never click suspicious links in emails.")
-        email_data["email_type"] = email_data.get("email_type", "Phishing")
-        
-    except Exception:
-        # Fallback analysis
-        email_data["indicators"] = [
-            {"number": 1, "title": "Suspicious Domain", "description": "The sender domain is not the official hospital domain."},
-            {"number": 2, "title": "Spelling Mistakes", "description": "The email contains obvious spelling mistakes unusual for official communications."},
-            {"number": 3, "title": "Aggressive Urgency", "description": "The email uses ALL-CAPS and threats to pressure immediate action."}
-        ]
-        email_data["why_risky"] = "This phishing email attempts to steal hospital staff credentials."
-        email_data["learning_tip"] = "Always verify the sender domain before clicking any link or sharing credentials."
-    
-    return email_data
+        data = call_groq(build_prompt("Other" if language != "Arabic" else "أخرى", index, language), max_tokens=2200)
+        if "error" in data:
+            return {"error": data['error'].get('message', str(data['error']))}
+        result = parse_json_response(data["choices"][0]["message"]["content"].strip())
+        result = clean_result(result, language == "Arabic")
+        if result.get("suspicious_link", "").strip() and result["suspicious_link"] not in result.get("body", ""):
+            result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
+        remember_generated_artifacts("other", "learn", result)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def generate_other_assess_email(index, is_phishing, language, difficulty):
-    """يولّد إيميل Other للاختبار من static template"""
-    import copy
-    if is_phishing:
-        email_data = copy.deepcopy(OTHER_ASSESS_PHISHING[index % len(OTHER_ASSESS_PHISHING)])
-        explanation = email_data.pop("explanation", "")
-        email_data["is_phishing"] = True
-    else:
-        email_data = copy.deepcopy(OTHER_ASSESS_LEGIT[index % len(OTHER_ASSESS_LEGIT)])
-        explanation = email_data.pop("explanation", "")
-        email_data["is_phishing"] = False
-    
-    email_data["explanation"] = explanation
-    return email_data
-
+    """Dynamic Other assessment email. No static templates."""
+    try:
+        data = call_groq(build_assess_prompt("Other" if language != "Arabic" else "أخرى", index, is_phishing, language), max_tokens=2200)
+        if "error" in data:
+            return {"error": data['error'].get('message', str(data['error']))}
+        result = parse_json_response(data["choices"][0]["message"]["content"].strip())
+        result = clean_result(result, language == "Arabic")
+        result["is_phishing"] = bool(is_phishing)
+        if result.get("suspicious_link", "").strip() and result["suspicious_link"] not in result.get("body", ""):
+            result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
+        remember_generated_artifacts("other", f"assess_{is_phishing}", result)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
 
 def generate_email(role, index, language, difficulty="medium"):
     # للـ Other: استخدم static templates مباشرة
@@ -2111,7 +1561,7 @@ def generate_email(role, index, language, difficulty="medium"):
         # in this session (same role) know not to repeat it.
         # AR: نحفظ موضوع هذا الإيميل حتى التوليدات المفتوحة الجايّة بهذي
         # الجلسة (لنفس الدور) تعرف ما تكرره.
-        remember_used_topic(role_type, "learn", result.get("email_type") or result.get("subject"))
+        remember_generated_artifacts(role_type, "learn", result)
         return result
     except json.JSONDecodeError as e:
         return {"error": f"JSON parse error: {e}"}
@@ -2139,7 +1589,7 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
             if result.get("suspicious_link","").strip():
                 if result["suspicious_link"] not in result.get("body",""):
                     result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
-            remember_used_topic(role_type, f"assess_{is_phishing}", result.get("email_type") or result.get("subject"))
+            remember_generated_artifacts(role_type, f"assess_{is_phishing}", result)
             return result
         except json.JSONDecodeError:
             if attempt == 2:
