@@ -873,99 +873,284 @@ def remember_generated_artifacts(role_type, key_suffix, result):
             current.append(d)
     st.session_state[key] = current[-30:]
 
+
+def _domain_root(domain):
+    domain = (domain or "").lower()
+    domain = re.sub(r'^https?://', '', domain).split('/')[0]
+    parts = domain.split('.')
+    return ".".join(parts[-2:]) if len(parts) >= 2 else domain
+
+_OBVIOUS_ADVANCED_DOMAIN_WORDS = {
+    "secure", "update", "verify", "verification", "login", "reset",
+    "password", "urgent", "alert", "account", "emr"
+}
+
+def _contains_long_all_caps(s):
+    return bool(re.search(r'\b[A-Z][A-Z\s]{18,}\b', s or ""))
+
+def _has_generic_greeting(body):
+    b = (body or "").lower()
+    generic = [
+        "dear staff", "dear team", "dear employee", "dear user",
+        "عزيزي الموظف", "عزيزتي الموظفة", "عزيزي المستخدم", "عزيزي الفريق",
+        "السادة الموظفين", "الموظف العزيز"
+    ]
+    return any(g in b for g in generic)
+
+def _domain_has_obvious_advanced_word(domain):
+    d = (domain or "").lower()
+    return any(w in d for w in _OBVIOUS_ADVANCED_DOMAIN_WORDS)
+
+def get_generation_quality_issues(result, difficulty, is_phishing=True):
+    """
+    Lightweight guardrail used before showing generated content.
+    It does not replace the model. It only rejects outputs that clearly violate
+    the difficulty contract or repeat domains within the same session.
+    """
+    if not isinstance(result, dict):
+        return ["result is not a JSON object"]
+
+    body = result.get("body", "") or ""
+    subject = result.get("subject", "") or ""
+    sender = result.get("from", "") or ""
+    link = result.get("suspicious_link", "") or ""
+    combined = " ".join([body, subject, sender, link])
+    domains = extract_domains_from_result(result)
+    non_official = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
+
+    issues = []
+    if is_phishing:
+        if not non_official and not result.get("attachment"):
+            issues.append("phishing item needs a non-official fake domain/link or a suspicious attachment")
+        if difficulty == "easy":
+            if not _has_generic_greeting(body):
+                issues.append("Beginner must use a generic greeting")
+            if not re.search(r'password|credential|login|verify|account|كلمة مرور|بيانات الدخول|تحقق|حساب', combined, re.I):
+                issues.append("Beginner needs an obvious sensitive request")
+            if not re.search(r'urgent|immediately|today|suspended|terminated|locked|عاجل|فورًا|اليوم|تعليق|إيقاف', combined, re.I):
+                issues.append("Beginner needs obvious urgency/threat")
+        elif difficulty == "medium":
+            if _contains_long_all_caps(combined):
+                issues.append("Intermediate must not use aggressive all-caps")
+            if re.search(r'permanent termination|within 1 hour|act now|account closed|إنهاء دائم|خلال ساعة|تصرف الآن', combined, re.I):
+                issues.append("Intermediate threat is too aggressive")
+        elif difficulty == "hard":
+            if _has_generic_greeting(body):
+                issues.append("Advanced must use a personalized greeting, not generic")
+            if _contains_long_all_caps(combined):
+                issues.append("Advanced must not contain all-caps urgency")
+            if re.search(r'act now|failure to comply|account will be closed|enter your password|full credentials|تصرف الآن|سيتم إغلاق|أدخل كلمة المرور|بيانات الدخول كاملة', combined, re.I):
+                issues.append("Advanced contains obvious beginner-style threat or direct password request")
+            if any(_domain_has_obvious_advanced_word(d) for d in non_official):
+                issues.append("Advanced fake domain is too obvious; avoid secure/update/verify/login/reset/password/urgent/emr")
+    else:
+        # Legitimate assessment items must stay genuinely safe.
+        bad = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
+        if bad:
+            issues.append("Legitimate item must not contain external or fake domains")
+        if re.search(r'password|credential|verify your account|enter your login|كلمة مرور|بيانات الدخول|تحقق من حسابك', combined, re.I):
+            issues.append("Legitimate item must not ask for credentials or account verification")
+        if re.search(r'suspended|terminated|locked|account closed|تعليق|إيقاف|إغلاق الحساب', combined, re.I):
+            issues.append("Legitimate item must not threaten account suspension")
+
+    return issues
+
+def build_retry_guidance(issues, is_ar):
+    if not issues:
+        return ""
+    joined = "؛ ".join(issues) if is_ar else "; ".join(issues)
+    if is_ar:
+        return f"""
+
+تم رفض المحاولة السابقة لأنها خالفت قواعد الجودة التالية:
+{joined}
+
+أعد التوليد الآن من الصفر بفكرة ونطاق ومرسل مختلفين تمامًا، والتزم بمستوى الصعوبة حرفيًا.
+"""
+    return f"""
+
+The previous attempt was rejected because it violated these quality rules:
+{joined}
+
+Regenerate from scratch with a completely different idea, sender, and domain. Follow the difficulty level literally.
+"""
+
 def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
-    """Nine explicit criteria so Beginner/Intermediate/Advanced are visibly different."""
+    """
+    Strong 9-criterion difficulty contract.
+    Goal: Beginner / Intermediate / Advanced must be visibly different in BOTH Arabic and English.
+    """
     if is_ar:
         if is_phishing:
             rules = {
                 "easy": """
-مستوى مبتدئ — يجب أن تكون علامات التصيد واضحة جدًا حسب 9 معايير:
-1) النطاق: مزيف بوضوح، لكن اختر نطاقًا جديدًا بالكامل ولا تستخدم أمثلة محفوظة.
-2) الأخطاء: بالضبط خطآن إملائيان واضحان في النص.
-3) الإلحاح: قوي جدًا مع تهديد مباشر واستخدام حروف كبيرة/صياغة صارخة عند الحاجة.
-4) التحية: عامة فقط مثل: عزيزي الموظف / Dear Staff.
-5) المرسل: اسم جهة عام أو غير دقيق.
-6) الطلب: طلب حساس واضح مثل كلمة مرور/بيانات دخول/رابط تحقق.
-7) المعرفة الداخلية: صفر، الرسالة عامة.
-8) التعقيد: ناقل هجوم واحد فقط.
-9) التكتيك النفسي: خوف وإلحاح مباشر.
+مستوى مبتدئ — اجعل التصيد واضحًا جدًا ومناسبًا للمبتدئين عبر 9 معايير إلزامية:
+1) النطاق: مزيف وواضح، بنطاق جديد بالكامل، ولا تستخدم نطاقًا سبق استعماله.
+2) الأخطاء: ضع بالضبط خطأين إملائيين/لغويين واضحين في جسم الرسالة.
+3) الإلحاح: تهديد مباشر وصريح خلال ساعات قليلة أو اليوم نفسه.
+4) التحية: عامة فقط مثل "عزيزي الموظف" أو "Dear Staff".
+5) المرسل: جهة عامة أو اسم قسم غير دقيق.
+6) الطلب الحساس: طلب واضح لكلمة مرور/بيانات دخول/تحديث حساب عبر رابط.
+7) المعرفة الداخلية: لا تستخدم تفاصيل داخلية حقيقية؛ الرسالة عامة.
+8) التعقيد: ناقل هجوم واحد فقط: رابط أو مرفق، وليس الاثنين معًا.
+9) التكتيك النفسي: خوف وإلحاح مباشر بصياغة سهلة الاكتشاف.
+
+ممنوع في المبتدئ: التفاصيل الدقيقة جدًا، اللغة الرسمية المبالغ فيها، أو النطاقات القريبة جدًا من الرسمية.
 """,
                 "medium": """
-مستوى متوسط — يجب أن تكون العلامات مختلطة حسب 9 معايير:
-1) النطاق: مشبوه قليلًا، ليس فاضحًا، ويجب أن يكون جديدًا بالكامل.
-2) الأخطاء: خطأ إملائي واحد فقط وبشكل خفيف.
-3) الإلحاح: متوسط ومهني، بدون تهديد صريح.
-4) التحية: شبه مخصصة وتناسب الدور.
-5) المرسل: يبدو مقبولًا لكن فيه تفصيل مشكوك.
-6) الطلب: غير معتاد لكنه ممكن في بيئة العمل.
-7) المعرفة الداخلية: خفيفة مثل اسم قسم أو نظام.
-8) التعقيد: ناقل أساسي واحد مع لمسة اجتماعية خفيفة.
+مستوى متوسط — اجعل التصيد متوسط الوضوح عبر 9 معايير إلزامية:
+1) النطاق: يبدو قريبًا من بيئة العمل لكنه يحتوي فرقًا واضحًا عند التدقيق، ويجب أن يكون جديدًا بالكامل.
+2) الأخطاء: خطأ واحد فقط وخفيف في جسم الرسالة.
+3) الإلحاح: مهني ومتوسط؛ موعد خلال 24–72 ساعة، بدون تهديد عدواني.
+4) التحية: شبه مخصصة: الاسم الأول أو المسمى الوظيفي.
+5) المرسل: قسم أو موظف يبدو معقولًا لكنه غير مثالي.
+6) الطلب الحساس: طلب غير معتاد لكنه يبدو ممكنًا في العمل.
+7) المعرفة الداخلية: تفصيل داخلي خفيف مثل اسم قسم أو نظام.
+8) التعقيد: ناقل أساسي واحد مع لمسة هندسة اجتماعية.
 9) التكتيك النفسي: مصداقية مهنية + ضغط زمني خفيف.
+
+ممنوع في المتوسط: كل الحروف الكبيرة، التهديد الشديد، أو طلب كلمة المرور بشكل فاضح جدًا.
 """,
                 "hard": """
-مستوى متقدم — يجب أن تبدو الرسالة شبه شرعية حسب 9 معايير:
-1) النطاق: قريب جدًا من الشرعي مع فرق صغير واحد فقط، ويجب أن يكون جديدًا بالكامل.
-2) الأخطاء: صفر أخطاء لغوية أو إملائية.
-3) الإلحاح: مهذب وخفي فقط.
-4) التحية: مخصصة بالاسم والمسمى المناسب.
-5) المرسل: اسم شخص/قسم واقعي جدًا.
-6) الطلب: يبدو إجراءً طبيعيًا لكن يقود لخطر.
-7) المعرفة الداخلية: عالية ومحددة لكن غير مبالغ فيها.
-8) التعقيد: ممكن دمج تكتيكين بشكل طبيعي.
-9) التكتيك النفسي: ثقة/سلطة/روتين مهني بدون تهديد واضح.
+مستوى متقدم — اجعل التصيد شبه شرعي وصعب الاكتشاف عبر 9 معايير إلزامية:
+1) النطاق: قريب بذكاء من جهة عمل/منصة صحية، لكن ليس مطابقًا للرسمي، وجديد بالكامل.
+   لا تستخدم كلمات مكشوفة في النطاق مثل: secure, update, verify, login, reset, password, urgent.
+2) الأخطاء: صفر أخطاء إملائية أو لغوية.
+3) الإلحاح: مهذب وخفي، بدون تهديد، بدون حروف كبيرة، بدون "ACT NOW".
+4) التحية: مخصصة بالاسم والمسمى/الدور المناسب.
+5) المرسل: شخص أو قسم واقعي جدًا مع توقيع مهني.
+6) الطلب الحساس: لا تطلب كلمة المرور مباشرة؛ اجعل الخطر عبر إجراء يبدو طبيعيًا مثل مراجعة حالة، تأكيد امتثال، أو فتح بوابة.
+7) المعرفة الداخلية: تفاصيل سياقية محددة لكن غير مبالغ فيها.
+8) التعقيد: يمكن دمج رابط + سياق إداري/سريري طبيعي، لكن بدون فوضى.
+9) التكتيك النفسي: سلطة/ثقة/روتين مهني، وليس خوفًا مباشرًا.
+
+ممنوع في المتقدم: التحية العامة، الأخطاء، التهديدات، النطاقات الفاضحة، أو طلب "أدخل كلمة المرور" مباشرة.
 """,
             }
         else:
             rules = {
-                "easy": "رسالة شرعية سهلة: رسمية وواضحة، نطاق hospital.org أو moh.gov.sa، لا روابط مشبوهة، لا طلب بيانات، لا تهديد، لا أخطاء.",
-                "medium": "رسالة شرعية متوسطة: تفاصيل عمل واقعية، قد تتضمن موعدًا أو إجراءً طبيعيًا، لكن بدون أي طلب حساس أو رابط خارجي.",
-                "hard": "رسالة شرعية متقدمة: شديدة الواقعية ومفصلة، قد تبدو مهمة أو عاجلة مهنيًا، لكنها آمنة تمامًا ولا تحتوي أي علامة تصيد.",
+                "easy": """
+رسالة شرعية سهلة:
+1) نطاق رسمي فقط hospital.org أو moh.gov.sa.
+2) لا أخطاء.
+3) لا تهديد.
+4) تحية واضحة.
+5) مرسل رسمي.
+6) لا طلب بيانات حساسة.
+7) تفاصيل بسيطة.
+8) لا روابط خارجية.
+9) هدف إداري/سريري واضح وآمن.
+""",
+                "medium": """
+رسالة شرعية متوسطة:
+1) نطاق رسمي فقط.
+2) لا أخطاء.
+3) موعد أو إجراء طبيعي.
+4) تحية شبه مخصصة.
+5) مرسل مناسب.
+6) لا طلب كلمة مرور أو بيانات حساسة.
+7) تفاصيل عمل واقعية.
+8) قد تشير للإنترانت أو رقم تحويلة، بدون رابط خارجي.
+9) تبدو مهمة لكن آمنة.
+""",
+                "hard": """
+رسالة شرعية متقدمة:
+1) نطاق رسمي فقط.
+2) لا أخطاء.
+3) قد تكون عاجلة مهنيًا لكن بدون تهديد.
+4) تحية مخصصة.
+5) مرسل واقعي جدًا.
+6) لا بيانات حساسة.
+7) تفاصيل دقيقة ومهنية.
+8) لا رابط خارجي مشبوه.
+9) قد تشبه التصيد ظاهريًا لكنها آمنة تمامًا عند الفحص.
+""",
             }
     else:
         if is_phishing:
             rules = {
                 "easy": """
-BEGINNER difficulty — red flags must be very obvious using 9 criteria:
-1) Domain realism: clearly fake, but invent a brand-new domain; do not use memorized examples.
-2) Spelling: exactly two obvious spelling/grammar mistakes in the body.
-3) Urgency: strong threat and aggressive pressure.
-4) Greeting: generic only, such as Dear Staff or Dear Team.
-5) Sender credibility: vague or clearly suspicious sender.
-6) Sensitive request: obvious credential/password/payment/link request.
+BEGINNER difficulty — make the phishing obvious through all 9 criteria:
+1) Domain realism: clearly fake, brand-new, and not reused.
+2) Spelling: include exactly two obvious spelling/grammar mistakes in the email body.
+3) Urgency: direct threat within hours or today.
+4) Greeting: generic only, such as "Dear Staff" or "Dear Team".
+5) Sender credibility: vague department or suspicious generic sender.
+6) Sensitive request: obvious password/credential/account-update request through a link.
 7) Insider knowledge: none; generic message.
-8) Attack complexity: one simple attack vector only.
+8) Attack complexity: one attack vector only: either link or attachment, not both.
 9) Psychological tactic: blunt fear and urgency.
+
+Do not make Beginner subtle, polished, or highly realistic.
 """,
                 "medium": """
-INTERMEDIATE difficulty — mixed red flags using 9 criteria:
-1) Domain realism: slightly suspicious but not ridiculous, and brand-new.
-2) Spelling: exactly one subtle spelling mistake only.
-3) Urgency: moderate workplace urgency, no aggressive threats.
-4) Greeting: semi-personal and role-appropriate.
-5) Sender credibility: plausible but imperfect sender identity.
+INTERMEDIATE difficulty — mixed red flags through all 9 criteria:
+1) Domain realism: workplace-plausible but imperfect, brand-new, and not reused.
+2) Spelling: exactly one subtle spelling/grammar mistake in the body.
+3) Urgency: moderate workplace deadline within 24–72 hours; no aggressive threats.
+4) Greeting: semi-personal, using first name or role.
+5) Sender credibility: plausible but not perfect.
 6) Sensitive request: unusual but possible in workplace context.
 7) Insider knowledge: light department/system detail.
 8) Attack complexity: one main vector plus light social engineering.
 9) Psychological tactic: professional credibility plus mild deadline pressure.
+
+Do not use all-caps, severe threats, or an obviously fake domain in Intermediate.
 """,
                 "hard": """
-ADVANCED difficulty — almost legitimate using 9 criteria:
-1) Domain realism: very close to legitimate with one tiny change, and brand-new.
+ADVANCED difficulty — almost legitimate and hard to detect through all 9 criteria:
+1) Domain realism: intelligently close to a healthcare/workplace service, but not official, brand-new, and not reused.
+   Do NOT use obvious domain words: secure, update, verify, login, reset, password, urgent.
 2) Spelling: zero spelling or grammar mistakes.
-3) Urgency: subtle polite urgency only.
-4) Greeting: full name and correct role/title.
-5) Sender credibility: realistic person or department.
-6) Sensitive request: appears normal but creates risk.
-7) Insider knowledge: high and specific but not excessive.
-8) Attack complexity: may combine tactics naturally.
-9) Psychological tactic: authority/trust/routine process, no obvious threat.
+3) Urgency: polite and subtle only; no threats, no all-caps, no "ACT NOW".
+4) Greeting: personalized with full name and correct role/title.
+5) Sender credibility: realistic person or department with professional signature.
+6) Sensitive request: do NOT ask directly for a password; make the risky action look like a normal workflow.
+7) Insider knowledge: specific realistic context, not excessive.
+8) Attack complexity: natural combination of link + professional process is allowed.
+9) Psychological tactic: authority, trust, routine compliance, or professional responsibility.
+
+Advanced must NOT look like Beginner. Avoid generic greeting, obvious spelling errors, obvious fake domains, direct password requests, and aggressive threats.
 """,
             }
         else:
             rules = {
-                "easy": "Legitimate beginner item: clearly safe official workplace email, official hospital.org or moh.gov.sa domain, no external link, no credentials, no threats.",
-                "medium": "Legitimate intermediate item: realistic workflow detail and a normal deadline, but no sensitive request and no suspicious external link.",
-                "hard": "Legitimate advanced item: highly realistic and detailed, may be important or time-sensitive, but still safe with official sender and no phishing indicators.",
+                "easy": """
+Legitimate Beginner item:
+1) official hospital.org or moh.gov.sa domain only,
+2) no mistakes,
+3) no urgency threat,
+4) clear greeting,
+5) official sender,
+6) no sensitive data request,
+7) simple workplace context,
+8) no external link,
+9) clearly safe.
+""",
+                "medium": """
+Legitimate Intermediate item:
+1) official domain only,
+2) no mistakes,
+3) normal deadline,
+4) semi-personal greeting,
+5) plausible sender,
+6) no credentials/payment request,
+7) realistic workflow detail,
+8) may mention intranet or extension number but no external link,
+9) important but safe.
+""",
+                "hard": """
+Legitimate Advanced item:
+1) official domain only,
+2) no mistakes,
+3) may be professionally urgent but not threatening,
+4) personalized greeting,
+5) realistic sender,
+6) no sensitive request,
+7) detailed healthcare context,
+8) no suspicious external link,
+9) may look important but remains safe under inspection.
+""",
             }
     return rules.get(difficulty, rules.get("medium"))
 
@@ -1508,94 +1693,125 @@ RETURN ONLY VALID JSON — no text before or after:
 
 def generate_other_email(index, language, difficulty):
     """Dynamic Other learning email. No static templates."""
-    try:
-        data = call_groq(build_prompt("Other" if language != "Arabic" else "أخرى", index, language), max_tokens=2200)
-        if "error" in data:
-            return {"error": data['error'].get('message', str(data['error']))}
-        result = parse_json_response(data["choices"][0]["message"]["content"].strip())
-        result = clean_result(result, language == "Arabic")
-        if result.get("suspicious_link", "").strip() and result["suspicious_link"] not in result.get("body", ""):
-            result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
-        remember_generated_artifacts("other", "learn", result)
-        return result
-    except Exception as e:
-        return {"error": str(e)}
+    role = "Other" if language != "Arabic" else "أخرى"
+    is_ar = (language == "Arabic")
+    last_issues = []
+    for attempt in range(3):
+        try:
+            prompt = build_prompt(role, index, language) + build_retry_guidance(last_issues, is_ar)
+            data = call_groq(prompt, max_tokens=2400)
+            if "error" in data:
+                return {"error": data['error'].get('message', str(data['error']))}
+            result = parse_json_response(data["choices"][0]["message"]["content"].strip())
+            result = clean_result(result, is_ar)
+            if result.get("suspicious_link", "").strip() and result["suspicious_link"] not in result.get("body", ""):
+                result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
+
+            last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
+            if not last_issues or attempt == 2:
+                remember_generated_artifacts("other", "learn", result)
+                return result
+        except Exception as e:
+            return {"error": str(e)}
+    return {"error": "Generation failed quality checks."}
 
 
 def generate_other_assess_email(index, is_phishing, language, difficulty):
     """Dynamic Other assessment email. No static templates."""
-    try:
-        data = call_groq(build_assess_prompt("Other" if language != "Arabic" else "أخرى", index, is_phishing, language), max_tokens=2200)
-        if "error" in data:
-            return {"error": data['error'].get('message', str(data['error']))}
-        result = parse_json_response(data["choices"][0]["message"]["content"].strip())
-        result = clean_result(result, language == "Arabic")
-        result["is_phishing"] = bool(is_phishing)
-        if result.get("suspicious_link", "").strip() and result["suspicious_link"] not in result.get("body", ""):
-            result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
-        remember_generated_artifacts("other", f"assess_{is_phishing}", result)
-        return result
-    except Exception as e:
-        return {"error": str(e)}
+    role = "Other" if language != "Arabic" else "أخرى"
+    is_ar = (language == "Arabic")
+    last_issues = []
+    for attempt in range(3):
+        try:
+            prompt = build_assess_prompt(role, index, is_phishing, language) + build_retry_guidance(last_issues, is_ar)
+            data = call_groq(prompt, max_tokens=2400)
+            if "error" in data:
+                return {"error": data['error'].get('message', str(data['error']))}
+            result = parse_json_response(data["choices"][0]["message"]["content"].strip())
+            result = clean_result(result, is_ar)
+            result["is_phishing"] = bool(is_phishing)
+            if result.get("suspicious_link", "").strip() and result["suspicious_link"] not in result.get("body", ""):
+                result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
+
+            last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
+            if not last_issues or attempt == 2:
+                remember_generated_artifacts("other", f"assess_{is_phishing}", result)
+                return result
+        except Exception as e:
+            return {"error": str(e)}
+    return {"error": "Generation failed quality checks."}
+
 
 def generate_email(role, index, language, difficulty="medium"):
-    # للـ Other: استخدم static templates مباشرة
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
     if role_type == "other":
         return generate_other_email(index, language, difficulty)
-    try:
-        data = call_groq(build_prompt(role, index, language))
-        if "error" in data:
-            return {"error": data['error'].get('message', str(data['error']))}
-        if "choices" not in data:
-            return {"error": f"Unexpected API response: {str(data)[:200]}"}
-        raw    = data["choices"][0]["message"]["content"].strip()
-        result = parse_json_response(raw)
-        result = clean_result(result, language=="Arabic")
-        result["to"] = get_recipient(role, index, language, phase="learn")
-        if result.get("suspicious_link","").strip():
-            if result["suspicious_link"] not in result.get("body",""):
-                result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
-        # EN: remember this email's topic so future open-ended generations
-        # in this session (same role) know not to repeat it.
-        # AR: نحفظ موضوع هذا الإيميل حتى التوليدات المفتوحة الجايّة بهذي
-        # الجلسة (لنفس الدور) تعرف ما تكرره.
-        remember_generated_artifacts(role_type, "learn", result)
-        return result
-    except json.JSONDecodeError as e:
-        return {"error": f"JSON parse error: {e}"}
-    except Exception as e:
-        return {"error": str(e)}
+
+    is_ar = (language == "Arabic")
+    last_issues = []
+    for attempt in range(3):
+        try:
+            prompt = build_prompt(role, index, language) + build_retry_guidance(last_issues, is_ar)
+            data = call_groq(prompt, max_tokens=2400)
+            if "error" in data:
+                return {"error": data['error'].get('message', str(data['error']))}
+            if "choices" not in data:
+                return {"error": f"Unexpected API response: {str(data)[:200]}"}
+            raw    = data["choices"][0]["message"]["content"].strip()
+            result = parse_json_response(raw)
+            result = clean_result(result, is_ar)
+            result["to"] = get_recipient(role, index, language, phase="learn")
+            if result.get("suspicious_link","").strip():
+                if result["suspicious_link"] not in result.get("body",""):
+                    result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
+
+            last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
+            if not last_issues or attempt == 2:
+                remember_generated_artifacts(role_type, "learn", result)
+                return result
+        except json.JSONDecodeError as e:
+            if attempt == 2:
+                return {"error": f"JSON parse error: {e}"}
+            last_issues = [f"invalid JSON: {e}"]
+        except Exception as e:
+            return {"error": str(e)}
+    return {"error": "Generation failed quality checks."}
+
 
 def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    # للـ Other: استخدم static templates مباشرة
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
     if role_type == "other":
         return generate_other_assess_email(index, is_phishing, language, difficulty)
-    # FIX: max_tokens raised again (1200 -> 2200). 1200 was too tight,
-    # especially for Arabic, which needs more tokens than English for the
-    # same content. Hitting the limit truncated the JSON mid-response,
-    # which is why every retry kept failing with the same parse error.
+
+    is_ar = (language == "Arabic")
+    last_issues = []
     for attempt in range(3):
         try:
-            data = call_groq(build_assess_prompt(role, index, is_phishing, language), max_tokens=2200)
+            prompt = build_assess_prompt(role, index, is_phishing, language) + build_retry_guidance(last_issues, is_ar)
+            data = call_groq(prompt, max_tokens=2400)
             if "error" in data:
                 return {"error": data["error"].get("message", str(data["error"]))}
             result = parse_json_response(data["choices"][0]["message"]["content"].strip())
-            result = clean_result(result, language=="Arabic")
+            result = clean_result(result, is_ar)
             result["to"] = get_recipient(st.session_state.get("role","Clinical"), index, language, phase="assess")
+            result["is_phishing"] = bool(is_phishing)
             if result.get("suspicious_link","").strip():
                 if result["suspicious_link"] not in result.get("body",""):
                     result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
-            remember_generated_artifacts(role_type, f"assess_{is_phishing}", result)
-            return result
+
+            last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
+            if not last_issues or attempt == 2:
+                remember_generated_artifacts(role_type, f"assess_{is_phishing}", result)
+                return result
         except json.JSONDecodeError:
             if attempt == 2:
                 return {"error": "Failed to parse. Please try again."}
+            last_issues = ["invalid JSON"]
         except Exception as e:
             return {"error": str(e)}
+    return {"error": "Generation failed quality checks."}
 
 def render_email_window(email, is_arabic, show_badges=False):
     bd = 'rtl' if is_arabic else 'ltr'
