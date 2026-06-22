@@ -1091,11 +1091,33 @@ def build_prompt(role, index, language):
         category = categories[cat_order[index % len(cat_order)]]
         category_text = category["ar"] if is_ar else category["en"]
         avoid_text = get_avoid_list_text(role_type, "learn", is_ar)
+        # EN: keeping the Saudi-healthcare flavor — the old fixed scenarios
+        # explicitly named things like MOH, Tawuniya/Bupa, and SAR amounts,
+        # which open-ended generation was losing since the categories
+        # alone don't force that local context. This line brings it back
+        # without giving up the open-ended variety.
+        # AR: نحافظ على الطابع السعودي — السيناريوهات الثابتة القديمة كانت
+        # تذكر وزارة الصحة وTawuniya/Bupa ومبالغ SAR صريحًا، وهذا ضاع شوي
+        # بالتوليد المفتوح لأن الفئات بذاتها ما تفرض هذا السياق المحلي.
+        # هذا السطر يرجّعه بدون التضحية بالتنوع المفتوح.
+        if is_ar:
+            saudi_context = (
+                "اربط السيناريو بسياق سعودي واقعي حيث يلائم: وزارة الصحة (MOH)، "
+                "شركات التأمين الصحي السعودية (Tawuniya/Bupa Arabia/MedGulf)، مبالغ بالريال السعودي (SAR)، "
+                "ونطاقات تبدو سعودية حيث يصلح (.sa أو moh.gov.sa)."
+            )
+        else:
+            saudi_context = (
+                "Anchor the scenario in realistic Saudi healthcare context where relevant: the Ministry of Health (MOH), "
+                "Saudi health insurance providers (Tawuniya/Bupa Arabia/MedGulf), amounts in Saudi Riyals (SAR), "
+                "and Saudi-looking domains where it fits (.sa or moh.gov.sa)."
+            )
         if is_ar:
             scenario_instruction = (
                 f"الفئة العامة: {category_text}\n"
                 f"اخترع سيناريو تصيد جديد ومحدد وواقعي ضمن هذي الفئة — لست مقيدًا بقالب معيّن. "
                 f"كن مبدعًا بالتفاصيل المحددة (اسم النظام، اسم المرسل، السبب، الرابط أو المرفق، المبلغ لو وجد). "
+                f"{saudi_context} "
                 f"يجب أن يكون مختلفًا تمامًا عن أي سيناريو سابق بهذي الجلسة.{avoid_text}"
             )
         else:
@@ -1103,6 +1125,7 @@ def build_prompt(role, index, language):
                 f"Broad category: {category_text}\n"
                 f"Invent a brand-new, specific, realistic phishing scenario within this category — you are NOT limited to a fixed template. "
                 f"Be creative with the specific details (system name, sender identity, pretext, link or attachment, amount if relevant). "
+                f"{saudi_context} "
                 f"It must be clearly different from any scenario already generated earlier in this session.{avoid_text}"
             )
 
@@ -1413,17 +1436,33 @@ def build_assess_prompt(role, index, is_phishing, language):
         category = categories[cat_order[rank % len(cat_order)]]
         category_text = category["ar"] if is_ar else category["en"]
         avoid_text = get_avoid_list_text(role_type, f"assess_{is_phishing}", is_ar)
+        # EN/AR: same Saudi-context reinforcement as build_prompt — see the
+        # comment there for why this line exists.
+        if is_ar:
+            saudi_context = (
+                "اربط السيناريو بسياق سعودي واقعي حيث يلائم: وزارة الصحة (MOH)، "
+                "شركات التأمين الصحي السعودية (Tawuniya/Bupa Arabia/MedGulf)، مبالغ بالريال السعودي (SAR)، "
+                "ونطاقات تبدو سعودية حيث يصلح (.sa أو moh.gov.sa)."
+            )
+        else:
+            saudi_context = (
+                "Anchor the scenario in realistic Saudi healthcare context where relevant: the Ministry of Health (MOH), "
+                "Saudi health insurance providers (Tawuniya/Bupa Arabia/MedGulf), amounts in Saudi Riyals (SAR), "
+                "and Saudi-looking domains where it fits (.sa or moh.gov.sa)."
+            )
         if is_ar:
             if is_phishing:
                 forced_task = (
                     f"الفئة العامة: {category_text}\n"
                     f"اخترع سيناريو تصيد جديد ومحدد وواقعي ضمن هذي الفئة. كن مبدعًا بالتفاصيل (اسم النظام، المرسل، السبب، الرابط/المرفق). "
+                    f"{saudi_context} "
                     f"يجب أن يكون مختلفًا تمامًا عن أي سيناريو تصيد سابق بهذي الجلسة.{avoid_text}"
                 )
             else:
                 forced_task = (
                     f"الفئة العامة: {category_text}\n"
                     f"اخترع بريدًا شرعيًا عاديًا وواقعيًا ضمن هذي الفئة (مرسل رسمي @hospital.org أو @moh.gov.sa، بدون أي علامة تصيد). "
+                    f"{saudi_context} "
                     f"يجب أن يكون مختلفًا عن أي بريد شرعي سابق بهذي الجلسة.{avoid_text}"
                 )
         else:
@@ -1431,12 +1470,14 @@ def build_assess_prompt(role, index, is_phishing, language):
                 forced_task = (
                     f"Broad category: {category_text}\n"
                     f"Invent a brand-new, specific, realistic phishing scenario within this category. Be creative with details (system name, sender, pretext, link/attachment). "
+                    f"{saudi_context} "
                     f"It must be clearly different from any phishing scenario already generated earlier in this session.{avoid_text}"
                 )
             else:
                 forced_task = (
                     f"Broad category: {category_text}\n"
                     f"Invent a normal, realistic LEGITIMATE email within this category (official @hospital.org or @moh.gov.sa sender, zero phishing red flags). "
+                    f"{saudi_context} "
                     f"It must be different from any legitimate email already generated earlier in this session.{avoid_text}"
                 )
     elif is_phishing:
