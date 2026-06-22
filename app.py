@@ -15,6 +15,57 @@
 #        -> COMPLETE -> ASSESSMENT (10 questions)
 #        -> RESULTS -> PERFORMANCE REPORT
 # =============================================================
+#
+# EN — QUICK CODE MAP (where to look for what):
+#   • ROLE_MAP                  → job-role display names → (description, context, role_type)
+#   • PHISHING_SCENARIOS        → legacy/unused list, kept for reference only
+#   • FORCED_SCENARIOS          → the actual scenario pool per role_type
+#                                 (admin/clinical/it have 10 each, "other" has 6
+#                                 tied 1:1 to OTHER_JOB_PROFILES)
+#   • OTHER_JOB_PROFILES        → the 6 sub-job profiles used when role="Other"
+#                                 (now also carries name_en/name_ar for greeting binding)
+#   • RECIPIENT_POOLS           → fixed (name, email) pairs per role_type, used to
+#                                 keep the email greeting and the "to" address consistent
+#   • get_session_random_order  → shared helper: shuffles indices once per session
+#                                 so the same "example slot" doesn't always get the
+#                                 same scenario/recipient across different sessions
+#   • build_prompt               → builds the prompt for the LEARNING phase (6 examples)
+#   • build_assess_prompt        → builds the prompt for the ASSESSMENT phase (10 questions)
+#   • call_ai / call_groq        → sends the prompt to whichever provider is active
+#                                  (groq/anthropic/openai/gemini) and normalizes the reply
+#   • parse_json_response        → robust JSON parsing with repair fallbacks
+#   • page_results                → renders "مراجعة الإجابات" (review answers) — has the
+#                                  <bdi> bidi-isolation fix for mixed Arabic/English text
+#   • load_persistent_provider /
+#     save_persistent_provider /
+#     set_active_provider        → keeps the admin's chosen AI provider saved to disk
+#                                  (provider_config.json) so it survives logout/new sessions
+#
+# AR — خريطة سريعة للكود (وين تدورين على كل شي):
+#   • ROLE_MAP                  → أسماء الأدوار الوظيفية ← (الوصف، السياق، نوع الدور)
+#   • PHISHING_SCENARIOS        → قائمة قديمة غير مستخدمة، باقية للمرجعية فقط
+#   • FORCED_SCENARIOS          → مسبح السيناريوهات الفعلي لكل دور
+#                                 (إداري/سريري/تقني فيها 10 لكل واحد، و"Other" فيها 6
+#                                 مرتبطة 1:1 مع OTHER_JOB_PROFILES)
+#   • OTHER_JOB_PROFILES        → الـ6 بروفايلات الفرعية المستخدمة لما الدور = "Other"
+#                                 (الآن فيها كمان name_en/name_ar لربط اسم التحية)
+#   • RECIPIENT_POOLS           → أزواج (اسم، بريد) ثابتة لكل دور، نستخدمها حتى تتطابق
+#                                 التحية بالبريد مع عنوان "to" دايمًا
+#   • get_session_random_order  → دالة مشتركة: تخلط الفهارس مرة واحدة لكل جلسة، حتى
+#                                 "خانة المثال" نفسها ما تطلع لها نفس السيناريو/المستلم
+#                                 بكل الجلسات
+#   • build_prompt               → يبني تعليمات مرحلة التعلم (الـ6 أمثلة)
+#   • build_assess_prompt        → يبني تعليمات مرحلة الاختبار (الـ10 أسئلة)
+#   • call_ai / call_groq        → يرسل التعليمات لأي بيئة نشطة حاليًا
+#                                  (groq/anthropic/openai/gemini) ويوحّد شكل الرد
+#   • parse_json_response        → تحليل JSON قوي مع محاولات تصحيح تلقائية
+#   • page_results                → يعرض صفحة "مراجعة الإجابات" — فيها إصلاح اتجاه
+#                                  النص (<bdi>) للنصوص المختلطة عربي/إنجليزي
+#   • load_persistent_provider /
+#     save_persistent_provider /
+#     set_active_provider        → يحفظ اختيار الأدمن لمزوّد الذكاء الاصطناعي على القرص
+#                                  (provider_config.json) حتى يفضل بعد تسجيل خروج/جلسة جديدة
+# =============================================================
 
 import streamlit as st
 import json
@@ -462,11 +513,51 @@ OTHER_ASSESS_LEGIT = [
 ]
 
 
-def get_recipient(role, index, language):
+def get_recipient(role, index, language, phase="learn"):
+    # EN: THIS is the real root cause of the recurring "Dear Nurse John"
+    # name-mismatch bug. The model was correctly told in the prompt to use
+    # a specific (name, email) pair — but AFTER generation, this function
+    # used to silently overwrite the "to" field with a DIFFERENT, totally
+    # unrelated email picked from EN_NAMES below. The greeting name inside
+    # the body (bound to the prompt's pair) and the final "to" address
+    # (overwritten here) ended up belonging to two different people.
+    #
+    # Fix: read from the SAME RECIPIENT_POOLS + the SAME session-randomized
+    # order key that build_prompt/build_assess_prompt used to pick the pair
+    # for this exact role_type + index + phase, so the override always
+    # matches what the model was actually told to write in the greeting.
+    #
+    # AR: هذا هو السبب الحقيقي لخلل "Dear Nurse John" المتكرر. الموديل كان
+    # يُطلب منه صراحة استخدام زوج (اسم، بريد) معيّن بالتعليمات — لكن بعد
+    # التوليد، هذي الدالة كانت "تستبدل" حقل "to" بصمت بعنوان مختلف كليًا
+    # من قائمة EN_NAMES تحت، فيصير اسم التحية بالنص (المرتبط بالزوج الأصلي)
+    # وعنوان "to" النهائي (المُستبدل هنا) يخصان شخصين مختلفين تمامًا.
+    #
+    # الحل: نقرأ من نفس RECIPIENT_POOLS وبنفس مفتاح الترتيب العشوائي للجلسة
+    # اللي استخدمته build_prompt/build_assess_prompt لاختيار الزوج لنفس
+    # role_type + index + المرحلة، حتى الاستبدال هنا يطابق دائمًا ما طُلب
+    # من الموديل فعليًا يكتبه بالتحية.
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
-    pool = EN_NAMES.get(role_type, EN_NAMES["clinical"])
-    return pool[index % len(pool)]
+    if role_type == "other":
+        # EN: in practice, role_type "other" is handled entirely by
+        # generate_other_email/generate_other_assess_email (static
+        # templates) and never reaches this function. This is just a
+        # safe fallback so we never crash if that ever changes.
+        # AR: عمليًا دور "Other" تتم معالجته بالكامل بدوال القوالب الثابتة
+        # المنفصلة ومايصل لهذي الدالة أبدًا. هذا احتياط آمن بس لو تغيّر هذا مستقبلًا.
+        cached = st.session_state.get(f"_other_recipient_{index}")
+        if cached:
+            return cached
+        legacy = EN_NAMES.get("other", EN_NAMES["clinical"])
+        return legacy[index % len(legacy)]
+    pool = RECIPIENT_POOLS.get(role_type)
+    if not pool:
+        legacy = EN_NAMES.get(role_type, EN_NAMES["clinical"])
+        return legacy[index % len(legacy)]
+    order_key = f"recipient_order_{role_type}" if phase == "learn" else f"assess_recipient_order_{role_type}"
+    order = get_session_random_order(len(pool), order_key)
+    return pool[order[index % len(order)]]["email"]
 
 PHISHING_SCENARIOS = [
     {"key":"link",    "en_type":"Credential Harvesting Link",              "ar_type":"رابط سرقة بيانات الدخول",             "has_attachment":False, "attachment_ext":"", "has_link":True},
@@ -483,6 +574,42 @@ def get_shuffled_scenario_order():
         random.shuffle(order)
         st.session_state["scenario_order"] = order
     return st.session_state["scenario_order"]
+
+# =============================================================
+# EN: SESSION-RANDOMIZED ORDER HELPER (variety fix)
+# ---------------------------------------------------------------
+# Problem we found during testing: "Example #3 of 6" was always
+# mapped to the SAME scenario (e.g. "MOH protocol update") no
+# matter how many times a user logged in again, because the code
+# picked scenarios with `forced[index % len(forced)]` — a fixed,
+# deterministic mapping. Across two different sessions, slot #3
+# came out nearly identical.
+#
+# Fix: instead of a fixed mapping, we shuffle the list of indices
+# ONCE per session and cache that shuffled order in session_state.
+# Slot #3 now points to a DIFFERENT scenario each new session,
+# while still guaranteeing no two of the 6 examples in the SAME
+# session repeat each other (since it's a permutation, not a
+# random pick-with-replacement).
+#
+# AR: دالة لعشوائية الترتيب لكل جلسة (إصلاح مشكلة التنوع)
+# ---------------------------------------------------------------
+# المشكلة اللي لاحظناها بالاختبار: "مثال 3 من 6" كان دايمًا يطلع
+# له نفس السيناريو (مثل "تحديث بروتوكول وزارة الصحة") بغض النظر
+# عن عدد مرات تسجيل الدخول، لأن الكود القديم كان يحدد السيناريو
+# بمعادلة ثابتة `forced[index % len(forced)]` — يعني ربط دائم.
+#
+# الحل: نخلط ترتيب الفهارس مرة واحدة فقط لكل جلسة ونحفظه في
+# session_state. الآن "مثال 3" يطلع له سيناريو مختلف كل جلسة جديدة،
+# مع ضمان عدم تكرار أي سيناريو مرتين داخل نفس الجلسة (لأنه تبديل
+# ترتيب "permutation"، مش اختيار عشوائي قد يتكرر).
+# =============================================================
+def get_session_random_order(pool_size, session_key):
+    if session_key not in st.session_state:
+        order = list(range(pool_size))
+        random.shuffle(order)
+        st.session_state[session_key] = order
+    return st.session_state[session_key]
 
 # =============================================================
 # =============================================================
@@ -503,6 +630,17 @@ FORCED_SCENARIOS = {
          "ar": "السيناريو: ترحيل مزيف لنظام حجز المواعيد — ادّعِ أن النظام يُرقَّى ويطلب التحقق من بيانات الدخول عبر رابط مشبوه."},
         {"en": "SCENARIO: Fake medical procurement portal — impersonate procurement system admin claiming a critical supplier contract expires this week and must be renewed via a suspicious link. NO attachment.",
          "ar": "السيناريو: بوابة مشتريات طبية مزيفة — انتحل هوية مسؤول المشتريات وادّعِ أن عقد مورد حيوي ينتهي هذا الأسبوع ويجب تجديده عبر رابط مشبوه."},
+        # EN: 4 extra admin scenarios added so the scenario pool has more
+        # raw material to randomly draw from each session (variety fix).
+        # AR: 4 سيناريوهات إدارية إضافية لتوسيع مساحة الاختيار العشوائي كل جلسة.
+        {"en": "SCENARIO: Fake annual leave/vacation balance system — claim the employee's leave balance system needs urgent re-verification via a suspicious link before year-end. NO attachment.",
+         "ar": "السيناريو: نظام رصيد إجازات مزيف — ادّعِ أن نظام الإجازات يحتاج إعادة تحقق عاجلة عبر رابط مشبوه قبل نهاية السنة."},
+        {"en": "SCENARIO: Fake employee benefits enrollment — claim annual benefits enrollment (housing allowance/transportation) is closing soon and requires immediate confirmation via a suspicious portal. NO attachment.",
+         "ar": "السيناريو: تسجيل مزايا موظفين مزيف — ادّعِ أن التسجيل في المزايا السنوية (بدل سكن/نقل) يقفل قريبًا ويحتاج تأكيد فوري عبر بوابة مشبوهة."},
+        {"en": "SCENARIO: Malicious vendor contract Word document — send a fake supplier or vendor contract renewal as a Word attachment requiring macro enablement to view terms.",
+         "ar": "السيناريو: مستند Word خبيث لعقد مورد — أرسل تجديد عقد مورد مزيف كمرفق Word يطلب تفعيل الماكرو لعرض الشروط."},
+        {"en": "SCENARIO: Fake hospital management system migration — claim the administrative records system is migrating to a new platform and staff must re-confirm their login via a suspicious link. NO attachment.",
+         "ar": "السيناريو: ترحيل مزيف لنظام إدارة المستشفى — ادّعِ أن نظام السجلات الإدارية ينتقل لمنصة جديدة ويطلب إعادة تأكيد الدخول عبر رابط مشبوه."},
     ],
     "clinical": [
         {"en": "SCENARIO: Fake EMR system credential harvest — claim the hospital EMR system requires urgent re-verification of login credentials through a suspicious link. IMPORTANT: vary the details every time — change the sender name, the specific system name (EMR/Patient Portal/Clinical System), the suspicious link URL, and the spelling mistake used (choose ONE from: credintials/urgant/acces/imediatly — never reuse recived or procedue).",
@@ -517,6 +655,18 @@ FORCED_SCENARIOS = {
          "ar": "السيناريو: جدول مناوبات مزيف كمرفق Excel. مهم: غيّر الفترة الزمنية (رمضان/الربع الثاني/الإجازات) واسم الملف في كل مرة."},
         {"en": "SCENARIO: Fake pharmacy or medical system update — claim the pharmacy dispensing system or drug management portal requires urgent login verification. IMPORTANT: vary the system name (Pharmacy System/Drug Dispensing Portal/Medication Management/Blood Bank System) and suspicious link each time.",
          "ar": "السيناريو: تحديث مزيف لنظام الصيدلية أو بنك الدم. مهم: غيّر اسم النظام (صيدلية/بنك الدم/إدارة الدواء) والرابط في كل مرة."},
+        # EN: 4 extra clinical scenarios added so "example slot #N" doesn't
+        # keep landing on the same scenario across different sessions.
+        # AR: 4 سيناريوهات سريرية إضافية حتى ماتفضل "خانة المثال رقم N"
+        # تطلع لها نفس السيناريو بكل الجلسات.
+        {"en": "SCENARIO: Fake nurse scheduling/shift swap system — claim the shift-swap request system needs urgent credential re-verification via a suspicious link. IMPORTANT: vary the ward name and link each time.",
+         "ar": "السيناريو: نظام تبديل المناوبات مزيف — ادّعِ أن نظام طلبات تبديل المناوبات يحتاج إعادة تحقق عاجلة عبر رابط مشبوه. مهم: غيّر اسم القسم والرابط في كل مرة."},
+        {"en": "SCENARIO: Fake critical patient vitals alert PDF — send an urgent fake patient vitals/monitoring alert as a PDF attachment requiring immediate review. IMPORTANT: vary the ward (ICU/CCU/ER), patient reference, and PDF filename each time.",
+         "ar": "السيناريو: تنبيه حيوي حرج لمريض كمرفق PDF مزيف — أرسل تنبيهًا عاجلاً مزيفًا لمراقبة مريض كمرفق PDF يطلب مراجعة فورية. مهم: غيّر القسم ورقم الحالة واسم الملف في كل مرة."},
+        {"en": "SCENARIO: Fake telemedicine/remote consultation platform — claim the hospital's telemedicine system requires urgent credential re-verification via a suspicious link before today's remote consultations. NO attachment.",
+         "ar": "السيناريو: منصة استشارات طبية عن بعد مزيفة — ادّعِ أن نظام الاستشارات عن بعد يحتاج إعادة تحقق عاجلة عبر رابط مشبوه قبل استشارات اليوم."},
+        {"en": "SCENARIO: Fake blood bank or transfusion system alert — claim an urgent blood bank inventory system update requires immediate login via a suspicious portal. NO attachment.",
+         "ar": "السيناريو: تنبيه نظام بنك دم مزيف — ادّعِ أن تحديث نظام مخزون بنك الدم يحتاج تسجيل دخول فوري عبر بوابة مشبوهة."},
     ],
     "it": [
         {"en": "SCENARIO: Fake VPN credential update — claim the hospital VPN gateway requires urgent re-authentication. IMPORTANT: vary the VPN system name (Cisco AnyConnect/FortiClient/Pulse Secure), the suspicious portal URL, and the urgency reason each time.", "ar": "السيناريو: تحديث مزيف لبيانات الـ VPN. مهم: غيّر اسم النظام (Cisco/FortiClient) والرابط والسبب في كل مرة."},
@@ -525,6 +675,12 @@ FORCED_SCENARIOS = {
         {"en": "SCENARIO: CIO impersonation — impersonate the Chief Information Officer urgently requesting server admin credentials or asking to disable security settings.", "ar": "السيناريو: انتحال هوية مدير تقنية المعلومات يطلب بيانات الخادم أو تعطيل إعدادات الأمان."},
         {"en": "SCENARIO: Fake software license renewal — claim a critical hospital software license is expiring in 24 hours and requires immediate renewal via a suspicious portal.", "ar": "السيناريو: تجديد مزيف لترخيص برنامج حيوي ينتهي خلال 24 ساعة."},
         {"en": "SCENARIO: Fake firewall policy update — send a malicious Word document claiming to contain a new mandatory firewall security policy requiring macro enablement.", "ar": "السيناريو: سياسة جدار ناري مزيفة — مستند Word يطلب تفعيل الماكرو."},
+        # EN: 4 extra IT scenarios added for more session-to-session variety.
+        # AR: 4 سيناريوهات تقنية إضافية لزيادة التنوع بين الجلسات.
+        {"en": "SCENARIO: Fake cloud backup credential alert — claim the hospital's cloud backup system detected a failed login and requires immediate credential re-verification via a suspicious link. NO attachment.", "ar": "السيناريو: تنبيه مزيف لنظام النسخ الاحتياطي السحابي — ادّعِ أنه رُصد فشل تسجيل دخول ويتطلب إعادة تحقق فورية عبر رابط مشبوه."},
+        {"en": "SCENARIO: Fake Active Directory password expiry — claim the employee's Active Directory/network password expires today and must be reset via a suspicious portal link immediately. NO attachment.", "ar": "السيناريو: انتهاء كلمة مرور Active Directory مزيف — ادّعِ أن كلمة مرور الشبكة تنتهي اليوم ويجب إعادة ضبطها عبر بوابة مشبوهة فورًا."},
+        {"en": "SCENARIO: Malicious database backup script attachment — send a fake urgent database backup verification request as an Excel attachment requiring the recipient to enable macros to run a 'repair script'.", "ar": "السيناريو: مرفق Excel خبيث لنص استعادة قاعدة بيانات — أرسل طلب تحقق نسخة احتياطية عاجل كمرفق Excel يطلب تفعيل الماكرو لتشغيل 'سكربت إصلاح'."},
+        {"en": "SCENARIO: Fake EMR server maintenance window — impersonate the systems team claiming an emergency EMR server maintenance requires staff to re-authenticate via a suspicious link before the maintenance window starts. NO attachment.", "ar": "السيناريو: نافذة صيانة خادم EMR مزيفة — انتحل هوية فريق الأنظمة وادّعِ أن صيانة طارئة لخادم EMR تتطلب إعادة مصادقة الموظفين عبر رابط مشبوه قبل بدء الصيانة."},
     ],
     "other": [
         # 0 — ADMIN: يطابق OTHER_JOB_PROFILES[0] (billing coordinator)
@@ -547,6 +703,136 @@ FORCED_SCENARIOS = {
          "ar": "تصيد سريري — نظام PACS/أشعة: سرقة بيانات دخول نظام التصوير الطبي أو بوابة الأشعة. ادّعِ أن نتائج أشعة مريض عاجلة تتطلب تسجيل الدخول عبر رابط مشبوه، أو أن النظام يحتاج إعادة التحقق الفوري. يجب تضمين: نطاق أشعة مزيف، رابط مشبوه، إلحاح حالة مريض. غيّر في كل مرة: اسم النظام، النطاق، رقم الحالة، الرابط."},
     ],
 }
+
+# EN: RECIPIENT_POOLS — fixed (name, email) pairs for the generic roles
+# (clinical/admin/it), shared by both the learning-phase prompt
+# (build_prompt) and the assessment prompt (build_assess_prompt). We pick
+# ONE pair per example slot using a session-randomized order, then tell
+# the model explicitly to use that exact name in the greeting and that
+# exact email in "to". This is the fix for the "Dear Nurse John" vs a
+# completely different "to" address bug found repeatedly during testing.
+# AR: قوائم مستلمين ثابتة (اسم + بريد) للأدوار العامة (سريري/إداري/تقني)،
+# تستخدمها دالتا التوليد (التعلم والاختبار) معًا. نختار زوج واحد لكل خانة
+# مثال بترتيب عشوائي خاص بالجلسة، ثم نطلب من الموديل صراحة يستخدم هذا الاسم
+# بالتحية وهذا البريد بحقل "to" — يحل خلل "Dear Nurse John" مع عنوان مختلف
+# كليًا اللي تكرر بالاختبار.
+RECIPIENT_POOLS = {
+    "clinical": [
+        {"en": "Dr. Sarah Almutairi",  "ar": "د. سارة المطيري",      "email": "dr.sarah.almutairi@hospital.org"},
+        {"en": "Dr. Ahmed Alotaibi",   "ar": "د. أحمد العتيبي",      "email": "dr.ahmed.alotaibi@hospital.org"},
+        {"en": "Nurse Fatima Alharbi", "ar": "الممرضة فاطمة الحربي", "email": "n.fatima.alharbi@hospital.org"},
+        {"en": "Nurse Khalid Alqahtani","ar": "الممرض خالد القحطاني","email": "n.khalid.alqahtani@hospital.org"},
+        {"en": "Dr. Noura Alshamri",   "ar": "د. نورة الشمري",       "email": "dr.noura.alshamri@hospital.org"},
+        {"en": "Dr. Faisal Aldosari",  "ar": "د. فيصل الدوسري",      "email": "dr.faisal.aldosari@hospital.org"},
+        {"en": "Nurse Maha Alsubaie",  "ar": "الممرضة مها السبيعي", "email": "n.maha.alsubaie@hospital.org"},
+        {"en": "Dr. Omar Alharthy",    "ar": "د. عمر الحارثي",       "email": "dr.omar.alharthy@hospital.org"},
+        {"en": "Nurse Reem Alzahrani", "ar": "الممرضة ريم الزهراني","email": "n.reem.alzahrani@hospital.org"},
+        {"en": "Dr. Yousef Alghamdi",  "ar": "د. يوسف الغامدي",      "email": "dr.yousef.alghamdi@hospital.org"},
+    ],
+    "admin": [
+        {"en": "Sultan Alghamdi",  "ar": "سلطان الغامدي",  "email": "m.sultan.alghamdi@hospital.org"},
+        {"en": "Reem Alsabiei",    "ar": "ريم السبيعي",     "email": "m.reem.alsabiei@hospital.org"},
+        {"en": "Nadia Alsalmi",    "ar": "نادية السالمي",   "email": "t.nadia.alsalmi@hospital.org"},
+        {"en": "Bandar Althubaiti","ar": "بندر الثبيتي",    "email": "t.bandar.althubaiti@hospital.org"},
+        {"en": "Hessa Alqahtani",  "ar": "حصة القحطاني",    "email": "m.hessa.alqahtani@hospital.org"},
+        {"en": "Majed Alharbi",    "ar": "ماجد الحربي",     "email": "m.majed.alharbi@hospital.org"},
+        {"en": "Lama Alshehri",    "ar": "لمى الشهري",      "email": "t.lama.alshehri@hospital.org"},
+        {"en": "Turki Aldosari",   "ar": "تركي الدوسري",    "email": "m.turki.aldosari@hospital.org"},
+        {"en": "Amal Alzahrani",   "ar": "أمل الزهراني",    "email": "t.amal.alzahrani@hospital.org"},
+        {"en": "Faisal Alotaibi",  "ar": "فيصل العتيبي",    "email": "m.faisal.alotaibi@hospital.org"},
+    ],
+    "it": [
+        {"en": "Bandar Althubaiti","ar": "بندر الثبيتي",    "email": "t.bandar.althubaiti@hospital.org"},
+        {"en": "Nadia Alsalmi",    "ar": "نادية السالمي",   "email": "t.nadia.alsalmi@hospital.org"},
+        {"en": "Mohammed Alshahri","ar": "محمد الشهري",     "email": "t.mohammed.alshahri@hospital.org"},
+        {"en": "Rania Almalki",    "ar": "رانية المالكي",   "email": "t.rania.almalki@hospital.org"},
+        {"en": "Khalid Alharbi",   "ar": "خالد الحربي",     "email": "t.khalid.alharbi@hospital.org"},
+        {"en": "Sara Alqahtani",   "ar": "سارة القحطاني",   "email": "t.sara.alqahtani@hospital.org"},
+        {"en": "Yazeed Aldosari",  "ar": "يزيد الدوسري",    "email": "t.yazeed.aldosari@hospital.org"},
+        {"en": "Hanan Alzahrani",  "ar": "حنان الزهراني",   "email": "t.hanan.alzahrani@hospital.org"},
+        {"en": "Abdullah Alotaibi","ar": "عبدالله العتيبي", "email": "t.abdullah.alotaibi@hospital.org"},
+        {"en": "Lina Alsubaie",    "ar": "لينا السبيعي",    "email": "t.lina.alsubaie@hospital.org"},
+    ],
+}
+
+# =============================================================
+# EN: OPEN-ENDED SCENARIO GENERATION (replaces the fixed scenario
+# pool for clinical/admin/it — "other" keeps its existing
+# profile-paired scenarios since changing those risks breaking the
+# 1:1 link with OTHER_JOB_PROFILES).
+# ---------------------------------------------------------------
+# Instead of picking one of N pre-written scenarios, we now give
+# the model a broad CATEGORY (e.g. "VPN / remote network access")
+# and explicitly tell it to INVENT a brand-new, specific, realistic
+# scenario within that category — different from anything already
+# generated this session. This makes the variety effectively
+# unlimited instead of capped at a fixed list size, while the
+# category + role context still keeps it realistic and on-topic.
+#
+# AR: توليد سيناريوهات مفتوح (بدل القائمة الثابتة لسريري/إداري/تقني
+# — دور "Other" يبقى على سيناريوهاته المرتبطة بالبروفايلات لأن
+# تغييرها يهدد الربط 1:1 مع OTHER_JOB_PROFILES).
+# ---------------------------------------------------------------
+# بدل اختيار سيناريو جاهز من قائمة محدودة، الآن نعطي الموديل فئة
+# عامة (مثل "VPN / وصول شبكة عن بُعد") ونطلب منه صراحة يخترع
+# سيناريو جديد ومحدد وواقعي ضمن هذي الفئة — مختلف عن أي شي تولّد
+# هذي الجلسة. هذا يخلي التنوع فعليًا لا محدود بدل ما يكون مسقوف
+# بحجم قائمة ثابتة، مع بقاء الواقعية بفضل الفئة وسياق الدور.
+# =============================================================
+OPEN_CATEGORIES = {
+    "clinical": [
+        {"en": "EMR / patient-records system access", "ar": "نظام السجلات الطبية / الوصول لبيانات المرضى"},
+        {"en": "lab or diagnostic results", "ar": "نتائج مختبر أو فحوصات تشخيصية"},
+        {"en": "MOH clinical protocol or directive", "ar": "بروتوكول أو توجيه طبي من وزارة الصحة"},
+        {"en": "medical staff impersonation (director / chief of staff / consultant)", "ar": "انتحال هوية كادر طبي (مدير طبي/رئيس أطباء/استشاري)"},
+        {"en": "clinical scheduling / duty roster / shift system", "ar": "جدولة سريرية / مناوبات / نظام الشِفتات"},
+        {"en": "specialized clinical system (pharmacy / blood bank / PACS / telemedicine)", "ar": "نظام سريري متخصص (صيدلية/بنك دم/PACS/طب عن بُعد)"},
+    ],
+    "admin": [
+        {"en": "supplier / vendor invoice or procurement", "ar": "فاتورة مورد أو مشتريات"},
+        {"en": "health insurance / employee benefits", "ar": "تأمين صحي / مزايا موظفين"},
+        {"en": "payroll / HR / bank account details", "ar": "رواتب / موارد بشرية / بيانات حساب بنكي"},
+        {"en": "executive (CEO / director) impersonation", "ar": "انتحال هوية مدير تنفيذي"},
+        {"en": "hospital management or records system access", "ar": "نظام إدارة المستشفى أو السجلات الإدارية"},
+        {"en": "leave balance / administrative portal", "ar": "رصيد إجازات / بوابة إدارية"},
+    ],
+    "it": [
+        {"en": "VPN / remote network access", "ar": "VPN / وصول شبكة عن بُعد"},
+        {"en": "SSL certificate / domain / website", "ar": "شهادة SSL / نطاق / موقع"},
+        {"en": "IT helpdesk / remote support request", "ar": "مكتب مساعدة تقني / طلب دعم عن بُعد"},
+        {"en": "executive (CIO / CISO) impersonation", "ar": "انتحال هوية مدير تقنية المعلومات"},
+        {"en": "software license / subscription renewal", "ar": "ترخيص برنامج / تجديد اشتراك"},
+        {"en": "server / backup / database / Active Directory", "ar": "خادم / نسخ احتياطي / قاعدة بيانات / Active Directory"},
+    ],
+}
+
+def get_avoid_list_text(role_type, key_suffix, is_ar):
+    """
+    EN: Returns a formatted "do not repeat these" instruction line built
+    from topics already generated earlier in THIS session (tracked in
+    session_state). Returns "" if nothing generated yet.
+    AR: يرجع سطر تعليمات "لا تكرر هذي" مبني على المواضيع اللي تولّدت
+    قبل بهذي الجلسة (محفوظة بـ session_state). يرجع "" لو ما تولّد شي بعد.
+    """
+    used = st.session_state.get(f"used_topics_{role_type}_{key_suffix}", [])
+    if not used:
+        return ""
+    items = "؛ ".join(used) if is_ar else "; ".join(used)
+    if is_ar:
+        return f"\nمواضيع تولّدت سابقًا بهذي الجلسة — يجب أن يكون موضوعك الجديد مختلفًا عنها تمامًا: {items}\n"
+    return f"\nTopics already generated earlier in this session — your new topic MUST be clearly different from all of these: {items}\n"
+
+def remember_used_topic(role_type, key_suffix, topic_text):
+    """EN: appends a short topic descriptor to the session's "used" list
+    (capped at 12 entries) so future prompts can avoid repeating it.
+    AR: يضيف وصف قصير للموضوع لقائمة "المستخدم" بالجلسة (بحد أقصى 12)،
+    حتى التعليمات الجايّة تتجنب تكراره."""
+    if not topic_text:
+        return
+    key = f"used_topics_{role_type}_{key_suffix}"
+    lst = st.session_state.get(key, [])
+    lst.append(str(topic_text)[:80])
+    st.session_state[key] = lst[-12:]
 
 # FIX 1: build_prompt — upgraded to llama-3.3-70b-versatile
 # and enhanced difficulty rules with more detail
@@ -593,48 +879,63 @@ def build_prompt(role, index, language):
     }
 
     # للـ Other: نحدد وظيفة دقيقة + قسم محدد + بريد مناسب لكل index
+    # EN: each profile now also carries an explicit name (EN/AR) that MATCHES
+    # the "recipient" email handle below. This is used to bind the greeting
+    # name inside the generated email body to the same person the email is
+    # actually addressed to — fixing the "Dear Nurse John" vs a totally
+    # different "to" address bug found during testing.
+    # AR: كل بروفايل الحين فيه اسم واضح (عربي/إنجليزي) يطابق عنوان البريد
+    # "recipient" تحت. نستخدمه لربط اسم التحية داخل نص الرسالة بنفس الشخص
+    # المرسل له البريد فعليًا — يحل خلل "Dear Nurse John" مع عنوان مختلف
+    # تمامًا ظهر أثناء الاختبار.
     OTHER_JOB_PROFILES = [
         # 0 — Admin
         {
             "r_desc": "a hospital billing and insurance coordinator (administrative staff)",
             "r_ctx": "payroll, IBAN updates, health insurance (Tawuniya/Bupa/AXA), supplier invoices, procurement, hospital billing, staff HR notifications",
             "r_guidance": "Generate an ADMINISTRATIVE phishing email. Topic MUST be one of: fake payroll/IBAN update, fake health insurance verification, fake supplier invoice, fake CEO financial request, fake HR notification. NEVER use clinical or IT topics.",
-            "recipient": "m.sultan.alghamdi@hospital.org"
+            "recipient": "m.sultan.alghamdi@hospital.org",
+            "name_en": "Sultan Alghamdi", "name_ar": "سلطان الغامدي"
         },
         # 1 — IT
         {
             "r_desc": "a hospital network and systems support technician (IT staff)",
             "r_ctx": "VPN access, hospital network accounts, SSL certificates, firewall, software licenses, IT helpdesk tickets, server maintenance, cybersecurity alerts",
             "r_guidance": "Generate an IT/TECHNICAL phishing email. Topic MUST be one of: fake VPN re-authentication, fake SSL certificate expiry, fake network security alert, fake software license renewal, fake IT helpdesk request. NEVER use clinical or administrative topics.",
-            "recipient": "t.bandar.althubaiti@hospital.org"
+            "recipient": "t.bandar.althubaiti@hospital.org",
+            "name_en": "Bandar Althubaiti", "name_ar": "بندر الثبيتي"
         },
         # 2 — Clinical
         {
             "r_desc": "a hospital pharmacist or lab technician (clinical staff)",
             "r_ctx": "pharmacy dispensing system, lab results portal, patient medication records, clinical protocols, MOH drug circulars, infection control updates",
             "r_guidance": "Generate a CLINICAL phishing email. Topic MUST be one of: fake pharmacy/lab system credential update, fake MOH clinical protocol alert, fake patient records access, fake medical director request. NEVER use administrative or IT topics.",
-            "recipient": "dr.khalid.alanazi@hospital.org"
+            "recipient": "dr.khalid.alanazi@hospital.org",
+            "name_en": "Dr. Khalid Alanazi", "name_ar": "د. خالد العنزي"
         },
         # 3 — Admin
         {
             "r_desc": "a hospital medical procurement and supply chain officer (administrative staff)",
             "r_ctx": "medical equipment procurement, supplier contracts, purchase orders, delivery confirmations, inventory management, MOH procurement compliance",
             "r_guidance": "Generate an ADMINISTRATIVE phishing email. Topic MUST be one of: fake urgent supplier invoice (SAR amount), fake procurement portal login, fake contract renewal, fake supply order confirmation with malicious attachment. NEVER use clinical or IT topics.",
-            "recipient": "m.reem.alsabiei@hospital.org"
+            "recipient": "m.reem.alsabiei@hospital.org",
+            "name_en": "Reem Alsabiei", "name_ar": "ريم السبيعي"
         },
         # 4 — IT
         {
             "r_desc": "a hospital cybersecurity and systems administrator (IT staff)",
             "r_ctx": "hospital firewall, server administration, database backups, endpoint security, Active Directory, cloud backup systems, EMR server maintenance",
             "r_guidance": "Generate an IT/TECHNICAL phishing email. Topic MUST be one of: fake CIO/CISO urgent server request, fake firewall/security policy update, fake cloud backup credential alert, fake Active Directory password expiry, fake database admin request. NEVER use clinical or administrative topics.",
-            "recipient": "t.nadia.alsalmi@hospital.org"
+            "recipient": "t.nadia.alsalmi@hospital.org",
+            "name_en": "Nadia Alsalmi", "name_ar": "نادية السالمي"
         },
         # 5 — Clinical
         {
             "r_desc": "a hospital radiologist or medical imaging technician (clinical staff)",
             "r_ctx": "PACS imaging system, radiology reports, patient scan results, imaging department scheduling, MOH radiology protocols, medical imaging equipment",
             "r_guidance": "Generate a CLINICAL phishing email. Topic MUST be one of: fake PACS system credential update, fake urgent patient scan results PDF, fake radiology department alert, fake MOH imaging protocol update. NEVER use administrative or IT topics.",
-            "recipient": "dr.fahad.aldosari@hospital.org"
+            "recipient": "dr.fahad.aldosari@hospital.org",
+            "name_en": "Dr. Fahad Aldosari", "name_ar": "د. فهد الدوسري"
         },
     ]
 
@@ -647,8 +948,18 @@ def build_prompt(role, index, language):
         r_guidance = profile["r_guidance"]
         # override الـ recipient للـ other حسب الـ profile
         st.session_state[f"_other_recipient_{index}"] = profile["recipient"]
+        recipient_name  = profile["name_ar"] if is_ar else profile["name_en"]
+        recipient_email = profile["recipient"]
     else:
         r_desc, r_ctx, r_guidance = role_guidance.get(role_type, role_guidance["clinical"])
+        recip_pool = RECIPIENT_POOLS.get(role_type)
+        if recip_pool:
+            recip_order = get_session_random_order(len(recip_pool), f"recipient_order_{role_type}")
+            recip = recip_pool[recip_order[index % len(recip_order)]]
+            recipient_name  = recip["ar"] if is_ar else recip["en"]
+            recipient_email = recip["email"]
+        else:
+            recipient_name, recipient_email = None, None
 
     # FIX 3: Enhanced difficulty rules — more detailed for both languages
     if is_ar:
@@ -660,7 +971,10 @@ def build_prompt(role, index, language):
                 "- إلحاح مبالغ فيه بعبارات تحذيرية كبيرة (تصرف الآن! سيتم إغلاق حسابك خلال ساعة! موعد نهائي اليوم!)\n"
                 "- تحية عامة فقط: 'عزيزي الموظف' أو 'عزيزي المستخدم' — ممنوع استخدام الاسم أو المسمى الوظيفي\n"
                 "- طلب صريح ومشبوه جداً (شارك كلمة المرور، أدخل بياناتك الكاملة، أرسل رقم الهوية)\n"
-                "- عنوان المرسل واضح الزيف (مثل: noreply@hospital-secure.xyz)"
+                "- عنوان المرسل واضح الزيف (مثل: noreply@hospital-secure.xyz)\n"
+                "- معرفة داخلية: صفر — رسالة عامة تصلح لأي موظف بأي مكان\n"
+                "- ناقل هجوم واحد فقط وبسيط (رابط أو طلب مباشر، مايصير اثنين معًا)\n"
+                "- التلاعب النفسي: خوف وإلحاح مباشر وفاضح فقط، بدون أي ذكاء بالأسلوب"
             ),
             "medium": (
                 "مستوى متوسط — صعوبة معتدلة، بعض العلامات واضحة وبعضها يحتاج تمعّناً:\n"
@@ -669,7 +983,10 @@ def build_prompt(role, index, language):
                 "- خطأ إملائي واحد بسيط أو جملة غير طبيعية في السياق\n"
                 "- إلحاح معتدل ('يرجى الرد بنهاية الأسبوع' أو 'يجب التحديث قبل يوم الاثنين')\n"
                 "- تحية شبه شخصية (اللقب الوظيفي صح لكن الاسم أحياناً خاطئ أو عام)\n"
-                "- الطلب غير عادي لكن ليس مستحيلاً في بيئة العمل"
+                "- الطلب غير عادي لكن ليس مستحيلاً في بيئة العمل\n"
+                "- معرفة داخلية: بسيطة (يذكر اسم القسم أو نظام عام يستخدمه الدور، بدون تفاصيل شخصية دقيقة)\n"
+                "- ناقل هجوم واحد رئيسي، ممكن يضاف له طلب اجتماعي خفيف ثانوي\n"
+                "- التلاعب النفسي: مزيج خفيف بين الإلحاح والمصداقية المهنية"
             ),
             "hard": (
                 "مستوى متقدم — العلامات خفية جداً، الرسالة تبدو حقيقية تقريباً:\n"
@@ -678,7 +995,10 @@ def build_prompt(role, index, language):
                 "- إلحاح خفيف ومهني جداً ('نرجو الاطلاع قبل نهاية يوم العمل' أو 'للحفاظ على أمان حسابك')\n"
                 "- تحية بالاسم الكامل والمسمى الوظيفي الدقيق\n"
                 "- علامة تحذيرية واحدة فقط وخفية للغاية — كل شيء آخر يبدو حقيقياً تماماً\n"
-                "- المحتوى ذو صلة مباشرة بعمل المستلم ويوحي بمعرفة داخلية"
+                "- المحتوى ذو صلة مباشرة بعمل المستلم ويوحي بمعرفة داخلية\n"
+                "- معرفة داخلية: عالية — يذكر تفاصيل تبدو حقيقية ومحددة (مشروع جارٍ، اسم مديره الحقيقي بالسياق، توقيت يتوافق مع جدوله)\n"
+                "- ممكن دمج أكثر من ناقل هجوم بذكاء (رابط + طلب اجتماعي بنفس الرسالة) بدون أن يبان مبالغًا فيه\n"
+                "- التلاعب النفسي: استغلال السلطة أو الثقة المهنية بدون إلحاح ظاهر إطلاقًا — نغمة تعاون عادية تخلي القارئ يتجاوب بدون شك"
             ),
         }
     else:
@@ -690,7 +1010,10 @@ def build_prompt(role, index, language):
                 "- Aggressive ALL-CAPS urgency with alarming language (ACT NOW! YOUR ACCOUNT WILL BE CLOSED! DEADLINE TODAY!)\n"
                 "- Generic greeting only: 'Dear Staff' or 'Dear User' — never use recipient's name or job title\n"
                 "- Blatantly suspicious request (share your password, enter full credentials, send your ID number)\n"
-                "- Sender address obviously fake (e.g. noreply@hospital-secure.xyz)"
+                "- Sender address obviously fake (e.g. noreply@hospital-secure.xyz)\n"
+                "- Insider knowledge: ZERO — generic message that would fit any employee anywhere\n"
+                "- Attack vectors: only ONE, simple (a link OR a direct request, never combined)\n"
+                "- Psychological tactic: blunt fear and urgency only, no subtlety whatsoever"
             ),
             "medium": (
                 "INTERMEDIATE difficulty — some flags obvious, some require careful reading:\n"
@@ -699,7 +1022,10 @@ def build_prompt(role, index, language):
                 "- One minor spelling error or awkward sentence that feels slightly off\n"
                 "- Moderate urgency with a deadline ('Please respond by end of week' or 'Update required before Monday')\n"
                 "- Semi-personal greeting — correct job title but name is generic or slightly wrong\n"
-                "- Request is unusual but not impossible in a workplace context"
+                "- Request is unusual but not impossible in a workplace context\n"
+                "- Insider knowledge: light (mentions the department name or a system relevant to the role, no precise personal detail)\n"
+                "- Attack vectors: one main vector, optionally with a light secondary social-engineering ask\n"
+                "- Psychological tactic: a light blend of urgency and professional credibility"
             ),
             "hard": (
                 "ADVANCED difficulty — red flags extremely subtle, email looks almost completely legitimate:\n"
@@ -708,7 +1034,10 @@ def build_prompt(role, index, language):
                 "- Subtle, polite urgency only ('Kindly review before end of business day' or 'To keep your account secure')\n"
                 "- Personalised greeting with full name and exact job title\n"
                 "- Only ONE subtle red flag — everything else looks completely legitimate\n"
-                "- Content directly relevant to recipient's work, implying insider knowledge"
+                "- Content directly relevant to recipient's work, implying insider knowledge\n"
+                "- Insider knowledge: HIGH — references something that feels real and specific (an ongoing project, the real manager's name in context, timing that matches their schedule)\n"
+                "- Attack vectors: may cleverly combine more than one (e.g. a link AND a social-engineering ask in the same message) without feeling excessive\n"
+                "- Psychological tactic: exploits authority or professional trust with NO visible urgency at all — a normal, cooperative tone that makes the reader comply without suspicion"
             ),
         }
 
@@ -717,8 +1046,9 @@ def build_prompt(role, index, language):
     if is_ar:
         lang_rule = (
             "اللغة: عربية فصحى فقط في كل النصوص (subject/body/indicators/why_risky/learning_tip).\n"
-            "استثناء: عناوين البريد الإلكتروني والروابط (http://...) تبقى لاتينية.\n"
-            "ممنوع: أي حرف لاتيني داخل النصوص العربية.\n"
+            "استثناء: عناوين البريد الإلكتروني والروابط (http://...) والنطاقات تبقى لاتينية، وأسماء أنظمة تقنية معروفة (VPN, EMR, SSL) ممكن تبقى بالإنجليزي.\n"
+            "ممنوع تمامًا: أي كلمة أو جملة إنجليزية كاملة وسط الجملة العربية (مثال على خطأ يجب تجنبه: كتابة \"NOW, HOUR\" أو أي تحذير بالإنجليزي وسط نص عربي بالكامل).\n"
+            "قبل إرسال الرد، تأكد إن كل جملة بحقل body/subject/indicators مكتوبة بالعربية بالكامل من أول الجملة لآخرها، بدون أي قفزة لغة بالنص.\n"
             "حقل 'to': البريد الإلكتروني فقط بدون أي نص."
         )
         from_ex  = "اسم المرسل <fake@domain.com>"
@@ -732,10 +1062,61 @@ def build_prompt(role, index, language):
         ind_t_ex = "indicator title"
         ind_d_ex = "detailed technical explanation"
 
-    # FIX 7: Get forced scenario for this index
-    forced = FORCED_SCENARIOS.get(role_type, FORCED_SCENARIOS["admin"])
-    forced_scenario = forced[index % len(forced)]
-    scenario_instruction = forced_scenario["ar"] if is_ar else forced_scenario["en"]
+    # EN: FIX 7 (upgraded) — scenario selection now uses a session-shuffled
+    # order instead of a fixed `index % len(forced)` mapping, so "example
+    # slot #N" no longer always lands on the same scenario across sessions.
+    # "other" role keeps the old fixed mapping since its scenario list is
+    # positionally paired 1:1 with OTHER_JOB_PROFILES.
+    # AR: التعديل على FIX 7 — اختيار السيناريو الآن يستخدم ترتيبًا مخلوطًا
+    # خاصًا بالجلسة بدل الربط الثابت `index % len(forced)`، حتى "خانة المثال
+    # رقم N" ما تطلع لها نفس السيناريو بكل الجلسات. دور "Other" يبقى بالربط
+    # الثابت القديم لأن قائمته مرتبطة موضعيًا 1:1 مع OTHER_JOB_PROFILES.
+    # EN: FIX 7 (upgraded again) — TRUE OPEN-ENDED GENERATION for
+    # clinical/admin/it: instead of picking literal pre-written scenario
+    # text, we pick a broad CATEGORY (session-shuffled, no repeats within
+    # the session) and tell the model to INVENT a brand-new specific
+    # scenario inside it, different from anything generated earlier this
+    # session. "other" keeps the old fixed/profile-paired scenarios.
+    # AR: التعديل النهائي على FIX 7 — توليد مفتوح فعليًا لسريري/إداري/تقني:
+    # بدل اختيار نص سيناريو جاهز، نختار فئة عامة (مخلوطة لكل جلسة، بدون
+    # تكرار داخل الجلسة) ونطلب من الموديل يخترع سيناريو جديد محدد بداخلها،
+    # مختلف عن أي شي تولّد قبل بهذي الجلسة. دور "Other" يبقى على نظامه القديم.
+    if role_type == "other":
+        forced = FORCED_SCENARIOS.get(role_type, FORCED_SCENARIOS["admin"])
+        forced_scenario = forced[index % len(forced)]
+        scenario_instruction = forced_scenario["ar"] if is_ar else forced_scenario["en"]
+    else:
+        categories = OPEN_CATEGORIES.get(role_type, OPEN_CATEGORIES["clinical"])
+        cat_order = get_session_random_order(len(categories), f"category_order_{role_type}")
+        category = categories[cat_order[index % len(cat_order)]]
+        category_text = category["ar"] if is_ar else category["en"]
+        avoid_text = get_avoid_list_text(role_type, "learn", is_ar)
+        if is_ar:
+            scenario_instruction = (
+                f"الفئة العامة: {category_text}\n"
+                f"اخترع سيناريو تصيد جديد ومحدد وواقعي ضمن هذي الفئة — لست مقيدًا بقالب معيّن. "
+                f"كن مبدعًا بالتفاصيل المحددة (اسم النظام، اسم المرسل، السبب، الرابط أو المرفق، المبلغ لو وجد). "
+                f"يجب أن يكون مختلفًا تمامًا عن أي سيناريو سابق بهذي الجلسة.{avoid_text}"
+            )
+        else:
+            scenario_instruction = (
+                f"Broad category: {category_text}\n"
+                f"Invent a brand-new, specific, realistic phishing scenario within this category — you are NOT limited to a fixed template. "
+                f"Be creative with the specific details (system name, sender identity, pretext, link or attachment, amount if relevant). "
+                f"It must be clearly different from any scenario already generated earlier in this session.{avoid_text}"
+            )
+
+    # EN: build the RECIPIENT instruction block (empty string if this role
+    # has no bound recipient, which shouldn't normally happen now).
+    # AR: نبني سطر تعليمات المستلم (نص فاضي لو الدور ماله مستلم مربوط،
+    # وهذا ماراح يصير عادة بعد هذا التعديل).
+    if recipient_name and recipient_email:
+        if is_ar:
+            recipient_block = f"\n━━━ المستلم (ثابت — لا تغيّره) ━━━\nاسم المستلم بالتحية: {recipient_name}\nحقل \"to\": {recipient_email}\nمهم: التحية بنص الرسالة يجب تخاطب نفس الاسم أعلاه بالضبط، ومايصير اسم مختلف.\n"
+        else:
+            recipient_block = f"\n━━━ RECIPIENT (fixed — do not change) ━━━\nGreeting name to use: {recipient_name}\n\"to\" field value: {recipient_email}\nIMPORTANT: the greeting inside the body MUST address this exact name — never invent a different name.\n"
+    else:
+        recipient_block = ""
 
     return f"""You are a cybersecurity expert creating phishing awareness training for Saudi healthcare.
 
@@ -744,7 +1125,7 @@ TRAINING EXAMPLE #{index + 1} of 6 | Variety seed: {session_seed}
 ━━━ TARGET ━━━
 Role: {r_desc}
 Context: {r_ctx}
-
+{recipient_block}
 ━━━ YOUR TASK — MANDATORY SCENARIO ━━━
 You MUST generate this EXACT scenario type — do NOT substitute or change it:
 {scenario_instruction}
@@ -784,6 +1165,21 @@ def build_assess_prompt(role, index, is_phishing, language):
     seed = st.session_state.get("cache_version", 13)
     import time
     session_seed = abs(hash(str(seed) + str(index) + str(is_phishing) + str(time.time()))) % 99999
+
+    # EN: same recipient-binding fix as the learning phase (build_prompt) —
+    # pick one (name, email) pair for this slot from RECIPIENT_POOLS using a
+    # SEPARATE session-order key ("assess_recipient_order_...") so the
+    # assessment phase's picks don't have to match the learning phase's.
+    # AR: نفس إصلاح ربط اسم المستلم اللي بمرحلة التعلم — نختار زوج (اسم،بريد)
+    # لهذي الخانة من RECIPIENT_POOLS بمفتاح ترتيب جلسة مستقل خاص بالاختبار،
+    # حتى لا يلزم تطابق اختيارات الاختبار مع اختيارات مرحلة التعلم.
+    recip_pool = RECIPIENT_POOLS.get(role_type)
+    if recip_pool:
+        recip_order = get_session_random_order(len(recip_pool), f"assess_recipient_order_{role_type}")
+        recip = recip_pool[recip_order[index % len(recip_order)]]
+        recipient_name, recipient_email = (recip["ar"] if is_ar else recip["en"]), recip["email"]
+    else:
+        recipient_name, recipient_email = None, None
 
     role_guidance = {
         "clinical": (
@@ -835,7 +1231,10 @@ def build_assess_prompt(role, index, is_phishing, language):
                 "- إلحاح مبالغ فيه بعبارات كبيرة (تصرف الآن! حسابك سيُغلق! موعد نهائي اليوم!)\n"
                 "- تحية عامة فقط: 'عزيزي الموظف' أو 'عزيزي الفريق' — ممنوع الاسم\n"
                 "- طلب صريح ومشبوه جداً (شارك كلمة المرور، أدخل بياناتك كاملة)\n"
-                "- عنوان المرسل واضح الزيف"
+                "- عنوان المرسل واضح الزيف\n"
+                "- معرفة داخلية: صفر — رسالة عامة تصلح لأي موظف\n"
+                "- ناقل هجوم واحد فقط وبسيط\n"
+                "- التلاعب النفسي: خوف وإلحاح مباشر فقط، بدون ذكاء بالأسلوب"
             ),
             "medium": (
                 "مستوى متوسط — صعوبة معتدلة، بعض العلامات تحتاج تمعّناً:\n"
@@ -844,7 +1243,10 @@ def build_assess_prompt(role, index, is_phishing, language):
                 "- خطأ إملائي واحد بسيط فقط في النص\n"
                 "- إلحاح معتدل ('يرجى الرد بنهاية الأسبوع') — ممنوع ALL CAPS\n"
                 "- تحية شبه شخصية (اللقب صح لكن الاسم أحياناً عام أو خاطئ)\n"
-                "- الطلب غير عادي لكن ليس مستحيلاً في بيئة العمل"
+                "- الطلب غير عادي لكن ليس مستحيلاً في بيئة العمل\n"
+                "- معرفة داخلية: بسيطة (اسم القسم أو نظام عام للدور، بدون تفاصيل شخصية)\n"
+                "- ناقل هجوم رئيسي واحد، ممكن طلب اجتماعي ثانوي خفيف معه\n"
+                "- التلاعب النفسي: مزيج خفيف بين الإلحاح والمصداقية المهنية"
             ),
             "hard": (
                 "مستوى متقدم — العلامات خفية جداً، الرسالة تبدو حقيقية تقريباً:\n"
@@ -853,7 +1255,10 @@ def build_assess_prompt(role, index, is_phishing, language):
                 "- صفر ALL CAPS — أسلوب مهني هادئ تماماً\n"
                 "- إلحاح خفيف ومهني فقط ('نرجو الاطلاع قبل نهاية يوم العمل')\n"
                 "- تحية بالاسم الكامل والمسمى الوظيفي الدقيق\n"
-                "- علامة تحذيرية واحدة فقط وخفية — كل شيء آخر يبدو حقيقياً تماماً"
+                "- علامة تحذيرية واحدة فقط وخفية — كل شيء آخر يبدو حقيقياً تماماً\n"
+                "- معرفة داخلية: عالية — تفاصيل تبدو حقيقية ومحددة (مشروع جارٍ، اسم مدير حقيقي بالسياق)\n"
+                "- ممكن دمج أكثر من ناقل هجوم بذكاء بدون مبالغة\n"
+                "- التلاعب النفسي: استغلال السلطة/الثقة المهنية بدون إلحاح ظاهر إطلاقًا"
             ),
         }
     else:
@@ -865,7 +1270,10 @@ def build_assess_prompt(role, index, is_phishing, language):
                 "- Aggressive ALL-CAPS urgency (ACT NOW! DEADLINE TODAY! ACCOUNT WILL BE CLOSED!)\n"
                 "- Generic greeting only: 'Dear Staff' or 'Dear Team' — NEVER use name\n"
                 "- Blatantly suspicious request (share password, enter full credentials)\n"
-                "- Sender address obviously fake"
+                "- Sender address obviously fake\n"
+                "- Insider knowledge: ZERO — generic message\n"
+                "- Attack vectors: only ONE, simple\n"
+                "- Psychological tactic: blunt fear/urgency only, no subtlety"
             ),
             "medium": (
                 "INTERMEDIATE difficulty — some flags obvious, some need careful reading:\n"
@@ -874,7 +1282,10 @@ def build_assess_prompt(role, index, is_phishing, language):
                 "- EXACTLY 1 minor spelling mistake — just one subtle error\n"
                 "- Moderate urgency only: 'Please respond by end of week' — NO ALL-CAPS\n"
                 "- Semi-personal greeting matching role (correct title, name slightly off)\n"
-                "- Request unusual but not impossible in workplace context"
+                "- Request unusual but not impossible in workplace context\n"
+                "- Insider knowledge: light (department name or role-relevant system, no precise personal detail)\n"
+                "- Attack vectors: one main vector, maybe a light secondary social-engineering ask\n"
+                "- Psychological tactic: light blend of urgency and professional credibility"
             ),
             "hard": (
                 "ADVANCED difficulty — red flags extremely subtle, email looks almost completely real:\n"
@@ -883,7 +1294,10 @@ def build_assess_prompt(role, index, is_phishing, language):
                 "- ZERO ALL-CAPS — completely normal professional tone throughout\n"
                 "- Subtle polite urgency only: 'Kindly review before end of business day'\n"
                 "- Full name + exact job title matching the role in greeting\n"
-                "- ONLY ONE subtle red flag (the domain) — everything else perfectly legitimate"
+                "- ONLY ONE subtle red flag (the domain) — everything else perfectly legitimate\n"
+                "- Insider knowledge: HIGH — references something real-feeling and specific (ongoing project, real manager's name in context)\n"
+                "- Attack vectors: may cleverly combine more than one without feeling excessive\n"
+                "- Psychological tactic: exploits authority/professional trust with NO visible urgency at all"
             ),
         }
     diff_rule = diff_rules.get(difficulty, diff_rules["medium"])
@@ -986,10 +1400,55 @@ def build_assess_prompt(role, index, is_phishing, language):
     else:
         rank = index
 
-    if is_phishing:
-        forced_task_raw = phish_list[rank % len(phish_list)]
+    # EN: open-ended generation for clinical/admin/it (same mechanism as
+    # build_prompt) — "other" keeps the original fixed assess_scenarios
+    # lists below since they're paired with its job profiles.
+    # AR: توليد مفتوح لسريري/إداري/تقني (نفس آلية build_prompt) — دور
+    # "Other" يبقى على قوائم assess_scenarios الثابتة تحت لأنها مرتبطة
+    # ببروفايلاته الوظيفية.
+    use_open = role_type != "other"
+    if use_open:
+        categories = OPEN_CATEGORIES.get(role_type, OPEN_CATEGORIES["clinical"])
+        cat_order = get_session_random_order(len(categories), f"assess_category_order_{role_type}_{is_phishing}")
+        category = categories[cat_order[rank % len(cat_order)]]
+        category_text = category["ar"] if is_ar else category["en"]
+        avoid_text = get_avoid_list_text(role_type, f"assess_{is_phishing}", is_ar)
+        if is_ar:
+            if is_phishing:
+                forced_task = (
+                    f"الفئة العامة: {category_text}\n"
+                    f"اخترع سيناريو تصيد جديد ومحدد وواقعي ضمن هذي الفئة. كن مبدعًا بالتفاصيل (اسم النظام، المرسل، السبب، الرابط/المرفق). "
+                    f"يجب أن يكون مختلفًا تمامًا عن أي سيناريو تصيد سابق بهذي الجلسة.{avoid_text}"
+                )
+            else:
+                forced_task = (
+                    f"الفئة العامة: {category_text}\n"
+                    f"اخترع بريدًا شرعيًا عاديًا وواقعيًا ضمن هذي الفئة (مرسل رسمي @hospital.org أو @moh.gov.sa، بدون أي علامة تصيد). "
+                    f"يجب أن يكون مختلفًا عن أي بريد شرعي سابق بهذي الجلسة.{avoid_text}"
+                )
+        else:
+            if is_phishing:
+                forced_task = (
+                    f"Broad category: {category_text}\n"
+                    f"Invent a brand-new, specific, realistic phishing scenario within this category. Be creative with details (system name, sender, pretext, link/attachment). "
+                    f"It must be clearly different from any phishing scenario already generated earlier in this session.{avoid_text}"
+                )
+            else:
+                forced_task = (
+                    f"Broad category: {category_text}\n"
+                    f"Invent a normal, realistic LEGITIMATE email within this category (official @hospital.org or @moh.gov.sa sender, zero phishing red flags). "
+                    f"It must be different from any legitimate email already generated earlier in this session.{avoid_text}"
+                )
+    elif is_phishing:
+        # EN: session-randomized order instead of fixed rank % len(...),
+        # same variety fix applied here as in build_prompt.
+        # AR: ترتيب عشوائي خاص بالجلسة بدل الربط الثابت rank % len(...)،
+        # نفس إصلاح التنوع المطبّق في build_prompt.
+        order = get_session_random_order(len(phish_list), f"assess_scenario_order_{role_type}_phish")
+        forced_task_raw = phish_list[order[rank % len(order)]]
     else:
-        forced_task_raw = legit_list[rank % len(legit_list)]
+        order = get_session_random_order(len(legit_list), f"assess_scenario_order_{role_type}_legit")
+        forced_task_raw = legit_list[order[rank % len(order)]]
 
     # FIX 9: ترجمة forced_task حسب اللغة
     ASSESS_TRANSLATIONS = {
@@ -1082,17 +1541,21 @@ def build_assess_prompt(role, index, is_phishing, language):
         "MANDATORY LEGITIMATE — Mixed: Team meeting or briefing invitation from manager. Official @hospital.org sender. Normal workplace communication.":
             "إجباري شرعي — مختلط: دعوة اجتماع فريق أو إحاطة من المدير. مرسل رسمي @hospital.org. تواصل عمل عادي.",
     }
-    if is_ar:
-        forced_task = ASSESS_TRANSLATIONS.get(forced_task_raw, forced_task_raw)
-    else:
-        forced_task = forced_task_raw
+    if not use_open:
+        if is_ar:
+            forced_task = ASSESS_TRANSLATIONS.get(forced_task_raw, forced_task_raw)
+        else:
+            forced_task = forced_task_raw
+    # (when use_open is True, `forced_task` was already built fully
+    # localized above — nothing more to do here)
 
     # FIX 10: lang_rule مطابق للتعلم
     if is_ar:
         lang_rule = (
             "اللغة: عربية فصحى فقط في كل النصوص (subject/body/explanation).\n"
-            "استثناء: عناوين البريد الإلكتروني والروابط (http://...) تبقى لاتينية.\n"
-            "ممنوع: أي حرف لاتيني داخل النصوص العربية.\n"
+            "استثناء: عناوين البريد الإلكتروني والروابط (http://...) والنطاقات تبقى لاتينية.\n"
+            "ممنوع تمامًا: أي كلمة أو جملة إنجليزية كاملة وسط الجملة العربية (مثال على خطأ يجب تجنبه: كتابة \"NOW, HOUR\" أو أي تحذير بالإنجليزي وسط نص عربي بالكامل).\n"
+            "قبل إرسال الرد، تأكد إن كل جملة بحقل body/subject/explanation مكتوبة بالعربية بالكامل من أول الجملة لآخرها، بدون أي قفزة لغة بالنص.\n"
             "حقل 'to': البريد الإلكتروني فقط بدون أي نص."
         )
     else:
@@ -1110,10 +1573,19 @@ def build_assess_prompt(role, index, is_phishing, language):
         body_ex = "email body in English"
         expl    = f"Clearly explain why this email is {'phishing and identify the red flags' if is_phishing else 'legitimate and safe'}"
 
+    if recipient_name and recipient_email:
+        if is_ar:
+            recipient_block = f"\n\nالمستلم (ثابت — لا تغيّره):\nاسم المستلم بالتحية: {recipient_name}\nحقل \"to\": {recipient_email}\nمهم: التحية بنص الرسالة يجب تخاطب نفس الاسم أعلاه بالضبط."
+        else:
+            recipient_block = f"\n\nRECIPIENT (fixed — do not change):\nGreeting name to use: {recipient_name}\n\"to\" field value: {recipient_email}\nIMPORTANT: the greeting inside the body MUST address this exact name."
+    else:
+        recipient_block = ""
+
     return f"""Phishing awareness assessment email for Saudi healthcare. Seed:{session_seed}
 
 TARGET: {r_desc}
 CONTEXT: {r_ctx}
+{recipient_block}
 
 TASK — MANDATORY SCENARIO (do NOT change this):
 {forced_task}
@@ -1590,10 +2062,15 @@ def generate_email(role, index, language, difficulty="medium"):
         raw    = data["choices"][0]["message"]["content"].strip()
         result = parse_json_response(raw)
         result = clean_result(result, language=="Arabic")
-        result["to"] = get_recipient(role, index, language)
+        result["to"] = get_recipient(role, index, language, phase="learn")
         if result.get("suspicious_link","").strip():
             if result["suspicious_link"] not in result.get("body",""):
                 result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
+        # EN: remember this email's topic so future open-ended generations
+        # in this session (same role) know not to repeat it.
+        # AR: نحفظ موضوع هذا الإيميل حتى التوليدات المفتوحة الجايّة بهذي
+        # الجلسة (لنفس الدور) تعرف ما تكرره.
+        remember_used_topic(role_type, "learn", result.get("email_type") or result.get("subject"))
         return result
     except json.JSONDecodeError as e:
         return {"error": f"JSON parse error: {e}"}
@@ -1617,10 +2094,11 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
                 return {"error": data["error"].get("message", str(data["error"]))}
             result = parse_json_response(data["choices"][0]["message"]["content"].strip())
             result = clean_result(result, language=="Arabic")
-            result["to"] = get_recipient(st.session_state.get("role","Clinical"), index, language)
+            result["to"] = get_recipient(st.session_state.get("role","Clinical"), index, language, phase="assess")
             if result.get("suspicious_link","").strip():
                 if result["suspicious_link"] not in result.get("body",""):
                     result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
+            remember_used_topic(role_type, f"assess_{is_phishing}", result.get("email_type") or result.get("subject"))
             return result
         except json.JSONDecodeError:
             if attempt == 2:
@@ -2013,6 +2491,14 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
                              "⚠️ يرجى اختيار مستوى الصعوبة"))
             else:
                 if "scenario_order" in st.session_state: del st.session_state["scenario_order"]
+                # EN: fresh "Start Training" click → fresh scenario/recipient
+                # order too, so re-running training mid-session also gets new
+                # variety (not just a full logout/retake).
+                # AR: ضغطة جديدة على "بدء التدريب" → ترتيب سيناريو/مستلم جديد
+                # كذلك، حتى إعادة تشغيل التدريب بنفس الجلسة يطلع له تنوع جديد.
+                for k in list(st.session_state.keys()):
+                    if k.startswith(("scenario_order_", "recipient_order_", "category_order_", "used_topics_")):
+                        st.session_state.pop(k, None)
                 go_to_learning(fr); st.rerun()
         st.markdown('</div>',unsafe_allow_html=True)
 
@@ -2131,6 +2617,9 @@ def page_complete():
     st.markdown('<div style="height:1.5rem"></div>',unsafe_allow_html=True)
     if st.button(tc("Start Assessment →","← ابدأ الاختبار"),key="go_assessment"):
         if "assess_scenario_order" in st.session_state: del st.session_state["assess_scenario_order"]
+        for k in list(st.session_state.keys()):
+            if k.startswith(("assess_recipient_order_", "assess_scenario_order_", "assess_category_order_", "used_topics_")):
+                st.session_state.pop(k, None)
         st.session_state.update({"page":"assessment","assess_index":0,"assess_emails":{},"assess_answers":{}})
         st.rerun()
 
@@ -2317,6 +2806,19 @@ def page_report():
         ]
         for k in keys_to_clear:
             st.session_state.pop(k, None)
+        # EN: also drop the dynamic per-role scenario/recipient random-order
+        # picks (scenario_order_*, recipient_order_*, assess_*_order_*) so
+        # "Retake Training" actually reshuffles them instead of reusing the
+        # same session pick — otherwise picking the same role again would
+        # silently replay the same scenario/recipient order as before.
+        # AR: نمسح كمان اختيارات الترتيب العشوائي الديناميكية لكل دور
+        # (scenario_order_*, recipient_order_*, assess_*_order_*) حتى زر
+        # "إعادة التدريب" يعيد خلطها فعليًا بدل إعادة استخدام نفس اختيار
+        # الجلسة القديم — لو اخترتِ نفس الدور بعد إعادة المحاولة.
+        for k in list(st.session_state.keys()):
+            if k.startswith(("scenario_order_", "recipient_order_", "assess_recipient_order_", "assess_scenario_order_",
+                              "category_order_", "assess_category_order_", "used_topics_")):
+                st.session_state.pop(k, None)
         # تجديد الـ cache_version لإجبار النموذج على توليد محتوى جديد
         st.session_state["cache_version"] = int(__import__("time").time()) % 99999
         st.rerun()
