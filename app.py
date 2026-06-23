@@ -3931,6 +3931,208 @@ Arabic and English must have equal depth and quality.
 # =============================================================
 
 # ══════════════════════════════════════════════════════════════
+
+
+# =============================================================
+# FINAL PATCH — Stability, diversity, and analysis-quality fixes
+# =============================================================
+# Notes covered:
+# - Stronger provider retries for Gemini 503/high-demand and slow providers.
+# - Claude/Gemini get shorter prompts and larger timeout/token safety.
+# - Learning analysis always links attack_type to the explanation.
+# - Placeholder indicator titles are replaced with meaningful titles.
+# - Beginner/Intermediate/Advanced are kept visibly different.
+# - Assessment stays focused on email difficulty and classification only.
+
+import time as _time_patch
+
+_PROVIDER_RETRYABLE_PATTERNS = re.compile(
+    r"503|UNAVAILABLE|high demand|temporar|try again|rate limit|overloaded|timeout|timed out|deadline",
+    re.I,
+)
+
+# Keep the original network caller, then wrap it with provider-aware retry.
+_BASE_CALL_AI_FINAL = call_ai
+
+def _is_retryable_ai_error(data):
+    if not isinstance(data, dict) or "error" not in data:
+        return False
+    err = data.get("error")
+    msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+    return bool(_PROVIDER_RETRYABLE_PATTERNS.search(msg))
+
+def _compact_prompt_for_slow_provider(prompt):
+    """Shorten long prompts for Claude/Gemini without removing the JSON contract."""
+    if not isinstance(prompt, str) or len(prompt) < 3500:
+        return prompt
+    # Preserve the most important parts: top task + JSON contract + final rules.
+    head = prompt[:2200]
+    tail = prompt[-1800:]
+    return head + "\n\n[Prompt shortened: keep all rules above; avoid repetition; return valid JSON only.]\n\n" + tail
+
+def call_ai(prompt, max_tokens=1600):
+    provider = st.session_state.get("ai_provider", "groq")
+    attempts = 3 if provider in {"gemini", "anthropic", "groq"} else 2
+    last = None
+    for attempt in range(attempts):
+        use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
+        data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 2600 if provider in {"gemini", "anthropic"} else max_tokens))
+        if not _is_retryable_ai_error(data):
+            return data
+        last = data
+        _time_patch.sleep(1.2 * (attempt + 1))
+    return last or {"error": {"message": "AI provider failed after retries."}}
+
+def call_groq(prompt, max_tokens=1600):
+    return call_ai(prompt, max_tokens)
+
+# Stronger prompt wording that avoids placeholder-like indicator titles.
+_BASE_BUILD_PROMPT_FINAL = build_prompt
+_BASE_BUILD_ASSESS_PROMPT_FINAL = build_assess_prompt
+
+def build_prompt(role, index, language):
+    base = _BASE_BUILD_PROMPT_FINAL(role, index, language)
+    if language == "Arabic":
+        return base + """
+
+تعليمات جودة نهائية:
+- لا تكتب عناوين عامة مثل "مؤشر ثالث" أو "مؤشر مختلف".
+- اكتب أسماء مؤشرات واضحة مثل: طلب بيانات حساسة، إساءة MFA/OTP، مرفق مشبوه، QR غير موثوق، انتحال سلطة، عدم توافق سير العمل.
+- يجب أن يوضح أول مؤشر: نوع الهجوم + الإجراء الخطر داخل البريد.
+- يجب أن تكون أمثلة المبتدئ واضحة، والمتوسط مقنعة جزئياً، والمتقدم قريب من الشرعي لكن لا يزال خطراً.
+- اجعل كل مثال جديد مختلفاً في: المرسل، النطاق، القسم، الطلب، وناقل الهجوم.
+"""
+    return base + """
+
+Final quality instructions:
+- Do not write generic placeholder titles like "different clue" or "third different clue".
+- Use concrete indicator titles such as: Sensitive data request, MFA/OTP abuse, Suspicious attachment, Untrusted QR code, Authority impersonation, Workflow mismatch.
+- Indicator 1 must state the attack type plus the risky action inside the email.
+- Beginner must be obvious, Intermediate partly convincing, Advanced near-legitimate but still risky.
+- Make every example differ in sender, domain, department, request, and attack vector.
+"""
+
+def build_assess_prompt(role, index, is_phishing, language):
+    base = _BASE_BUILD_ASSESS_PROMPT_FINAL(role, index, is_phishing, language)
+    if language == "Arabic":
+        return base + """
+
+تعليمات اختبار نهائية:
+- لا تضف تحليل المعلم داخل الاختبار.
+- البريد نفسه فقط يجب أن يثبت مستوى الصعوبة المختار.
+- إذا كان شرعياً: لا روابط خارجية، لا تهديد، لا بيانات حساسة، ولا نطاق غير رسمي.
+- إذا كان تصيداً: اجعل العلامات مناسبة للصعوبة، وليس كلها واضحة في المتقدم.
+"""
+    return base + """
+
+Final assessment instructions:
+- Do not include tutor-analysis sections in assessment questions.
+- The email content itself must prove the selected difficulty level.
+- If legitimate: no external links, no threats, no sensitive requests, and no unofficial domain.
+- If phishing: red flags must match the difficulty; Advanced must not look Beginner-level obvious.
+"""
+
+_BAD_INDICATOR_TITLES = re.compile(
+    r"^(different behavioral or technical clue|third different clue|indicator\s*\d+|مؤشر\s*\d+|مؤشر ثالث|مؤشر سلوكي أو تقني مختلف)$",
+    re.I,
+)
+
+def _clean_indicator_title(title, attack_type, n, is_ar=False):
+    t0 = (title or "").strip()
+    if t0 and not _BAD_INDICATOR_TITLES.match(t0):
+        return t0
+    if is_ar:
+        defaults = [f"نوع الهجوم: {attack_type}", "طلب أو سير عمل غير معتاد", "عدم توافق القناة أو الدور"]
+    else:
+        defaults = [f"Attack Type: {attack_type}", "Unusual request or workflow", "Role-context or channel mismatch"]
+    return defaults[min(max(n-1,0),2)]
+
+_BASE_NORMALIZE_LEARNING_FINAL = normalize_learning_analysis
+
+def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
+    result = _BASE_NORMALIZE_LEARNING_FINAL(result, role_type, difficulty, is_ar)
+    if not isinstance(result, dict):
+        return result
+    attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
+    result["attack_type"] = attack_type
+    indicators = result.get("indicators") if isinstance(result.get("indicators"), list) else []
+    while len(indicators) < 3:
+        indicators.append({"number": len(indicators)+1, "title": "", "description": ""})
+    for i in range(3):
+        indicators[i]["number"] = i + 1
+        indicators[i]["title"] = _clean_indicator_title(indicators[i].get("title"), attack_type, i+1, is_ar)
+        desc = (indicators[i].get("description") or "").strip()
+        if i == 0 and attack_type not in desc:
+            if is_ar:
+                desc = f"هذا المؤشر يوضح {attack_type} لأنه يرتبط مباشرة بالإجراء الخطر المطلوب في البريد. " + desc
+            else:
+                desc = f"This shows {attack_type} because it directly matches the risky action requested in the email. " + desc
+        indicators[i]["description"] = desc.strip()
+    result["indicators"] = indicators[:3]
+    wr = (result.get("why_risky") or "").strip()
+    if attack_type and attack_type not in wr:
+        role_hint = (ROLE_ATTACK_HINTS_AR if is_ar else ROLE_ATTACK_HINTS).get(role_type, ROLE_ATTACK_HINTS["other"])
+        prefix = f"هذه رسالة {attack_type} وتؤثر على {role_hint}. " if is_ar else f"This is a {attack_type} email that affects {role_hint}. "
+        result["why_risky"] = prefix + wr
+    return result
+
+_BASE_GENERATION_ISSUES_FINAL = get_generation_quality_issues
+
+def get_generation_quality_issues(result, difficulty, is_phishing=True):
+    issues = _BASE_GENERATION_ISSUES_FINAL(result, difficulty, is_phishing)
+    if not isinstance(result, dict):
+        return issues
+    if is_phishing:
+        # Prevent model-copy artifacts that appeared during testing.
+        titles = " ".join(str(x.get("title", "")) for x in result.get("indicators", []) if isinstance(x, dict))
+        if _BAD_INDICATOR_TITLES.search(titles):
+            issues.append("indicator titles must be concrete, not placeholders")
+        # The analysis must mention the attack type in learning outputs.
+        attack_type = result.get("attack_type") or result.get("email_type") or ""
+        analysis_text = " ".join(str(result.get(k, "")) for k in ["why_risky", "learning_tip"])
+        analysis_text += " " + " ".join(str(x.get("description", "")) for x in result.get("indicators", []) if isinstance(x, dict))
+        if attack_type and attack_type not in analysis_text:
+            issues.append("analysis must connect to attack_type")
+    return issues
+
+# Regeneration helper: when Try Again is clicked, also clear the used topic/domain
+# memory for the current phase enough to allow a truly fresh attempt.
+def clear_generation_memory_for_current(role_type=None, phase_suffix="learn"):
+    if role_type is None:
+        role = st.session_state.get("role", "Clinical")
+        role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+        _, _, role_type = role_info
+    for prefix in ["used_topics", "used_domains"]:
+        for key in list(st.session_state.keys()):
+            if key.startswith(f"{prefix}_{role_type}_{phase_suffix}"):
+                st.session_state[key] = []
+
+# More explicit system prompt for all providers.
+def get_system_prompt():
+    difficulty = st.session_state.get("difficulty", "medium")
+    role = st.session_state.get("role", "Clinical")
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    role_context = get_role_unbounded_context(role_type, False)
+    return f"""
+You are a safe cybersecurity training content generator for a Saudi healthcare phishing-awareness study.
+Role context: {role_context}
+Difficulty: {difficulty}.
+Return valid JSON only. No markdown, no comments, no prose outside JSON.
+Do not use fixed templates, repeated domains, or placeholder indicator titles.
+Learning email JSON must include attack_type, risk_level, indicators, why_risky, and learning_tip.
+Assessment email JSON must stay concise and contain assessment fields only.
+Phishing content must be simulated and use invented non-real domains.
+Legitimate content must use hospital.org or moh.gov.sa only and must not request credentials, payment, MFA, OTP, bank details, or urgent account verification.
+Beginner = obvious; Intermediate = partly convincing; Advanced = near-legitimate and subtle.
+Analysis must link attack_type to role-context risk and should not rely only on Domain/Urgency/Spelling.
+Arabic and English must have equal depth and quality.
+""".strip()
+
+# =============================================================
+# END FINAL PATCH
+# =============================================================
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
