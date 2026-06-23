@@ -74,6 +74,12 @@ import os
 import re
 import html as html_lib
 import random
+import base64
+from io import BytesIO
+try:
+    import qrcode
+except Exception:
+    qrcode = None
 
 st.set_page_config(
     page_title="AI Phishing Awareness",
@@ -1813,6 +1819,77 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
             return {"error": str(e)}
     return {"error": "Generation failed quality checks."}
 
+
+def _extract_first_url(text):
+    """Return the first http/https URL found in text, or empty string."""
+    if not text:
+        return ""
+    m = re.search(r'https?://[^\s\)\]\}\"\']+', str(text))
+    return m.group(0).rstrip('.,;:') if m else ""
+
+
+def _looks_like_qr_email(email):
+    """Detect emails that should visually show a QR code.
+
+    Some AI providers output only placeholders such as [QR Code Image].
+    This helper lets the UI render a real QR image locally instead of leaving
+    the placeholder text on the screen.
+    """
+    combined = " ".join(str(email.get(k, "")) for k in [
+        "email_type", "subject", "body", "suspicious_text", "suspicious_link", "why_risky", "learning_tip"
+    ])
+    return bool(re.search(r'\bQR\b|QR\s*Code|رمز\s*QR|باركود|barcode|scan\s+the\s+QR|امسح', combined, re.I))
+
+
+def _qr_payload_for_email(email):
+    """Choose what the QR code encodes.
+
+    Prefer the suspicious link. If the model did not provide one, create a
+    realistic fake URL from the sender/domain so the QR remains scannable and
+    useful for the learning example.
+    """
+    body = str(email.get("body", ""))
+    suspicious_link = str(email.get("suspicious_link", "")).strip()
+    payload = _extract_first_url(suspicious_link) or _extract_first_url(body)
+    if payload:
+        return payload
+
+    sender = str(email.get("from", ""))
+    m = re.search(r'@([A-Za-z0-9.-]+\.[A-Za-z]{2,})', sender)
+    domain = (m.group(1) if m else "mobile-clinical-update.example").lower()
+    domain = re.sub(r'[^a-z0-9.-]', '', domain) or "mobile-clinical-update.example"
+    token = abs(hash(str(email.get("subject", "")) + sender)) % 1000000
+    return f"https://{domain}/qr-checklist/update?id={token}"
+
+
+def _make_qr_image_html(payload, is_arabic=False):
+    """Build an embedded QR image as base64 PNG. Falls back gracefully if
+    qrcode/PIL is unavailable in the runtime.
+    """
+    label = "رمز QR" if is_arabic else "QR Code"
+    if qrcode is None:
+        safe_payload = html_lib.escape(payload)
+        return (f'<div style="display:inline-block;border:1px solid rgba(37,99,235,.5);'
+                f'border-radius:10px;padding:.65rem .9rem;margin:.45rem 0;'
+                f'background:rgba(37,99,235,.12);color:#93C5FD;">▦ {label}<br>'
+                f'<span style="font-size:.78rem;color:#CBD5E1;word-break:break-all;">{safe_payload}</span></div>')
+
+    qr = qrcode.QRCode(version=2, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=6, border=2)
+    qr.add_data(payload)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    safe_payload = html_lib.escape(payload)
+    return (f'<div style="display:inline-block;margin:.55rem 0;padding:.65rem;border:1px solid rgba(37,99,235,.55);'
+            f'border-radius:12px;background:rgba(15,23,42,.65);text-align:center;direction:ltr;">'
+            f'<img alt="{label}" src="data:image/png;base64,{b64}" '
+            f'style="width:132px;height:132px;background:white;border-radius:8px;padding:6px;display:block;margin:0 auto .4rem;" />'
+            f'<div style="font-size:.78rem;color:#93C5FD;font-family:Arial,sans-serif;">{label}</div>'
+            f'<div style="font-size:.68rem;color:#64748B;max-width:190px;word-break:break-all;font-family:Arial,sans-serif;">{safe_payload}</div>'
+            f'</div>')
+
 def render_email_window(email, is_arabic, show_badges=False):
     bd = 'rtl' if is_arabic else 'ltr'
     ta = 'right' if is_arabic else 'left'
@@ -1825,7 +1902,16 @@ def render_email_window(email, is_arabic, show_badges=False):
     body_raw = re.sub(r'suspicious_link\s*:\s*', '', body_raw, flags=re.IGNORECASE)
     body_raw = re.sub(r'suspicious_text\s*:\s*', '', body_raw, flags=re.IGNORECASE)
 
-    if suspicious_link and suspicious_link not in body_raw:
+    is_qr_email = _looks_like_qr_email(email)
+    qr_payload = _qr_payload_for_email(email) if is_qr_email else ""
+
+    # If the provider forgot to return suspicious_link for QR examples,
+    # keep the QR scannable by storing the generated payload.
+    if is_qr_email and not suspicious_link:
+        suspicious_link = qr_payload
+        email["suspicious_link"] = qr_payload
+
+    if suspicious_link and suspicious_link not in body_raw and not is_qr_email:
         link_bare = re.sub(r'^https?://', '', suspicious_link)
         if link_bare not in body_raw:
             body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
@@ -1833,6 +1919,26 @@ def render_email_window(email, is_arabic, show_badges=False):
     has_attachment  = bool(email.get("attachment","").strip())
 
     body_html   = html_lib.escape(body_raw)
+
+    if is_qr_email:
+        qr_html = _make_qr_image_html(qr_payload, is_arabic)
+        placeholder_patterns = [
+            r'\[\s*QR\s*Code\s*Image\s*\]',
+            r'\[\s*QR\s*Code\s*\]',
+            r'\[\s*صورة\s*رمز\s*QR\s*\]',
+            r'\[\s*رمز\s*QR\s*\]',
+            r'QR\s*Code\s*Image',
+        ]
+        replaced_qr = False
+        for pat in placeholder_patterns:
+            new_body_html, n = re.subn(pat, qr_html, body_html, count=1, flags=re.I)
+            if n:
+                body_html = new_body_html
+                replaced_qr = True
+                break
+        if not replaced_qr:
+            body_html = body_html.rstrip() + "\n\n" + qr_html
+
     badge_count = [4 if has_attachment else 3]
 
     def make_badge(n, color="#DC2626"):
@@ -1853,7 +1959,7 @@ def render_email_window(email, is_arabic, show_badges=False):
                     f'padding:.2rem .5rem;background:rgba(239,68,68,.08);color:#FCA5A5;">'
                     f'{make_badge(b)}{safe_s}</span>', 1)
 
-        if suspicious_link:
+        if suspicious_link and not is_qr_email:
             safe_l = html_lib.escape(suspicious_link)
             if safe_l in body_html:
                 b = next_badge()
