@@ -4132,15 +4132,12 @@ def _is_retryable_ai_error(data):
     return bool(_PROVIDER_RETRYABLE_PATTERNS.search(msg))
 
 def _compact_prompt_for_slow_provider(prompt):
-    """Shorten long prompts for the slower providers (Claude/OpenAI/Gemini)
-    without removing the JSON contract. Lowered the trigger length so this
-    kicks in more often — long prompts measurably add latency on these
-    providers, which was the main cause of ~30-60s waits per example."""
-    if not isinstance(prompt, str) or len(prompt) < 2600:
+    """Shorten long prompts for Claude/Gemini without removing the JSON contract."""
+    if not isinstance(prompt, str) or len(prompt) < 3500:
         return prompt
     # Preserve the most important parts: top task + JSON contract + final rules.
-    head = prompt[:1900]
-    tail = prompt[-1500:]
+    head = prompt[:2200]
+    tail = prompt[-1800:]
     return head + "\n\n[Prompt shortened: keep all rules above; avoid repetition; return valid JSON only.]\n\n" + tail
 
 def call_ai(prompt, max_tokens=1600):
@@ -4148,7 +4145,7 @@ def call_ai(prompt, max_tokens=1600):
     attempts = 3 if provider in {"gemini", "anthropic", "groq"} else 2
     last = None
     for attempt in range(attempts):
-        use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic", "openai"} else prompt
+        use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
         data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 2600 if provider in {"gemini", "anthropic"} else max_tokens))
         if not _is_retryable_ai_error(data):
             return data
