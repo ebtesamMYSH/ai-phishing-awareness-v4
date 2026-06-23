@@ -1856,6 +1856,19 @@ def render_email_window(email, is_arabic, show_badges=False):
     # Tidy up extra blank lines left behind after removing the placeholders above.
     body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
+    # --------------------------------------------------------
+    # SAFETY NET: some providers still print the raw URL as plain
+    # text (e.g. in the signature) EVEN THOUGH it is also being
+    # rendered as a real QR image or a real button below. If we
+    # detect a standalone line that is exactly the suspicious_link,
+    # strip it — the model didn't follow the no-repeat instruction,
+    # but the UI shouldn't show the same link twice.
+    # --------------------------------------------------------
+    if (has_qr or has_link_button) and suspicious_link:
+        bare_link_pattern = re.escape(suspicious_link)
+        body_raw = re.sub(rf'^[ \t]*{bare_link_pattern}[ \t]*$\n?', '', body_raw, flags=re.MULTILINE)
+        body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
+
     # Legacy fallback: if neither a QR nor a link-button placeholder was found,
     # keep the original behaviour of appending the raw suspicious_link as text.
     if suspicious_link and suspicious_link not in body_raw and not has_qr and not has_link_button:
@@ -4175,7 +4188,7 @@ _UX_CONTRACT_AR = """
 
 تعليمات تنسيق إلزامية لعرض الواجهة (يجب الالتزام بها حرفيًا):
 - إذا كان ناقل الهجوم/الرسالة QR: اكتب داخل body هذه الصيغة فقط، مرة واحدة: [QR: نص قصير يوضح هدف المسح]
-  مثال: [QR: تأكيد تحديث الدخول] — لا تكرر أي رابط آخر بجانبها، وضع الرابط الفعلي فقط في حقل suspicious_link.
+  مثال: [QR: تأكيد تحديث الدخول] — لا تكرر أي رابط آخر بجانبها أو داخل التوقيع، وضع الرابط الفعلي فقط في حقل suspicious_link.
 - إذا كان هناك رابط يجب أن يظهر كزر واضح: اكتب داخل body هذه الصيغة فقط، مرة واحدة: [نص الزر](الرابط الكامل)
   مثال: [تحديث بياناتي الآن](https://...) — لا تكتب الرابط نفسه مرة ثانية كنص عادي بعدها في أي مكان من body.
 - لا تستخدم كلا الصيغتين معًا في نفس الرسالة إلا إذا كان السيناريو يتطلب صراحة QR ورابط منفصلين تمامًا.
@@ -4185,7 +4198,7 @@ _UX_CONTRACT_EN = """
 
 Mandatory rendering-format rules (follow literally):
 - If the vector is a QR code: write inside body ONLY this exact format, once: [QR: short label of the scan target]
-  e.g. [QR: Confirm login update] — do not also repeat a raw link next to it; put the real URL only in the suspicious_link field.
+  e.g. [QR: Confirm login update] — do not also repeat a raw link next to it OR inside the signature; put the real URL only in the suspicious_link field.
 - If a link should appear as a clear button: write inside body ONLY this exact format, once: [Button label](full URL)
   e.g. [Update My Details](https://...) — never print that same raw URL again anywhere else in body.
 - Do not use both formats together in the same message unless the scenario genuinely requires a separate QR and a separate link.
