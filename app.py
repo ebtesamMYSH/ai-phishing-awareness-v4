@@ -1697,7 +1697,7 @@ def generate_other_email(index, language, difficulty):
     role = "Other" if language != "Arabic" else "أخرى"
     is_ar = (language == "Arabic")
     last_issues = []
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             prompt = build_prompt(role, index, language) + build_retry_guidance(last_issues, is_ar)
             data = call_groq(prompt, max_tokens=2400)
@@ -1709,7 +1709,7 @@ def generate_other_email(index, language, difficulty):
                 result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
-            if not last_issues or attempt == 2:
+            if not last_issues or attempt == 1:
                 remember_generated_artifacts("other", "learn", result)
                 return result
         except Exception as e:
@@ -1722,7 +1722,7 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
     role = "Other" if language != "Arabic" else "أخرى"
     is_ar = (language == "Arabic")
     last_issues = []
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             prompt = build_assess_prompt(role, index, is_phishing, language) + build_retry_guidance(last_issues, is_ar)
             data = call_groq(prompt, max_tokens=2400)
@@ -1735,7 +1735,7 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
                 result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
-            if not last_issues or attempt == 2:
+            if not last_issues or attempt == 1:
                 remember_generated_artifacts("other", f"assess_{is_phishing}", result)
                 return result
         except Exception as e:
@@ -1751,7 +1751,7 @@ def generate_email(role, index, language, difficulty="medium"):
 
     is_ar = (language == "Arabic")
     last_issues = []
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             prompt = build_prompt(role, index, language) + build_retry_guidance(last_issues, is_ar)
             data = call_groq(prompt, max_tokens=2400)
@@ -1768,11 +1768,11 @@ def generate_email(role, index, language, difficulty="medium"):
                     result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
-            if not last_issues or attempt == 2:
+            if not last_issues or attempt == 1:
                 remember_generated_artifacts(role_type, "learn", result)
                 return result
         except json.JSONDecodeError as e:
-            if attempt == 2:
+            if attempt == 1:
                 return {"error": f"JSON parse error: {e}"}
             last_issues = [f"invalid JSON: {e}"]
         except Exception as e:
@@ -1788,7 +1788,7 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
 
     is_ar = (language == "Arabic")
     last_issues = []
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             prompt = build_assess_prompt(role, index, is_phishing, language) + build_retry_guidance(last_issues, is_ar)
             data = call_groq(prompt, max_tokens=2400)
@@ -1803,11 +1803,11 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
                     result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
-            if not last_issues or attempt == 2:
+            if not last_issues or attempt == 1:
                 remember_generated_artifacts(role_type, f"assess_{is_phishing}", result)
                 return result
         except json.JSONDecodeError:
-            if attempt == 2:
+            if attempt == 1:
                 return {"error": "Failed to parse. Please try again."}
             last_issues = ["invalid JSON"]
         except Exception as e:
@@ -1828,22 +1828,23 @@ def render_email_window(email, is_arabic, show_badges=False):
 
     # --------------------------------------------------------
     # NEW: detect a "[QR Code: label]" / "[QR: label]" placeholder
-    # inside the body and strip it out so we can render an actual
-    # scannable QR image below the email instead of literal
-    # bracket text that never looked like a real barcode.
+    # inside the body. Instead of deleting it, swap it for a unique
+    # token that stays exactly where the model put it — so the real
+    # QR image ends up rendered IN PLACE (not dumped at the very
+    # bottom after the signature).
     # --------------------------------------------------------
     qr_label, has_qr = "", False
     qr_match = re.search(r'\[\s*QR(?:\s*Code)?\s*:?\s*([^\]]*)\]', body_raw, re.I)
     if qr_match:
         has_qr = True
         qr_label = qr_match.group(1).strip()
-        body_raw = body_raw[:qr_match.start()] + body_raw[qr_match.end():]
+        body_raw = body_raw[:qr_match.start()] + "@@QR_TOKEN@@" + body_raw[qr_match.end():]
 
     # --------------------------------------------------------
     # NEW: detect a markdown-style "[Button label](https://...)"
-    # link inside the body and strip it out so we can render a
-    # real clickable button (same visual language as the
-    # attachment chip) instead of plain bracketed text.
+    # link inside the body. Same idea: swap for a token so the real
+    # clickable button renders IN PLACE of where the link was
+    # written, not always at the bottom of the email.
     # --------------------------------------------------------
     link_label, link_url, has_link_button = "", "", False
     link_match = re.search(r'\[([^\]]{1,80})\]\s*\(\s*(https?://[^\)\s]+)\s*\)', body_raw)
@@ -1851,7 +1852,7 @@ def render_email_window(email, is_arabic, show_badges=False):
         has_link_button = True
         link_label = link_match.group(1).strip()
         link_url   = link_match.group(2).strip()
-        body_raw   = body_raw[:link_match.start()] + body_raw[link_match.end():]
+        body_raw   = body_raw[:link_match.start()] + "@@LINK_TOKEN@@" + body_raw[link_match.end():]
 
     # Tidy up extra blank lines left behind after removing the placeholders above.
     body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
@@ -1956,6 +1957,25 @@ def render_email_window(email, is_arabic, show_badges=False):
   </a>
 </div>"""
 
+    # --------------------------------------------------------
+    # NEW: inject the QR image / link button INTO the body at the
+    # exact spot the model originally placed it (via the tokens
+    # above), instead of always dumping it after the signature.
+    # If, for any reason, the token didn't survive into body_html
+    # (e.g. the model wrote the placeholder oddly), fall back to
+    # appending the block at the end so it never gets silently lost.
+    # --------------------------------------------------------
+    if has_qr:
+        if "@@QR_TOKEN@@" in body_html:
+            body_html = body_html.replace("@@QR_TOKEN@@", qr_block_html)
+        else:
+            body_html += qr_block_html
+    if has_link_button:
+        if "@@LINK_TOKEN@@" in body_html:
+            body_html = body_html.replace("@@LINK_TOKEN@@", link_block_html)
+        else:
+            body_html += link_block_html
+
     from_val = html_lib.escape(email.get("from",""))
     to_val   = html_lib.escape(email.get("to","employee@hospital.org"))
     subj_val = html_lib.escape(email.get("subject",""))
@@ -2011,8 +2031,6 @@ def render_email_window(email, is_arabic, show_badges=False):
             line-height:2;direction:{bd};text-align:{ta};
             box-shadow:0 20px 60px rgba(0,0,0,.5);">
   {body_html}
-  {qr_block_html}
-  {link_block_html}
 </div>""", unsafe_allow_html=True)
 
 
@@ -3353,11 +3371,31 @@ def _choice_no_recent(items, memory_key, label_getter=lambda x: str(x)):
 
 def get_generation_plan(role_type, is_phishing=True, is_ar=False, phase="learn"):
     if is_phishing:
+        items = ATTACK_PLAYBOOK.get(role_type, ATTACK_PLAYBOOK["other"])
+        # --------------------------------------------------------
+        # NEW: cap QR-vector scenarios to AT MOST 1 within any
+        # rolling window of 6 learning picks (the QR vector kept
+        # appearing too often once we added more QR-themed
+        # diversity entries). Assessment (phase="assess") is left
+        # uncapped since that pool legitimately needs QR coverage
+        # too, just less repetitively within one learning session.
+        # --------------------------------------------------------
+        if phase == "learn":
+            qr_window_key = f"qr_window_{role_type}"
+            qr_window = st.session_state.get(qr_window_key, [])
+            if sum(qr_window[-6:]) >= 1:
+                non_qr_items = [x for x in items if "qr" not in x["vector"].lower()]
+                if non_qr_items:
+                    items = non_qr_items
         item = _choice_no_recent(
-            ATTACK_PLAYBOOK.get(role_type, ATTACK_PLAYBOOK["other"]),
+            items,
             f"plan_memory_{phase}_{role_type}_phish",
             lambda x: f"{x['attack']}|{x['vector']}|{x['persuasion']}"
         )
+        if phase == "learn":
+            qr_window = st.session_state.get(qr_window_key, [])
+            qr_window.append(1 if "qr" in item["vector"].lower() else 0)
+            st.session_state[qr_window_key] = qr_window[-6:]
         return {
             "attack_type": item["attack"],
             "scenario_seed": item["ar"] if is_ar else item["en"],
@@ -4094,12 +4132,15 @@ def _is_retryable_ai_error(data):
     return bool(_PROVIDER_RETRYABLE_PATTERNS.search(msg))
 
 def _compact_prompt_for_slow_provider(prompt):
-    """Shorten long prompts for Claude/Gemini without removing the JSON contract."""
-    if not isinstance(prompt, str) or len(prompt) < 3500:
+    """Shorten long prompts for the slower providers (Claude/OpenAI/Gemini)
+    without removing the JSON contract. Lowered the trigger length so this
+    kicks in more often — long prompts measurably add latency on these
+    providers, which was the main cause of ~30-60s waits per example."""
+    if not isinstance(prompt, str) or len(prompt) < 2600:
         return prompt
     # Preserve the most important parts: top task + JSON contract + final rules.
-    head = prompt[:2200]
-    tail = prompt[-1800:]
+    head = prompt[:1900]
+    tail = prompt[-1500:]
     return head + "\n\n[Prompt shortened: keep all rules above; avoid repetition; return valid JSON only.]\n\n" + tail
 
 def call_ai(prompt, max_tokens=1600):
@@ -4107,7 +4148,7 @@ def call_ai(prompt, max_tokens=1600):
     attempts = 3 if provider in {"gemini", "anthropic", "groq"} else 2
     last = None
     for attempt in range(attempts):
-        use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
+        use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic", "openai"} else prompt
         data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 2600 if provider in {"gemini", "anthropic"} else max_tokens))
         if not _is_retryable_ai_error(data):
             return data
@@ -4186,23 +4227,15 @@ _BASE_BUILD_ASSESS_PROMPT_UX = build_assess_prompt
 
 _UX_CONTRACT_AR = """
 
-تعليمات تنسيق إلزامية لعرض الواجهة (يجب الالتزام بها حرفيًا):
-- إذا كان ناقل الهجوم/الرسالة QR: اكتب داخل body هذه الصيغة فقط، مرة واحدة: [QR: نص قصير يوضح هدف المسح]
-  مثال: [QR: تأكيد تحديث الدخول] — لا تكرر أي رابط آخر بجانبها أو داخل التوقيع، وضع الرابط الفعلي فقط في حقل suspicious_link.
-- إذا كان هناك رابط يجب أن يظهر كزر واضح: اكتب داخل body هذه الصيغة فقط، مرة واحدة: [نص الزر](الرابط الكامل)
-  مثال: [تحديث بياناتي الآن](https://...) — لا تكتب الرابط نفسه مرة ثانية كنص عادي بعدها في أي مكان من body.
-- لا تستخدم كلا الصيغتين معًا في نفس الرسالة إلا إذا كان السيناريو يتطلب صراحة QR ورابط منفصلين تمامًا.
-- اجعل صياغة الرسالة بالكامل (التحية، الجسم، التوقيع) تقرأ كبريد احترافي حقيقي 100%: تفاصيل دقيقة وملموسة، توقيع واضح، بدون حشو أو عبارات تدريبية عامة.
+تنسيق إلزامي: QR → اكتب مرة واحدة فقط [QR: نص قصير]، والرابط الفعلي في suspicious_link فقط لا تكرره بالنص أو التوقيع.
+زر → اكتب مرة واحدة فقط [نص الزر](الرابط)، ولا تكرر الرابط بعدها.
+اجعل الصياغة كاملة تقرأ كبريد احترافي حقيقي، لا حشو تدريبي.
 """
 _UX_CONTRACT_EN = """
 
-Mandatory rendering-format rules (follow literally):
-- If the vector is a QR code: write inside body ONLY this exact format, once: [QR: short label of the scan target]
-  e.g. [QR: Confirm login update] — do not also repeat a raw link next to it OR inside the signature; put the real URL only in the suspicious_link field.
-- If a link should appear as a clear button: write inside body ONLY this exact format, once: [Button label](full URL)
-  e.g. [Update My Details](https://...) — never print that same raw URL again anywhere else in body.
-- Do not use both formats together in the same message unless the scenario genuinely requires a separate QR and a separate link.
-- Write the entire message (greeting, body, signature) so it reads like a genuinely professional, real-world email: concrete specific details, a clear signature, no filler or generic-sounding training phrasing.
+Mandatory format: QR -> write ONCE [QR: short label]; real URL only in suspicious_link, never repeated in body/signature.
+Button -> write ONCE [Button label](url); never print that URL again afterward.
+Write the whole message like a real professional email, no generic training filler.
 """
 
 def build_prompt(role, index, language):
