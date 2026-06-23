@@ -3671,6 +3671,261 @@ Hard rules:
 - Arabic and English must have equal depth and quality.
 """.strip()
 
+
+
+# =============================================================
+# STUDY 3 — FINAL 12-NOTE CONTENT OVERRIDE
+# -------------------------------------------------------------
+# Implements the final review notes collected from the five stages:
+# 1) Tie the AI analysis directly to the generated attack type.
+# 2) Keep Beginner / Intermediate / Advanced visibly different.
+# 3) Keep assessment content aligned with the selected difficulty.
+# 4) Improve Arabic and English parity.
+# 5) Avoid repeated fixed templates and repeated example slots.
+# 6) Diversify attack vectors: link, attachment, QR, reply, MFA/OTP, phone, shared document.
+# 7) Diversify senders, recipients, departments, domains, and scenarios.
+# 8) Do not over-focus analysis on Domain/Urgency/Spelling.
+# 9) Prioritize sensitive requests and role-context risk in the analysis.
+# 10) Keep legitimate assessment emails safe and clearly official.
+# 11) Keep advanced phishing realistic and less obvious.
+# 12) Reduce provider friction by using strict JSON, concise outputs, retries, and quality checks.
+# =============================================================
+
+ROLE_ATTACK_HINTS = {
+    "clinical": "patient safety, EMR access, clinical workflow, handover, lab/radiology/pharmacy systems, or patient-data confidentiality",
+    "admin": "billing, insurance, HR, procurement, patient-file administration, supplier payments, or executive workflow",
+    "it": "network access, server administration, MFA, VPN, backups, security policy, identity management, or system availability",
+    "other": "a realistic hospital workflow matching the selected mixed-role scenario",
+}
+
+ROLE_ATTACK_HINTS_AR = {
+    "clinical": "سلامة المرضى، الوصول للسجلات الطبية، سير العمل السريري، التسليم، المختبر/الأشعة/الصيدلية، أو سرية بيانات المرضى",
+    "admin": "الفوترة، التأمين، الموارد البشرية، المشتريات، ملفات المرضى، مدفوعات الموردين، أو سير العمل الإداري",
+    "it": "وصول الشبكة، إدارة الخوادم، MFA، VPN، النسخ الاحتياطي، سياسات الأمن، إدارة الهوية، أو استمرارية الأنظمة",
+    "other": "سير عمل مستشفى واقعي مطابق للسيناريو المختلط المختار",
+}
+
+ATTACK_ANALYSIS_PRIORITIES = [
+    (r"OTP|MFA|رمز|مصادقة", "MFA / OTP Abuse", "طلب رمز تحقق أو اعتماد MFA"),
+    (r"password|credential|login|username|IBAN|bank|كلمة مرور|بيانات الدخول|اسم المستخدم|آيبان|حساب بنكي", "Credential / Sensitive Data Request", "طلب بيانات دخول أو بيانات حساسة"),
+    (r"invoice|payment|supplier|SAR|فاتورة|دفع|مورد|ريال", "Invoice / Payment Fraud", "احتيال فاتورة أو دفع"),
+    (r"QR|رمز QR|scan", "QR Phishing", "تصيد عبر رمز QR"),
+    (r"\.pdf|\.docx|\.xlsx|attachment|attached|مرفق|ملف", "Attachment-Based Attack", "هجوم عبر مرفق"),
+    (r"reply|respond|send me|رد|أرسل", "Reply-Based Social Engineering", "هندسة اجتماعية عبر الرد"),
+    (r"call|phone|extension|اتصل|هاتف|تحويلة", "Phone / Callback Phishing", "تصيد عبر اتصال أو رقم بديل"),
+    (r"shared|document|drive|portal|مستند|مشترك|بوابة", "Cloud / Portal Phishing", "تصيد عبر مستند أو بوابة"),
+]
+
+def infer_attack_type_from_content(result, is_ar=False):
+    combined = " ".join(str(result.get(k, "")) for k in ["email_type", "attack_type", "subject", "attachment", "body", "suspicious_text", "suspicious_link"])
+    for pattern, en, ar in ATTACK_ANALYSIS_PRIORITIES:
+        if re.search(pattern, combined, re.I):
+            return ar if is_ar else en
+    existing = result.get("attack_type") or result.get("email_type")
+    return existing or ("تصيد موجه" if is_ar else "Spear Phishing")
+
+def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
+    """Post-processes model output so analysis is tied to the attack type and role context."""
+    if not isinstance(result, dict):
+        return result
+    attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
+    result["attack_type"] = attack_type
+    if not result.get("email_type"):
+        result["email_type"] = attack_type
+    risk = result.get("risk_level") or ("Medium" if difficulty == "medium" else ("High" if difficulty == "hard" else "Low"))
+    result["risk_level"] = risk
+    role_hint = (ROLE_ATTACK_HINTS_AR if is_ar else ROLE_ATTACK_HINTS).get(role_type, ROLE_ATTACK_HINTS["other"])
+
+    indicators = result.get("indicators")
+    if not isinstance(indicators, list):
+        indicators = []
+    while len(indicators) < 3:
+        indicators.append({"number": len(indicators)+1, "title": "", "description": ""})
+
+    # Indicator 1 must connect the attack type to the risky action.
+    if is_ar:
+        indicators[0] = {
+            "number": 1,
+            "title": f"نوع الهجوم: {attack_type}",
+            "description": f"الخطر الأساسي هنا مرتبط بـ {attack_type} داخل سياق {role_hint}."
+        }
+        if not indicators[1].get("title") or re.search(r"النطاق|Domain", indicators[1].get("title", ""), re.I):
+            indicators[1] = {"number": 2, "title": "طلب أو سلوك غير معتاد", "description": "الرسالة تطلب إجراءً لا يتم عادة عبر بريد عادي في بيئة المستشفى."}
+        if not indicators[2].get("title") or re.search(r"إملاء|Spelling", indicators[2].get("title", ""), re.I):
+            indicators[2] = {"number": 3, "title": "عدم توافق السياق أو القناة", "description": "القناة أو المرسل لا يطابقان طريقة التعامل الرسمية مع هذا النوع من الطلبات."}
+        wr = result.get("why_risky", "").strip()
+        if attack_type not in wr:
+            wr = f"هذه رسالة {attack_type} بمستوى خطورة {risk}. " + (wr or f"قد تؤثر على {role_hint} إذا تم تنفيذ الطلب دون تحقق.")
+        result["why_risky"] = wr
+        tip = result.get("learning_tip", "").strip()
+        if not tip:
+            tip = "تحقق من الطلب عبر قناة المستشفى الرسمية قبل فتح رابط أو مرفق أو مشاركة أي بيانات."
+        result["learning_tip"] = tip
+    else:
+        indicators[0] = {
+            "number": 1,
+            "title": f"Attack Type: {attack_type}",
+            "description": f"The main risk is {attack_type} in a hospital role involving {role_hint}."
+        }
+        if not indicators[1].get("title") or re.search(r"Domain", indicators[1].get("title", ""), re.I):
+            indicators[1] = {"number": 2, "title": "Unusual request or workflow", "description": "The message asks for an action that should normally use an official hospital channel."}
+        if not indicators[2].get("title") or re.search(r"Spelling", indicators[2].get("title", ""), re.I):
+            indicators[2] = {"number": 3, "title": "Role-context or channel mismatch", "description": "The sender or channel does not match how this workplace process should be handled."}
+        wr = result.get("why_risky", "").strip()
+        if attack_type not in wr:
+            wr = f"This is a {attack_type} email with a {risk} risk level. " + (wr or f"It can affect {role_hint} if the recipient acts without verification.")
+        result["why_risky"] = wr
+        tip = result.get("learning_tip", "").strip()
+        if not tip:
+            tip = "Verify the request through an official hospital channel before opening links, attachments, QR codes, or sharing data."
+        result["learning_tip"] = tip
+
+    # Keep exactly three indicators and correct numbering.
+    result["indicators"] = [{**indicators[i], "number": i+1} for i in range(3)]
+    return result
+
+def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar=False):
+    """Keeps assessment focused on email content + difficulty, without adding learning-analysis sections."""
+    if not isinstance(result, dict):
+        return result
+    result["is_phishing"] = bool(is_phishing)
+    if is_phishing:
+        result["attack_type"] = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
+        explanation = result.get("explanation", "").strip()
+        attack_type = result["attack_type"]
+        if attack_type and attack_type not in explanation:
+            prefix = (f"التصنيف تصيد لأن نوع الهجوم هو {attack_type}. " if is_ar else f"This is phishing because the attack type is {attack_type}. ")
+            result["explanation"] = prefix + explanation
+    else:
+        result["attack_type"] = "Legitimate"
+        # A legitimate assessment item must stay clean.
+        result["suspicious_text"] = ""
+        result["suspicious_link"] = ""
+    return result
+
+# Stronger difficulty contract: short, provider-friendly, and visibly different.
+def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
+    if is_ar:
+        if is_phishing:
+            return {
+                "easy": "مبتدئ: تصيد واضح جدًا. تحية عامة، نطاق مزيف مكشوف، طلب بيانات حساس مباشر، رابط واضح أو مرفق مشبوه، تهديد مباشر، ويمكن وجود خطأين فقط.",
+                "medium": "متوسط: تصيد مقنع جزئيًا. تفاصيل عمل واقعية، تحية شبه شخصية، إلحاح مهني خفيف 24-72 ساعة، مؤشران واضحان فقط، ولا تستخدم تهديدًا مبالغًا أو كلمات إنجليزية كثيرة.",
+                "hard": "متقدم: تصيد قريب من الشرعي. تحية شخصية، لا أخطاء إملائية، لا تهديد مباشر، لا طلب كلمة مرور صريح، استخدم سياقًا داخليًا واقعيًا وناقلًا غير واضح مثل مرفق/QR/MFA/رد/مستند مشترك/مكالمة."
+            }.get(difficulty, "متوسط")
+        return {
+            "easy": "شرعي مبتدئ: رسمي وواضح من hospital.org أو moh.gov.sa، لا رابط خارجي، لا بيانات حساسة، لا تهديد.",
+            "medium": "شرعي متوسط: رسمي مع تفاصيل عمل واقعية وموعد طبيعي، قد يذكر الإنترانت أو التحويلة، دون طلب بيانات حساسة.",
+            "hard": "شرعي متقدم: يبدو مهمًا ومهنيًا لكنه آمن؛ نطاق رسمي، تفاصيل دقيقة، لا رابط مشبوه، لا تهديد، لا بيانات دخول."
+        }.get(difficulty, "شرعي متوسط")
+    if is_phishing:
+        return {
+            "easy": "Beginner: obvious phishing. Generic greeting, obvious fake domain, direct sensitive request, clear link or risky attachment, direct threat, and at most two spelling mistakes.",
+            "medium": "Intermediate: partly convincing phishing. Realistic workplace detail, semi-personal greeting, mild professional urgency of 24-72 hours, only two clear red flags, no extreme threat or heavy all-caps.",
+            "hard": "Advanced: near-legitimate phishing. Personalized greeting, no spelling mistakes, no direct password request, no blunt threat, and a subtle vector such as attachment, QR, MFA, reply, shared document, phone callback, or contextual portal."
+        }.get(difficulty, "Intermediate")
+    return {
+        "easy": "Legitimate Beginner: official hospital.org or moh.gov.sa only, simple safe purpose, no external link, no sensitive request, no threat.",
+        "medium": "Legitimate Intermediate: official domain, realistic workplace detail, normal deadline or intranet/extension reference, no credentials/payment request.",
+        "hard": "Legitimate Advanced: important and detailed but safe; official domain, no suspicious external link, no sensitive-data request, no threat."
+    }.get(difficulty, "Legitimate Intermediate")
+
+# Tighten prompts once more so providers know the analysis must mention the attack type.
+_OLD_BUILD_PROMPT_STUDY3 = build_prompt
+_OLD_BUILD_ASSESS_PROMPT_STUDY3 = build_assess_prompt
+
+def build_prompt(role, index, language):
+    base = _OLD_BUILD_PROMPT_STUDY3(role, index, language)
+    is_ar = (language == "Arabic")
+    extra = """
+
+قاعدة نهائية مهمة:
+- يجب أن يرتبط التحليل مباشرة بنوع الهجوم المكتوب في attack_type.
+- أول مؤشر في indicators يجب أن يبدأ بنوع الهجوم، وليس النطاق دائمًا.
+- اربط كل سبب بسياق الدور الوظيفي والمستشفى.
+- لا تجعل التحليل أطول من اللازم.
+""" if is_ar else """
+
+Final important rule:
+- The AI analysis must directly connect to the attack_type field.
+- The first indicator must start from the attack type, not always the domain.
+- Link each reason to the role context and hospital workflow.
+- Keep the analysis concise.
+"""
+    return base + extra
+
+def build_assess_prompt(role, index, is_phishing, language):
+    base = _OLD_BUILD_ASSESS_PROMPT_STUDY3(role, index, is_phishing, language)
+    is_ar = (language == "Arabic")
+    extra = """
+
+قاعدة الاختبار النهائية:
+- ركّز فقط على محتوى البريد وتصنيفه وصعوبته.
+- لا تضف تحليل تعليمي طويل داخل سؤال الاختبار.
+- يجب أن يكون البريد مناسبًا تمامًا لمستوى الصعوبة المختار.
+""" if is_ar else """
+
+Final assessment rule:
+- Focus only on the email content, correct label, and selected difficulty.
+- Do not add long learning analysis inside assessment questions.
+- The email must clearly fit the selected difficulty level.
+"""
+    return base + extra
+
+# Override generators to apply the final normalization after each provider response.
+_OLD_GENERATE_EMAIL_STUDY3 = generate_email
+_OLD_GENERATE_ASSESS_EMAIL_STUDY3 = generate_assess_email
+_OLD_GENERATE_OTHER_EMAIL_STUDY3 = generate_other_email
+_OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3 = generate_other_assess_email
+
+def generate_email(role, index, language, difficulty="medium"):
+    result = _OLD_GENERATE_EMAIL_STUDY3(role, index, language, difficulty)
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    if isinstance(result, dict) and "error" not in result:
+        result = normalize_learning_analysis(result, role_type, difficulty, language == "Arabic")
+    return result
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    result = _OLD_GENERATE_ASSESS_EMAIL_STUDY3(role, index, is_phishing, language, difficulty)
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    if isinstance(result, dict) and "error" not in result:
+        result = normalize_assessment_email(result, role_type, difficulty, is_phishing, language == "Arabic")
+    return result
+
+def generate_other_email(index, language, difficulty):
+    result = _OLD_GENERATE_OTHER_EMAIL_STUDY3(index, language, difficulty)
+    if isinstance(result, dict) and "error" not in result:
+        result = normalize_learning_analysis(result, "other", difficulty, language == "Arabic")
+    return result
+
+def generate_other_assess_email(index, is_phishing, language, difficulty):
+    result = _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3(index, is_phishing, language, difficulty)
+    if isinstance(result, dict) and "error" not in result:
+        result = normalize_assessment_email(result, "other", difficulty, is_phishing, language == "Arabic")
+    return result
+
+# Make the final system prompt shorter and more explicit for all providers.
+def get_system_prompt():
+    difficulty = st.session_state.get("difficulty", "medium")
+    role = st.session_state.get("role", "Clinical")
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    _, _, role_type = role_info
+    role_context = get_role_unbounded_context(role_type, False)
+    return f"""
+You are a safe cybersecurity training content generator for a Saudi healthcare phishing-awareness study.
+Role context: {role_context}
+Difficulty: {difficulty}.
+Return valid JSON only. No markdown.
+Learning emails must include attack_type, risk_level, indicators, why_risky, and learning_tip.
+Assessment emails must stay concise and contain only the assessment JSON fields.
+Phishing content must be simulated, educational, and use invented non-real domains.
+Legitimate content must use hospital.org or moh.gov.sa only and must not request credentials, payment, MFA, OTP, bank details, or urgent account verification.
+Beginner, Intermediate, and Advanced must be visibly different.
+Analysis must mention the attack type and role-context risk, not only Domain/Urgency/Spelling.
+Arabic and English must have equal depth and quality.
+""".strip()
+
 # =============================================================
 # END FINAL DIVERSITY + DIFFICULTY OVERRIDE
 # =============================================================
