@@ -74,6 +74,7 @@ import os
 import re
 import html as html_lib
 import random
+import urllib.parse
 
 st.set_page_config(
     page_title="AI Phishing Awareness",
@@ -1825,7 +1826,39 @@ def render_email_window(email, is_arabic, show_badges=False):
     body_raw = re.sub(r'suspicious_link\s*:\s*', '', body_raw, flags=re.IGNORECASE)
     body_raw = re.sub(r'suspicious_text\s*:\s*', '', body_raw, flags=re.IGNORECASE)
 
-    if suspicious_link and suspicious_link not in body_raw:
+    # --------------------------------------------------------
+    # NEW: detect a "[QR Code: label]" / "[QR: label]" placeholder
+    # inside the body and strip it out so we can render an actual
+    # scannable QR image below the email instead of literal
+    # bracket text that never looked like a real barcode.
+    # --------------------------------------------------------
+    qr_label, has_qr = "", False
+    qr_match = re.search(r'\[\s*QR(?:\s*Code)?\s*:?\s*([^\]]*)\]', body_raw, re.I)
+    if qr_match:
+        has_qr = True
+        qr_label = qr_match.group(1).strip()
+        body_raw = body_raw[:qr_match.start()] + body_raw[qr_match.end():]
+
+    # --------------------------------------------------------
+    # NEW: detect a markdown-style "[Button label](https://...)"
+    # link inside the body and strip it out so we can render a
+    # real clickable button (same visual language as the
+    # attachment chip) instead of plain bracketed text.
+    # --------------------------------------------------------
+    link_label, link_url, has_link_button = "", "", False
+    link_match = re.search(r'\[([^\]]{1,80})\]\s*\(\s*(https?://[^\)\s]+)\s*\)', body_raw)
+    if link_match:
+        has_link_button = True
+        link_label = link_match.group(1).strip()
+        link_url   = link_match.group(2).strip()
+        body_raw   = body_raw[:link_match.start()] + body_raw[link_match.end():]
+
+    # Tidy up extra blank lines left behind after removing the placeholders above.
+    body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
+
+    # Legacy fallback: if neither a QR nor a link-button placeholder was found,
+    # keep the original behaviour of appending the raw suspicious_link as text.
+    if suspicious_link and suspicious_link not in body_raw and not has_qr and not has_link_button:
         link_bare = re.sub(r'^https?://', '', suspicious_link)
         if link_bare not in body_raw:
             body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
@@ -1855,7 +1888,9 @@ def render_email_window(email, is_arabic, show_badges=False):
 
         if suspicious_link:
             safe_l = html_lib.escape(suspicious_link)
-            if safe_l in body_html:
+            if has_qr or has_link_button:
+                pass  # rendered as a real QR image / real button below instead
+            elif safe_l in body_html:
                 b = next_badge()
                 body_html = body_html.replace(safe_l,
                     f'<span style="border:2px solid rgba(239,68,68,.6);border-radius:6px;'
@@ -1869,6 +1904,44 @@ def render_email_window(email, is_arabic, show_badges=False):
                               f'{make_badge(b)}{html_lib.escape(suspicious_link)}</span>')
 
     body_html = body_html.replace("\n","<br>")
+
+    # --------------------------------------------------------
+    # NEW: real, scannable QR-code image (rendered after body text).
+    # Uses the suspicious_link (or the button URL, as a fallback) as
+    # the QR payload so the badge/number still points to a real risk.
+    # --------------------------------------------------------
+    qr_block_html = ""
+    if has_qr:
+        qr_data    = suspicious_link or link_url or "https://example-training-only.invalid/qr"
+        qr_img_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(qr_data, safe='')}"
+        qr_badge   = make_badge(next_badge()) if show_badges else ""
+        qr_caption = html_lib.escape(qr_label) if qr_label else t("Scan with your phone","امسح بهاتفك")
+        qr_block_html = f"""
+<div style="margin:1rem 0;display:flex;align-items:center;gap:.8rem;direction:{bd};flex-wrap:wrap;">
+  {qr_badge}
+  <div style="background:#ffffff;padding:8px;border-radius:10px;border:2px solid rgba(239,68,68,.55);display:inline-block;line-height:0;">
+    <img src="{qr_img_url}" width="120" height="120" alt="QR code" style="display:block;border-radius:2px;"/>
+  </div>
+  <div style="color:#94A3B8;font-size:.85rem;">{qr_caption}</div>
+</div>"""
+
+    # --------------------------------------------------------
+    # NEW: a real clickable link "button" — same visual language as
+    # the attachment chip — instead of leaving "[Label] (url)" as
+    # inert bracketed text.
+    # --------------------------------------------------------
+    link_block_html = ""
+    if has_link_button:
+        link_badge = make_badge(next_badge()) if show_badges else ""
+        link_block_html = f"""
+<div style="margin:.8rem 0;direction:{bd};">
+  <a href="{html_lib.escape(link_url)}" target="_blank" rel="noopener"
+     style="display:inline-flex;align-items:center;gap:.5rem;border:1px solid rgba(37,99,235,.55);
+            border-radius:8px;padding:.5rem 1.1rem;background:rgba(37,99,235,.18);color:#93C5FD;
+            font-size:.92rem;font-weight:700;text-decoration:none;">
+    {link_badge}🔗 {html_lib.escape(link_label)}
+  </a>
+</div>"""
 
     from_val = html_lib.escape(email.get("from",""))
     to_val   = html_lib.escape(email.get("to","employee@hospital.org"))
@@ -1925,6 +1998,8 @@ def render_email_window(email, is_arabic, show_badges=False):
             line-height:2;direction:{bd};text-align:{ta};
             box-shadow:0 20px 60px rgba(0,0,0,.5);">
   {body_html}
+  {qr_block_html}
+  {link_block_html}
 </div>""", unsafe_allow_html=True)
 
 
@@ -3208,6 +3283,50 @@ LEGITIMATE_PLAYBOOK = {
     ]
 }
 
+# =============================================================
+# DIVERSITY EXPANSION — non-classic lure themes
+# -------------------------------------------------------------
+# EN: Added to EVERY role so learning/assessment examples are not
+# always "IT/security"-flavoured. These are realistic lure types
+# hospital staff actually receive: MOH-style public offers,
+# restaurant/cafe staff discounts, prize/ad campaigns, and
+# bank/telecom partner promos — used both as phishing pretexts and
+# as safe legitimate look-alikes.
+# AR: تُضاف لكل الأدوار حتى لا تكون الأمثلة دومًا بنكهة "تقنية/أمنية".
+# هذه أنواع طُعم واقعية يستقبلها الموظفون فعليًا: عروض شبيهة بوزارة
+# الصحة، خصومات موظفين بمطاعم/كوفيهات، حملات جوائز/إعلانات، وعروض
+# شراكة بنكية/اتصالات — تُستخدم كذريعة تصيد وكذلك كرسائل شرعية آمنة.
+# =============================================================
+_EXTRA_ATTACK_THEMES = [
+    {"attack": "Fake Government/MOH Offer", "vector": "benefits or wellness program link",
+     "persuasion": "limited-time government benefit",
+     "en": "MOH wellness program enrollment", "ar": "التسجيل في برنامج العافية بوزارة الصحة"},
+    {"attack": "Restaurant/Retail Voucher Scam", "vector": "discount voucher link or QR",
+     "persuasion": "exclusive staff discount",
+     "en": "exclusive staff discount at a partner restaurant/cafe", "ar": "خصم حصري للموظفين في مطعم/كوفي شريك"},
+    {"attack": "Prize/Reward Ad Scam", "vector": "promotional ad link or attachment",
+     "persuasion": "limited-time prize or reward",
+     "en": "hospital anniversary prize draw", "ar": "سحب جوائز بمناسبة ذكرى تأسيس المستشفى"},
+    {"attack": "Telecom/Bank Promo Scam", "vector": "promotional offer link",
+     "persuasion": "too-good-to-be-true financial offer",
+     "en": "telecom/bank partnership offer for staff", "ar": "عرض شراكة بنكية/اتصالات للموظفين"},
+]
+_EXTRA_LEGIT_THEMES = [
+    {"en": "official MOH public-health awareness bulletin", "ar": "نشرة توعوية صحية رسمية من وزارة الصحة",
+     "sender": "Ministry of Health Communications"},
+    {"en": "hospital cafeteria new menu / Ramadan timing notice", "ar": "إشعار قائمة الكافيتيريا الجديدة / مواعيد رمضان",
+     "sender": "Hospital Facilities"},
+    {"en": "staff wellness day announcement", "ar": "إعلان يوم العافية للموظفين",
+     "sender": "HR Wellness Office"},
+    {"en": "National Day / public holiday schedule notice", "ar": "إشعار جدول اليوم الوطني / العطلة الرسمية",
+     "sender": "Hospital Administration"},
+]
+for _rt in list(ATTACK_PLAYBOOK.keys()):
+    ATTACK_PLAYBOOK[_rt] = ATTACK_PLAYBOOK[_rt] + _EXTRA_ATTACK_THEMES
+for _rt in list(LEGITIMATE_PLAYBOOK.keys()):
+    LEGITIMATE_PLAYBOOK[_rt] = LEGITIMATE_PLAYBOOK[_rt] + _EXTRA_LEGIT_THEMES
+
+
 def _choice_no_recent(items, memory_key, label_getter=lambda x: str(x)):
     recent = st.session_state.get(memory_key, [])
     pool = [x for x in items if label_getter(x) not in recent]
@@ -4031,6 +4150,58 @@ Final assessment instructions:
 - If legitimate: no external links, no threats, no sensitive requests, and no unofficial domain.
 - If phishing: red flags must match the difficulty; Advanced must not look Beginner-level obvious.
 """
+
+# =============================================================
+# UX REALISM PATCH — QR/link rendering contract + professional tone
+# -------------------------------------------------------------
+# EN: Adds two things on top of every previous prompt layer:
+#  1) A strict, render-friendly contract for how a QR code and a
+#     clickable link must be written inside `body`, so the UI can
+#     turn them into a REAL scannable QR image / a REAL clickable
+#     button instead of literal bracket text like "[QR Code: ...]".
+#  2) An instruction to make the wording read like a genuinely
+#     professional, polished email — not generic training copy.
+# AR: تضيف طبقتين فوق كل طبقات التعليمات السابقة:
+#  1) صيغة ثابتة وصارمة لكتابة رمز QR والرابط داخل body، حتى تقدر
+#     الواجهة تحوّلها لصورة QR فعلية قابلة للمسح / زر فعلي قابل
+#     للنقر، بدل نص بين أقواس لا يظهر كباركود حقيقي.
+#  2) تعليمة لجعل صياغة الرسالة تقرأ كبريد احترافي حقيقي، وليس
+#     نصًا تدريبيًا عامًا.
+# =============================================================
+_BASE_BUILD_PROMPT_UX = build_prompt
+_BASE_BUILD_ASSESS_PROMPT_UX = build_assess_prompt
+
+_UX_CONTRACT_AR = """
+
+تعليمات تنسيق إلزامية لعرض الواجهة (يجب الالتزام بها حرفيًا):
+- إذا كان ناقل الهجوم/الرسالة QR: اكتب داخل body هذه الصيغة فقط، مرة واحدة: [QR: نص قصير يوضح هدف المسح]
+  مثال: [QR: تأكيد تحديث الدخول] — لا تكرر أي رابط آخر بجانبها، وضع الرابط الفعلي فقط في حقل suspicious_link.
+- إذا كان هناك رابط يجب أن يظهر كزر واضح: اكتب داخل body هذه الصيغة فقط، مرة واحدة: [نص الزر](الرابط الكامل)
+  مثال: [تحديث بياناتي الآن](https://...) — لا تكتب الرابط نفسه مرة ثانية كنص عادي بعدها في أي مكان من body.
+- لا تستخدم كلا الصيغتين معًا في نفس الرسالة إلا إذا كان السيناريو يتطلب صراحة QR ورابط منفصلين تمامًا.
+- اجعل صياغة الرسالة بالكامل (التحية، الجسم، التوقيع) تقرأ كبريد احترافي حقيقي 100%: تفاصيل دقيقة وملموسة، توقيع واضح، بدون حشو أو عبارات تدريبية عامة.
+"""
+_UX_CONTRACT_EN = """
+
+Mandatory rendering-format rules (follow literally):
+- If the vector is a QR code: write inside body ONLY this exact format, once: [QR: short label of the scan target]
+  e.g. [QR: Confirm login update] — do not also repeat a raw link next to it; put the real URL only in the suspicious_link field.
+- If a link should appear as a clear button: write inside body ONLY this exact format, once: [Button label](full URL)
+  e.g. [Update My Details](https://...) — never print that same raw URL again anywhere else in body.
+- Do not use both formats together in the same message unless the scenario genuinely requires a separate QR and a separate link.
+- Write the entire message (greeting, body, signature) so it reads like a genuinely professional, real-world email: concrete specific details, a clear signature, no filler or generic-sounding training phrasing.
+"""
+
+def build_prompt(role, index, language):
+    base = _BASE_BUILD_PROMPT_UX(role, index, language)
+    return base + (_UX_CONTRACT_AR if language == "Arabic" else _UX_CONTRACT_EN)
+
+def build_assess_prompt(role, index, is_phishing, language):
+    base = _BASE_BUILD_ASSESS_PROMPT_UX(role, index, is_phishing, language)
+    return base + (_UX_CONTRACT_AR if language == "Arabic" else _UX_CONTRACT_EN)
+# =============================================================
+# END UX REALISM PATCH
+# =============================================================
 
 _BAD_INDICATOR_TITLES = re.compile(
     r"^(different behavioral or technical clue|third different clue|indicator\s*\d+|مؤشر\s*\d+|مؤشر ثالث|مؤشر سلوكي أو تقني مختلف)$",
