@@ -79,7 +79,15 @@ from io import BytesIO
 try:
     import qrcode
 except Exception:
-    qrcode = None
+    # Streamlit Cloud may not have qrcode/Pillow installed if no requirements.txt is used.
+    # Install it once at runtime so QR examples render as real scannable QR images
+    # instead of a text fallback box.
+    try:
+        import sys, subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "qrcode[pil]", "-q"])
+        import qrcode
+    except Exception:
+        qrcode = None
 
 st.set_page_config(
     page_title="AI Phishing Awareness",
@@ -1927,6 +1935,7 @@ def render_email_window(email, is_arabic, show_badges=False):
             r'\[\s*QR\s*Code\s*\]',
             r'\[\s*صورة\s*رمز\s*QR\s*\]',
             r'\[\s*رمز\s*QR\s*\]',
+            r'\[\s*(?:▦|□)?\s*QR\s*Code(?:\s*<br>.*?|.*?)?\s*\]',
             r'QR\s*Code\s*Image',
         ]
         replaced_qr = False
@@ -3257,6 +3266,7 @@ ATTACK_PLAYBOOK = {
         {"attack":"Spear Phishing", "vector":"contextual link or reply", "persuasion":"personalized prior meeting", "en":"follow-up to department meeting", "ar":"متابعة لاجتماع القسم"},
         {"attack":"Legitimate-Looking Compliance Phish", "vector":"policy acknowledgement", "persuasion":"compliance", "en":"infection-control acknowledgement", "ar":"إقرار مكافحة العدوى"},
         {"attack":"Cloud Document Scam", "vector":"shared document", "persuasion":"collaboration", "en":"shared clinical handover document", "ar":"مستند تسليم سريري مشترك"},
+        {"attack":"Employee Discount / Promotional Offer Phish", "vector":"promotional link or coupon portal", "persuasion":"exclusive healthcare-staff benefit", "en":"exclusive healthcare employee discount offer", "ar":"عرض خصم حصري لموظفي الصحة"},
     ],
     "admin": [
         {"attack":"Invoice Fraud", "vector":"invoice attachment or portal", "persuasion":"payment deadline", "en":"supplier invoice approval", "ar":"اعتماد فاتورة مورد"},
@@ -3267,6 +3277,7 @@ ATTACK_PLAYBOOK = {
         {"attack":"Shared Document Scam", "vector":"document share", "persuasion":"administrative process", "en":"shared patient-files report", "ar":"تقرير ملفات مرضى مشترك"},
         {"attack":"Insurance Portal Phish", "vector":"coverage verification", "persuasion":"claim processing", "en":"insurance claim validation", "ar":"التحقق من مطالبة تأمين"},
         {"attack":"Meeting Invitation Scam", "vector":"calendar attachment/link", "persuasion":"routine meeting", "en":"accreditation review meeting", "ar":"اجتماع مراجعة الاعتماد"},
+        {"attack":"Employee Discount / Promotional Offer Phish", "vector":"promotional link or coupon portal", "persuasion":"exclusive employee reward", "en":"healthcare staff restaurant/course/shopping discount", "ar":"خصم مطعم أو دورة أو قسيمة تسوق لموظفي الصحة"},
     ],
     "it": [
         {"attack":"Credential Harvesting", "vector":"admin portal", "persuasion":"service continuity", "en":"network access review", "ar":"مراجعة وصول الشبكة"},
@@ -3277,11 +3288,13 @@ ATTACK_PLAYBOOK = {
         {"attack":"Cloud Backup Scam", "vector":"cloud console link", "persuasion":"data protection", "en":"cloud backup access review", "ar":"مراجعة وصول النسخ السحابي"},
         {"attack":"QR Phishing", "vector":"QR enrollment", "persuasion":"device enrollment", "en":"device compliance QR", "ar":"رمز امتثال الجهاز"},
         {"attack":"Spear Phishing", "vector":"contextual reply/link", "persuasion":"known incident follow-up", "en":"follow-up to outage ticket", "ar":"متابعة تذكرة عطل"},
+        {"attack":"Employee Discount / Promotional Offer Phish", "vector":"promotional link or coupon portal", "persuasion":"exclusive staff benefit", "en":"discounted cybersecurity course or employee device offer", "ar":"خصم دورة أمن سيبراني أو عرض جهاز للموظفين"},
     ],
     "other": [
         {"attack":"Mixed Department Phishing", "vector":"fresh mixed vector", "persuasion":"workplace routine", "en":"new hospital workflow", "ar":"إجراء مستشفى جديد"},
         {"attack":"Vendor / HR / IT Scam", "vector":"link, attachment, reply, or QR", "persuasion":"authority or compliance", "en":"cross-department request", "ar":"طلب بين الأقسام"},
         {"attack":"Legitimate-Looking Internal Process", "vector":"contextual workflow", "persuasion":"routine", "en":"ordinary internal process abused", "ar":"استغلال إجراء داخلي عادي"},
+        {"attack":"Employee Discount / Promotional Offer Phish", "vector":"promotional link or coupon portal", "persuasion":"exclusive healthcare-staff reward", "en":"restaurant, shopping voucher, or training-course discount for Saudi healthcare staff", "ar":"عرض مطعم أو قسيمة شراء أو خصم دورة لموظفي الصحة السعودية"},
     ]
 }
 
@@ -3514,6 +3527,7 @@ def build_prompt(role, index, language):
 قواعد إلزامية:
 - لا تستخدم قالبًا ثابتًا ولا تعيد صياغة مثال سابق.
 - لا تجعل كل شيء رابطًا؛ التزم بناقل الهجوم المطلوب إن كان مرفقًا/QR/ردًا/MFA/مكالمة.
+- إذا كان نوع الهجوم عرضًا تسويقيًا/خصمًا: استخدم أمثلة مثل قسيمة شراء، خصم مطعم لموظفي الصحة، خصم دورة تدريبية، أو عرض أجهزة للموظفين، مع رابط قسيمة/تسجيل مشبوه.
 - اختر نطاقًا جديدًا واقعي الشكل. في المتقدم لا تستخدم كلمات مكشوفة في النطاق.
 - لا تستخدم النص الحرفي suspicious_link داخل body.
 - يجب أن يكون التحليل عميقًا ومتنوعًا، وليس Domain/Urgency/Spelling دائمًا.
@@ -3564,6 +3578,7 @@ Diversity plan for this attempt:
 Mandatory rules:
 - Do not use a fixed template or paraphrase a previous example.
 - Do not make every example a link; follow the required vector if it is attachment/QR/reply/MFA/phone/shared document.
+- If the attack type is a promotional offer/discount: use scenarios such as a shopping voucher, restaurant discount for Saudi healthcare staff, training-course discount, or employee device offer, with a suspicious coupon/registration link.
 - Invent a new realistic-looking domain. For Advanced, avoid obvious domain words.
 - Never write the literal placeholder suspicious_link inside body.
 - The analysis must be varied and deep, not always Domain/Urgency/Spelling.
