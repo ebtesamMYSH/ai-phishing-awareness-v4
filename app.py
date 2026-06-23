@@ -74,20 +74,6 @@ import os
 import re
 import html as html_lib
 import random
-import base64
-from io import BytesIO
-try:
-    import qrcode
-except Exception:
-    # Streamlit Cloud may not have qrcode/Pillow installed if no requirements.txt is used.
-    # Install it once at runtime so QR examples render as real scannable QR images
-    # instead of a text fallback box.
-    try:
-        import sys, subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "qrcode[pil]", "-q"])
-        import qrcode
-    except Exception:
-        qrcode = None
 
 st.set_page_config(
     page_title="AI Phishing Awareness",
@@ -1827,77 +1813,6 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
             return {"error": str(e)}
     return {"error": "Generation failed quality checks."}
 
-
-def _extract_first_url(text):
-    """Return the first http/https URL found in text, or empty string."""
-    if not text:
-        return ""
-    m = re.search(r'https?://[^\s\)\]\}\"\']+', str(text))
-    return m.group(0).rstrip('.,;:') if m else ""
-
-
-def _looks_like_qr_email(email):
-    """Detect emails that should visually show a QR code.
-
-    Some AI providers output only placeholders such as [QR Code Image].
-    This helper lets the UI render a real QR image locally instead of leaving
-    the placeholder text on the screen.
-    """
-    combined = " ".join(str(email.get(k, "")) for k in [
-        "email_type", "subject", "body", "suspicious_text", "suspicious_link", "why_risky", "learning_tip"
-    ])
-    return bool(re.search(r'\bQR\b|QR\s*Code|رمز\s*QR|باركود|barcode|scan\s+the\s+QR|امسح', combined, re.I))
-
-
-def _qr_payload_for_email(email):
-    """Choose what the QR code encodes.
-
-    Prefer the suspicious link. If the model did not provide one, create a
-    realistic fake URL from the sender/domain so the QR remains scannable and
-    useful for the learning example.
-    """
-    body = str(email.get("body", ""))
-    suspicious_link = str(email.get("suspicious_link", "")).strip()
-    payload = _extract_first_url(suspicious_link) or _extract_first_url(body)
-    if payload:
-        return payload
-
-    sender = str(email.get("from", ""))
-    m = re.search(r'@([A-Za-z0-9.-]+\.[A-Za-z]{2,})', sender)
-    domain = (m.group(1) if m else "mobile-clinical-update.example").lower()
-    domain = re.sub(r'[^a-z0-9.-]', '', domain) or "mobile-clinical-update.example"
-    token = abs(hash(str(email.get("subject", "")) + sender)) % 1000000
-    return f"https://{domain}/qr-checklist/update?id={token}"
-
-
-def _make_qr_image_html(payload, is_arabic=False):
-    """Build an embedded QR image as base64 PNG. Falls back gracefully if
-    qrcode/PIL is unavailable in the runtime.
-    """
-    label = "رمز QR" if is_arabic else "QR Code"
-    if qrcode is None:
-        safe_payload = html_lib.escape(payload)
-        return (f'<div style="display:inline-block;border:1px solid rgba(37,99,235,.5);'
-                f'border-radius:10px;padding:.65rem .9rem;margin:.45rem 0;'
-                f'background:rgba(37,99,235,.12);color:#93C5FD;">▦ {label}<br>'
-                f'<span style="font-size:.78rem;color:#CBD5E1;word-break:break-all;">{safe_payload}</span></div>')
-
-    qr = qrcode.QRCode(version=2, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=6, border=2)
-    qr.add_data(payload)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    safe_payload = html_lib.escape(payload)
-    return (f'<div style="display:inline-block;margin:.55rem 0;padding:.65rem;border:1px solid rgba(37,99,235,.55);'
-            f'border-radius:12px;background:rgba(15,23,42,.65);text-align:center;direction:ltr;">'
-            f'<img alt="{label}" src="data:image/png;base64,{b64}" '
-            f'style="width:132px;height:132px;background:white;border-radius:8px;padding:6px;display:block;margin:0 auto .4rem;" />'
-            f'<div style="font-size:.78rem;color:#93C5FD;font-family:Arial,sans-serif;">{label}</div>'
-            f'<div style="font-size:.68rem;color:#64748B;max-width:190px;word-break:break-all;font-family:Arial,sans-serif;">{safe_payload}</div>'
-            f'</div>')
-
 def render_email_window(email, is_arabic, show_badges=False):
     bd = 'rtl' if is_arabic else 'ltr'
     ta = 'right' if is_arabic else 'left'
@@ -1910,16 +1825,7 @@ def render_email_window(email, is_arabic, show_badges=False):
     body_raw = re.sub(r'suspicious_link\s*:\s*', '', body_raw, flags=re.IGNORECASE)
     body_raw = re.sub(r'suspicious_text\s*:\s*', '', body_raw, flags=re.IGNORECASE)
 
-    is_qr_email = _looks_like_qr_email(email)
-    qr_payload = _qr_payload_for_email(email) if is_qr_email else ""
-
-    # If the provider forgot to return suspicious_link for QR examples,
-    # keep the QR scannable by storing the generated payload.
-    if is_qr_email and not suspicious_link:
-        suspicious_link = qr_payload
-        email["suspicious_link"] = qr_payload
-
-    if suspicious_link and suspicious_link not in body_raw and not is_qr_email:
+    if suspicious_link and suspicious_link not in body_raw:
         link_bare = re.sub(r'^https?://', '', suspicious_link)
         if link_bare not in body_raw:
             body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
@@ -1927,27 +1833,6 @@ def render_email_window(email, is_arabic, show_badges=False):
     has_attachment  = bool(email.get("attachment","").strip())
 
     body_html   = html_lib.escape(body_raw)
-
-    if is_qr_email:
-        qr_html = _make_qr_image_html(qr_payload, is_arabic)
-        placeholder_patterns = [
-            r'\[\s*QR\s*Code\s*Image\s*\]',
-            r'\[\s*QR\s*Code\s*\]',
-            r'\[\s*صورة\s*رمز\s*QR\s*\]',
-            r'\[\s*رمز\s*QR\s*\]',
-            r'\[\s*(?:▦|□)?\s*QR\s*Code(?:\s*<br>.*?|.*?)?\s*\]',
-            r'QR\s*Code\s*Image',
-        ]
-        replaced_qr = False
-        for pat in placeholder_patterns:
-            new_body_html, n = re.subn(pat, qr_html, body_html, count=1, flags=re.I)
-            if n:
-                body_html = new_body_html
-                replaced_qr = True
-                break
-        if not replaced_qr:
-            body_html = body_html.rstrip() + "\n\n" + qr_html
-
     badge_count = [4 if has_attachment else 3]
 
     def make_badge(n, color="#DC2626"):
@@ -1968,7 +1853,7 @@ def render_email_window(email, is_arabic, show_badges=False):
                     f'padding:.2rem .5rem;background:rgba(239,68,68,.08);color:#FCA5A5;">'
                     f'{make_badge(b)}{safe_s}</span>', 1)
 
-        if suspicious_link and not is_qr_email:
+        if suspicious_link:
             safe_l = html_lib.escape(suspicious_link)
             if safe_l in body_html:
                 b = next_badge()
@@ -3266,7 +3151,6 @@ ATTACK_PLAYBOOK = {
         {"attack":"Spear Phishing", "vector":"contextual link or reply", "persuasion":"personalized prior meeting", "en":"follow-up to department meeting", "ar":"متابعة لاجتماع القسم"},
         {"attack":"Legitimate-Looking Compliance Phish", "vector":"policy acknowledgement", "persuasion":"compliance", "en":"infection-control acknowledgement", "ar":"إقرار مكافحة العدوى"},
         {"attack":"Cloud Document Scam", "vector":"shared document", "persuasion":"collaboration", "en":"shared clinical handover document", "ar":"مستند تسليم سريري مشترك"},
-        {"attack":"Employee Discount / Promotional Offer Phish", "vector":"promotional link or coupon portal", "persuasion":"exclusive healthcare-staff benefit", "en":"exclusive healthcare employee discount offer", "ar":"عرض خصم حصري لموظفي الصحة"},
     ],
     "admin": [
         {"attack":"Invoice Fraud", "vector":"invoice attachment or portal", "persuasion":"payment deadline", "en":"supplier invoice approval", "ar":"اعتماد فاتورة مورد"},
@@ -3277,7 +3161,6 @@ ATTACK_PLAYBOOK = {
         {"attack":"Shared Document Scam", "vector":"document share", "persuasion":"administrative process", "en":"shared patient-files report", "ar":"تقرير ملفات مرضى مشترك"},
         {"attack":"Insurance Portal Phish", "vector":"coverage verification", "persuasion":"claim processing", "en":"insurance claim validation", "ar":"التحقق من مطالبة تأمين"},
         {"attack":"Meeting Invitation Scam", "vector":"calendar attachment/link", "persuasion":"routine meeting", "en":"accreditation review meeting", "ar":"اجتماع مراجعة الاعتماد"},
-        {"attack":"Employee Discount / Promotional Offer Phish", "vector":"promotional link or coupon portal", "persuasion":"exclusive employee reward", "en":"healthcare staff restaurant/course/shopping discount", "ar":"خصم مطعم أو دورة أو قسيمة تسوق لموظفي الصحة"},
     ],
     "it": [
         {"attack":"Credential Harvesting", "vector":"admin portal", "persuasion":"service continuity", "en":"network access review", "ar":"مراجعة وصول الشبكة"},
@@ -3288,13 +3171,11 @@ ATTACK_PLAYBOOK = {
         {"attack":"Cloud Backup Scam", "vector":"cloud console link", "persuasion":"data protection", "en":"cloud backup access review", "ar":"مراجعة وصول النسخ السحابي"},
         {"attack":"QR Phishing", "vector":"QR enrollment", "persuasion":"device enrollment", "en":"device compliance QR", "ar":"رمز امتثال الجهاز"},
         {"attack":"Spear Phishing", "vector":"contextual reply/link", "persuasion":"known incident follow-up", "en":"follow-up to outage ticket", "ar":"متابعة تذكرة عطل"},
-        {"attack":"Employee Discount / Promotional Offer Phish", "vector":"promotional link or coupon portal", "persuasion":"exclusive staff benefit", "en":"discounted cybersecurity course or employee device offer", "ar":"خصم دورة أمن سيبراني أو عرض جهاز للموظفين"},
     ],
     "other": [
         {"attack":"Mixed Department Phishing", "vector":"fresh mixed vector", "persuasion":"workplace routine", "en":"new hospital workflow", "ar":"إجراء مستشفى جديد"},
         {"attack":"Vendor / HR / IT Scam", "vector":"link, attachment, reply, or QR", "persuasion":"authority or compliance", "en":"cross-department request", "ar":"طلب بين الأقسام"},
         {"attack":"Legitimate-Looking Internal Process", "vector":"contextual workflow", "persuasion":"routine", "en":"ordinary internal process abused", "ar":"استغلال إجراء داخلي عادي"},
-        {"attack":"Employee Discount / Promotional Offer Phish", "vector":"promotional link or coupon portal", "persuasion":"exclusive healthcare-staff reward", "en":"restaurant, shopping voucher, or training-course discount for Saudi healthcare staff", "ar":"عرض مطعم أو قسيمة شراء أو خصم دورة لموظفي الصحة السعودية"},
     ]
 }
 
@@ -3527,7 +3408,6 @@ def build_prompt(role, index, language):
 قواعد إلزامية:
 - لا تستخدم قالبًا ثابتًا ولا تعيد صياغة مثال سابق.
 - لا تجعل كل شيء رابطًا؛ التزم بناقل الهجوم المطلوب إن كان مرفقًا/QR/ردًا/MFA/مكالمة.
-- إذا كان نوع الهجوم عرضًا تسويقيًا/خصمًا: استخدم أمثلة مثل قسيمة شراء، خصم مطعم لموظفي الصحة، خصم دورة تدريبية، أو عرض أجهزة للموظفين، مع رابط قسيمة/تسجيل مشبوه.
 - اختر نطاقًا جديدًا واقعي الشكل. في المتقدم لا تستخدم كلمات مكشوفة في النطاق.
 - لا تستخدم النص الحرفي suspicious_link داخل body.
 - يجب أن يكون التحليل عميقًا ومتنوعًا، وليس Domain/Urgency/Spelling دائمًا.
@@ -3578,7 +3458,6 @@ Diversity plan for this attempt:
 Mandatory rules:
 - Do not use a fixed template or paraphrase a previous example.
 - Do not make every example a link; follow the required vector if it is attachment/QR/reply/MFA/phone/shared document.
-- If the attack type is a promotional offer/discount: use scenarios such as a shopping voucher, restaurant discount for Saudi healthcare staff, training-course discount, or employee device offer, with a suspicious coupon/registration link.
 - Invent a new realistic-looking domain. For Advanced, avoid obvious domain words.
 - Never write the literal placeholder suspicious_link inside body.
 - The analysis must be varied and deep, not always Domain/Urgency/Spelling.
