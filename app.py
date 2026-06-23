@@ -1897,7 +1897,8 @@ def render_email_window(email, is_arabic, show_badges=False):
                 b = next_badge()
                 body_html = body_html.replace(safe_s,
                     f'<span style="border:2px solid rgba(239,68,68,.6);border-radius:8px;'
-                    f'padding:.2rem .5rem;background:rgba(239,68,68,.08);color:#FCA5A5;">'
+                    f'padding:.2rem .5rem;background:rgba(239,68,68,.08);color:#FCA5A5;'
+                    f'box-decoration-break:clone;-webkit-box-decoration-break:clone;">'
                     f'{make_badge(b)}{safe_s}</span>', 1)
 
         if suspicious_link:
@@ -1909,12 +1910,14 @@ def render_email_window(email, is_arabic, show_badges=False):
                 body_html = body_html.replace(safe_l,
                     f'<span style="border:2px solid rgba(239,68,68,.6);border-radius:6px;'
                     f'padding:.2rem .5rem;background:rgba(239,68,68,.08);color:#60A5FA;'
-                    f'text-decoration:underline;">{make_badge(b)}{safe_l}</span>', 1)
+                    f'text-decoration:underline;box-decoration-break:clone;'
+                    f'-webkit-box-decoration-break:clone;">{make_badge(b)}{safe_l}</span>', 1)
             else:
                 b = next_badge()
                 body_html += (f'<br><br><span style="border:2px solid rgba(239,68,68,.6);'
                               f'border-radius:6px;padding:.2rem .5rem;background:rgba(239,68,68,.08);'
-                              f'color:#60A5FA;text-decoration:underline;">'
+                              f'color:#60A5FA;text-decoration:underline;box-decoration-break:clone;'
+                              f'-webkit-box-decoration-break:clone;">'
                               f'{make_badge(b)}{html_lib.escape(suspicious_link)}</span>')
 
     body_html = body_html.replace("\n","<br>")
