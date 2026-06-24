@@ -3486,15 +3486,15 @@ button[kind="primary"]:hover{{
             # Detailed per-cycle table, tucked away in an expander so the
             # 9 boxes above stay the clean at-a-glance summary.
             with st.expander("📋 " + ("عرض تفاصيل الـ10 دورات" if _is_ar else "View detailed 10-cycle breakdown")):
-                col_widths = [0.5,0.7,0.9,0.9,0.9,0.9,0.9,0.8,0.8,0.8,0.9]
+                col_widths = [0.5,0.7,0.8,0.7,0.7,0.8,0.9,0.9,0.9,0.9,0.9]
                 cols_hdr = st.columns(col_widths)
                 headers = [
                     "#", ("لغة" if _is_ar else "Lang"),
+                    ("سرعة" if _is_ar else "Speed"), ("JSON%"), ("أخطاء%" if _is_ar else "Err%"),
+                    ("تنوع" if _is_ar else "Divers."),
                     ("صعوبة%" if _is_ar else "Diff%"), ("عربي%" if _is_ar else "Arabic%"),
                     ("جودة%" if _is_ar else "Quality%"), ("طبي%" if _is_ar else "Medical%"),
                     ("انطباع" if _is_ar else "Overall"),
-                    ("سرعة" if _is_ar else "Speed"), ("JSON%"), ("أخطاء%" if _is_ar else "Err%"),
-                    ("تنوع" if _is_ar else "Divers."),
                 ]
                 for ci, hdr in enumerate(headers):
                     with cols_hdr[ci]:
@@ -3507,15 +3507,15 @@ button[kind="primary"]:hover{{
                         vals = [
                             str(i),
                             lang_short,
+                            f"{r.get('avg_speed')}s" if r.get('avg_speed') is not None else "—",
+                            f"{r.get('json_rate')}%" if r.get('json_rate') is not None else "—",
+                            f"{r.get('error_rate')}%" if r.get('error_rate') is not None else "—",
+                            r.get('diversity') or "—",
                             f"{r.get('auto_difficulty')}%" if r.get('auto_difficulty') is not None else "—",
                             f"{r.get('auto_arabic')}%" if r.get('auto_arabic') is not None else "—",
                             f"{r.get('auto_quality')}%" if r.get('auto_quality') is not None else "—",
                             f"{r.get('auto_medical')}%" if r.get('auto_medical') is not None else "—",
                             f"{r.get('overall')}/5" if r.get('overall') is not None else "—",
-                            f"{r.get('avg_speed')}s" if r.get('avg_speed') is not None else "—",
-                            f"{r.get('json_rate')}%" if r.get('json_rate') is not None else "—",
-                            f"{r.get('error_rate')}%" if r.get('error_rate') is not None else "—",
-                            r.get('diversity') or "—",
                         ]
                         for ci, val in enumerate(vals):
                             with rc[ci]:
@@ -3534,7 +3534,7 @@ button[kind="primary"]:hover{{
             if runs:
                 import csv as _csv, io as _io
                 buf = _io.StringIO()
-                fieldnames = ["timestamp","provider","language","overall","auto_difficulty","auto_arabic","auto_quality","auto_medical","n_auto_emails","avg_speed","json_rate","error_rate","diversity","note"]
+                fieldnames = ["timestamp","provider","language","avg_speed","json_rate","error_rate","diversity","auto_difficulty","auto_arabic","auto_quality","auto_medical","overall","note"]
                 writer = _csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
                 for r in runs:
