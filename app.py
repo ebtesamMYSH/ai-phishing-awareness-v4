@@ -354,6 +354,7 @@ def check_medical_relevance(result):
 # =============================================================
 _AUTO_EVAL_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_eval.json")
 _PENDING_CYCLE_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pending_cycle.json")
+_PENDING_PERF_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pending_perf.json")
 
 def _load_json_list(path):
     try:
@@ -372,9 +373,9 @@ def _save_json_list(path, data):
     except Exception:
         pass
 
-def _load_pending_buckets():
+def _load_json_dict(path):
     try:
-        with open(_PENDING_CYCLE_FILE_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             return data
@@ -382,12 +383,46 @@ def _load_pending_buckets():
         pass
     return {}
 
-def _save_pending_buckets(buckets):
+def _save_json_dict(path, data):
     try:
-        with open(_PENDING_CYCLE_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(buckets, f, ensure_ascii=False, indent=2)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+def _load_pending_buckets():
+    return _load_json_dict(_PENDING_CYCLE_FILE_PATH)
+
+def _save_pending_buckets(buckets):
+    _save_json_dict(_PENDING_CYCLE_FILE_PATH, buckets)
+
+def snapshot_and_clear_pending_perf(provider, language):
+    """Average the per-cycle performance bucket (speed/JSON/error/
+    diversity) collected since the last saved cycle, for THIS provider
+    and language, then clear it so the next cycle starts fresh — mirrors
+    snapshot_and_clear_pending_cycle() but for the 4 performance metrics."""
+    buckets = _load_json_dict(_PENDING_PERF_FILE_PATH)
+    key = f"{provider}__{language}"
+    items = buckets.get(key, [])
+
+    speeds = [it["speed"] for it in items if it.get("speed") is not None]
+    json_ok = sum(1 for it in items if it.get("json_success") is True)
+    json_fail = sum(1 for it in items if it.get("json_success") is False)
+    errors = sum(1 for it in items if it.get("is_error"))
+    calls = len(items)
+    hashes = list({it["hash"] for it in items if it.get("hash")})
+
+    snap = {
+        "n_calls": calls,
+        "avg_speed": round(sum(speeds)/len(speeds), 2) if speeds else None,
+        "json_rate": round(json_ok/(json_ok+json_fail)*100) if (json_ok+json_fail) > 0 else None,
+        "error_rate": round(errors/calls*100) if calls > 0 else None,
+        "diversity": f"{len(hashes)}/{calls}" if calls > 0 else None,
+    }
+    if key in buckets:
+        del buckets[key]
+        _save_json_dict(_PENDING_PERF_FILE_PATH, buckets)
+    return snap
 
 def evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True):
     """Called right after a learning/assessment email is generated.
@@ -1727,10 +1762,25 @@ def _init_provider_metrics(provider):
 
 def _record_metric(provider, speed_sec, json_success, content_hash=None, is_error=False):
     """Record a single API call metric, and persist it to disk so it
-    survives refresh / new sessions (it used to live only in session_state)."""
+    survives refresh / new sessions (it used to live only in session_state).
+    Also feeds the per-cycle pending-performance bucket so each saved
+    cycle can carry its OWN speed/JSON/error/diversity snapshot, instead
+    of only the all-time cumulative provider stats."""
     _init_provider_metrics(provider)
     m = st.session_state["metrics"][provider]
     m["calls"] += 1
+
+    language = st.session_state.get("language", "English")
+    perf_buckets = _load_json_dict(_PENDING_PERF_FILE_PATH)
+    key = f"{provider}__{language}"
+    perf_buckets.setdefault(key, []).append({
+        "speed": None if is_error else round(speed_sec, 2),
+        "json_success": None if is_error else bool(json_success),
+        "is_error": is_error,
+        "hash": None if is_error else content_hash,
+    })
+    _save_json_dict(_PENDING_PERF_FILE_PATH, perf_buckets)
+
     if is_error:
         m["errors"] += 1
         save_metrics_file(st.session_state["metrics"])
@@ -3436,17 +3486,23 @@ button[kind="primary"]:hover{{
             # Detailed per-cycle table, tucked away in an expander so the
             # 9 boxes above stay the clean at-a-glance summary.
             with st.expander("📋 " + ("عرض تفاصيل الـ10 دورات" if _is_ar else "View detailed 10-cycle breakdown")):
-                cols_hdr = st.columns([1,1,1,1,1,1,1])
-                headers = [("#" ), ("لغة" if _is_ar else "Lang"), ("صعوبة%" if _is_ar else "Diff%"),
-                           ("عربي%" if _is_ar else "Arabic%"), ("جودة%" if _is_ar else "Quality%"),
-                           ("طبي%" if _is_ar else "Medical%"), ("انطباع" if _is_ar else "Overall")]
+                col_widths = [0.5,0.7,0.9,0.9,0.9,0.9,0.9,0.8,0.8,0.8,0.9]
+                cols_hdr = st.columns(col_widths)
+                headers = [
+                    "#", ("لغة" if _is_ar else "Lang"),
+                    ("صعوبة%" if _is_ar else "Diff%"), ("عربي%" if _is_ar else "Arabic%"),
+                    ("جودة%" if _is_ar else "Quality%"), ("طبي%" if _is_ar else "Medical%"),
+                    ("انطباع" if _is_ar else "Overall"),
+                    ("سرعة" if _is_ar else "Speed"), ("JSON%"), ("أخطاء%" if _is_ar else "Err%"),
+                    ("تنوع" if _is_ar else "Divers."),
+                ]
                 for ci, hdr in enumerate(headers):
                     with cols_hdr[ci]:
-                        st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.72rem;border-bottom:1px solid rgba(255,255,255,.1);padding:.2rem 0;">{hdr}</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.68rem;border-bottom:1px solid rgba(255,255,255,.1);padding:.2rem 0;">{hdr}</div>', unsafe_allow_html=True)
 
                 if ordered_runs:
                     for i, r in enumerate(ordered_runs, 1):
-                        rc = st.columns([1,1,1,1,1,1,1])
+                        rc = st.columns(col_widths)
                         lang_short = "EN" if r.get("language")=="English" else "AR"
                         vals = [
                             str(i),
@@ -3455,11 +3511,15 @@ button[kind="primary"]:hover{{
                             f"{r.get('auto_arabic')}%" if r.get('auto_arabic') is not None else "—",
                             f"{r.get('auto_quality')}%" if r.get('auto_quality') is not None else "—",
                             f"{r.get('auto_medical')}%" if r.get('auto_medical') is not None else "—",
-                            f"{r.get('overall')}/5 {'⭐'*int(r.get('overall',0))}" if r.get('overall') is not None else "—",
+                            f"{r.get('overall')}/5" if r.get('overall') is not None else "—",
+                            f"{r.get('avg_speed')}s" if r.get('avg_speed') is not None else "—",
+                            f"{r.get('json_rate')}%" if r.get('json_rate') is not None else "—",
+                            f"{r.get('error_rate')}%" if r.get('error_rate') is not None else "—",
+                            r.get('diversity') or "—",
                         ]
                         for ci, val in enumerate(vals):
                             with rc[ci]:
-                                st.markdown(f'<div style="color:#E2E8F0;font-size:.78rem;padding:.3rem .3rem;border-radius:6px;'
+                                st.markdown(f'<div style="color:#E2E8F0;font-size:.74rem;padding:.3rem .2rem;border-radius:6px;'
                                             f'background:{"rgba(255,255,255,.03)" if i%2==0 else "transparent"};">{val}</div>', unsafe_allow_html=True)
                 else:
                     st.markdown(f'<div style="color:#6B7280;font-size:.8rem;padding:.5rem 0;">{("لا توجد دورات محفوظة لهذا المزوّد بعد" if _is_ar else "No cycles saved for this provider yet")}</div>', unsafe_allow_html=True)
@@ -3474,7 +3534,7 @@ button[kind="primary"]:hover{{
             if runs:
                 import csv as _csv, io as _io
                 buf = _io.StringIO()
-                fieldnames = ["timestamp","provider","language","overall","auto_difficulty","auto_arabic","auto_quality","auto_medical","n_auto_emails","note"]
+                fieldnames = ["timestamp","provider","language","overall","auto_difficulty","auto_arabic","auto_quality","auto_medical","n_auto_emails","avg_speed","json_rate","error_rate","diversity","note"]
                 writer = _csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
                 for r in runs:
@@ -3495,6 +3555,7 @@ button[kind="primary"]:hover{{
                 delete_all_runs()
                 _save_json_list(_AUTO_EVAL_FILE_PATH, [])
                 _save_pending_buckets({})
+                _save_json_dict(_PENDING_PERF_FILE_PATH, {})
                 st.success(T('metrics_reset'))
                 st.rerun()
 
@@ -3561,10 +3622,16 @@ button[kind="primary"]:hover{{
 
         # Snapshot of the automatic scores collected since the last saved cycle
         _pending = _load_pending_buckets().get(f"{cur_prov}__{lang_for_run}", [])
-        if _pending:
+        _pending_perf = _load_json_dict(_PENDING_PERF_FILE_PATH).get(f"{cur_prov}__{lang_for_run}", [])
+        if _pending or _pending_perf:
             def _pavg(field):
                 vals = [it[field] for it in _pending if it.get(field) is not None]
                 return round(sum(vals)/len(vals), 1) if vals else None
+            _perf_speeds = [it["speed"] for it in _pending_perf if it.get("speed") is not None]
+            _perf_speed_avg = round(sum(_perf_speeds)/len(_perf_speeds), 1) if _perf_speeds else None
+            _perf_calls = len(_pending_perf)
+            _perf_errors = sum(1 for it in _pending_perf if it.get("is_error"))
+            _perf_err_rate = round(_perf_errors/_perf_calls*100) if _perf_calls else None
             st.markdown(
                 f'<div style="border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:.6rem .9rem;'
                 f'background:rgba(4,30,10,.4);margin-bottom:1rem;font-size:.82rem;color:#86EFAC;">'
@@ -3573,7 +3640,9 @@ button[kind="primary"]:hover{{
                 f'{("صعوبة" if _is_ar else "Difficulty")} {_pavg("difficulty_score")}% · '
                 f'{("عربي" if _is_ar else "Arabic")} {_pavg("arabic_score")}% · '
                 f'{("جودة" if _is_ar else "Quality")} {_pavg("quality_score")}% · '
-                f'{("طبي" if _is_ar else "Medical")} {_pavg("medical_score")}%'
+                f'{("طبي" if _is_ar else "Medical")} {_pavg("medical_score")}% · '
+                f'{("سرعة" if _is_ar else "Speed")} {_perf_speed_avg if _perf_speed_avg is not None else "—"}s · '
+                f'{("أخطاء" if _is_ar else "Errors")} {_perf_err_rate if _perf_err_rate is not None else "—"}%'
                 f'</div>', unsafe_allow_html=True)
         else:
             st.markdown(
@@ -3627,6 +3696,7 @@ button[kind="primary"]:hover{{
 
         def _save_cycle_rating(overall_val, note_text):
             snap = snapshot_and_clear_pending_cycle(cur_prov, lang_for_run)
+            perf_snap = snapshot_and_clear_pending_perf(cur_prov, lang_for_run)
             record = {
                 "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
                 "provider": cur_prov,
@@ -3637,6 +3707,10 @@ button[kind="primary"]:hover{{
                 "auto_quality": snap["quality_score"],
                 "auto_medical": snap["medical_score"],
                 "n_auto_emails": snap["n_emails"],
+                "avg_speed": perf_snap["avg_speed"],
+                "json_rate": perf_snap["json_rate"],
+                "error_rate": perf_snap["error_rate"],
+                "diversity": perf_snap["diversity"],
                 "note": note_text or "",
             }
             save_run(record)
