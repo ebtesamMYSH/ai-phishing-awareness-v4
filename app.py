@@ -194,16 +194,16 @@ def save_metrics_file(metrics_dict):
 # pure chance with a small sample size.
 # =============================================================
 ROTATION_PLAN = [
-    {"cycle": 1,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "easy"},
-    {"cycle": 2,  "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "medium"},
-    {"cycle": 3,  "role_en": "IT",         "role_ar": "تقني",   "difficulty": "hard"},
-    {"cycle": 4,  "role_en": "Other",      "role_ar": "أخرى",  "difficulty": "easy"},
-    {"cycle": 5,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "medium"},
-    {"cycle": 6,  "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "hard"},
-    {"cycle": 7,  "role_en": "IT",         "role_ar": "تقني",   "difficulty": "easy"},
-    {"cycle": 8,  "role_en": "Other",      "role_ar": "أخرى",  "difficulty": "medium"},
-    {"cycle": 9,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "hard"},
-    {"cycle": 10, "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "easy"},
+    {"cycle": 1,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "easy",   "language": "English"},
+    {"cycle": 2,  "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "medium", "language": "English"},
+    {"cycle": 3,  "role_en": "IT",         "role_ar": "تقني",   "difficulty": "hard",   "language": "English"},
+    {"cycle": 4,  "role_en": "Other",      "role_ar": "أخرى",  "difficulty": "easy",   "language": "English"},
+    {"cycle": 5,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "medium", "language": "English"},
+    {"cycle": 6,  "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "hard",   "language": "Arabic"},
+    {"cycle": 7,  "role_en": "IT",         "role_ar": "تقني",   "difficulty": "easy",   "language": "Arabic"},
+    {"cycle": 8,  "role_en": "Other",      "role_ar": "أخرى",  "difficulty": "medium", "language": "Arabic"},
+    {"cycle": 9,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "hard",   "language": "Arabic"},
+    {"cycle": 10, "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "easy",   "language": "Arabic"},
 ]
 
 # =============================================================
@@ -3360,15 +3360,16 @@ button[kind="primary"]:hover{{
 
         # ── Rotation plan reference table (informational only) ──
         with st.expander("📋 " + ("جدول التدوير المنظّم (10 دورات)" if _is_ar else "Systematic Rotation Plan (10 cycles)")):
-            rcols = st.columns([1,2,2])
-            for ci, hdr in enumerate([("#" if _is_ar else "#"), ("الوظيفة" if _is_ar else "Role"), ("المستوى" if _is_ar else "Difficulty")]):
+            rcols = st.columns([1,2,2,1.5])
+            for ci, hdr in enumerate([("#" if _is_ar else "#"), ("الوظيفة" if _is_ar else "Role"), ("المستوى" if _is_ar else "Difficulty"), ("اللغة" if _is_ar else "Language")]):
                 with rcols[ci]:
                     st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.78rem;">{hdr}</div>', unsafe_allow_html=True)
             for plan in ROTATION_PLAN:
-                rcols = st.columns([1,2,2])
+                rcols = st.columns([1,2,2,1.5])
                 role_show = plan["role_ar"] if _is_ar else plan["role_en"]
                 diff_show = {"easy": ("سهل" if _is_ar else "Easy"), "medium": ("متوسط" if _is_ar else "Medium"), "hard": ("صعب" if _is_ar else "Hard")}[plan["difficulty"]]
-                for ci, val in enumerate([str(plan["cycle"]), role_show, diff_show]):
+                lang_show = ("🇸🇦 عربي" if plan["language"]=="Arabic" else "🇬🇧 EN") if _is_ar else ("Arabic" if plan["language"]=="Arabic" else "English")
+                for ci, val in enumerate([str(plan["cycle"]), role_show, diff_show, lang_show]):
                     with rcols[ci]:
                         st.markdown(f'<div style="color:#E2E8F0;font-size:.82rem;padding:.15rem 0;">{val}</div>', unsafe_allow_html=True)
 
@@ -3385,64 +3386,84 @@ button[kind="primary"]:hover{{
             err_rate = int(m.get("errors",0)/calls*100) if calls > 0 else None
             hashes = m.get("hashes",[])
 
+            p_runs_en = [r for r in runs if r.get("provider")==p and r.get("language")=="English"]
+            p_runs_ar = [r for r in runs if r.get("provider")==p and r.get("language")=="Arabic"]
+            ordered_runs = p_runs_en + p_runs_ar
+
+            def _avg_field(field):
+                vals = [r.get(field) for r in ordered_runs if r.get(field) is not None]
+                return round(sum(vals)/len(vals), 1) if vals else None
+
+            avg_diff    = _avg_field("auto_difficulty")
+            avg_arabic  = _avg_field("auto_arabic")
+            avg_quality = _avg_field("auto_quality")
+            avg_medical = _avg_field("auto_medical")
+            avg_overall = _avg_field("overall")
+
             st.markdown(f"""
 <div dir="{_dir}" style="border:1px solid {meta['color']}55;border-radius:14px;padding:1rem 1.2rem;margin-bottom:1.2rem;background:rgba(255,255,255,.02);">
   <div style="font-weight:900;font-size:1.05rem;color:{meta['color']};margin-bottom:.6rem;">{meta['label']}</div>
 </div>""", unsafe_allow_html=True)
 
-            perf_cols = st.columns(4)
-            perf_items = [
-                (T('speed_metric'), f"{avg(speeds):.1f}s" if speeds else "—"),
-                (T('json_metric'),  f"{json_rate}%" if json_rate is not None else "—"),
-                (T('error_metric'), f"{err_rate}%" if err_rate is not None else "—"),
-                (T('diversity_metric'), f"{len(hashes)}/{calls}" if calls > 0 else "—"),
+            # 9 uniform boxes — 4 auto-performance + 4 auto-content + 1 manual overall
+            box_items = [
+                (T('speed_metric'),      f"{avg(speeds):.1f}s" if speeds else "—"),
+                (T('json_metric'),       f"{json_rate}%" if json_rate is not None else "—"),
+                (T('error_metric'),      f"{err_rate}%" if err_rate is not None else "—"),
+                (T('diversity_metric'),  f"{len(hashes)}/{calls}" if calls > 0 else "—"),
+                (("صعوبة%" if _is_ar else "Difficulty%"), f"{avg_diff}%" if avg_diff is not None else "—"),
+                (("عربي%" if _is_ar else "Arabic%"),      f"{avg_arabic}%" if avg_arabic is not None else "—"),
+                (("جودة%" if _is_ar else "Quality%"),     f"{avg_quality}%" if avg_quality is not None else "—"),
+                (("طبي%" if _is_ar else "Medical%"),      f"{avg_medical}%" if avg_medical is not None else "—"),
+                (("الانطباع⭐" if _is_ar else "Overall⭐"), f"{avg_overall}/5" if avg_overall is not None else "—"),
             ]
-            for ci, (lbl, val) in enumerate(perf_items):
-                with perf_cols[ci]:
-                    st.markdown(f'<div style="text-align:center;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:.5rem;">'
-                                f'<div style="font-size:.7rem;color:#9CA3AF;">{lbl}</div>'
-                                f'<div style="font-size:1rem;font-weight:800;color:#E2E8F0;">{val}</div></div>', unsafe_allow_html=True)
-
-            st.markdown('<div style="height:.6rem"></div>', unsafe_allow_html=True)
-
-            # Combined table: first 5 English cycles, then 5 Arabic cycles
-            p_runs_en = [r for r in runs if r.get("provider")==p and r.get("language")=="English"]
-            p_runs_ar = [r for r in runs if r.get("provider")==p and r.get("language")=="Arabic"]
-            ordered_runs = p_runs_en + p_runs_ar
-
-            cols_hdr = st.columns([1,1,1,1,1,1,1])
-            headers = [("#" ), ("لغة" if _is_ar else "Lang"), ("صعوبة%" if _is_ar else "Diff%"),
-                       ("عربي%" if _is_ar else "Arabic%"), ("جودة%" if _is_ar else "Quality%"),
-                       ("طبي%" if _is_ar else "Medical%"), ("انطباع" if _is_ar else "Overall")]
-            for ci, hdr in enumerate(headers):
-                with cols_hdr[ci]:
-                    st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.72rem;border-bottom:1px solid rgba(255,255,255,.1);padding:.2rem 0;">{hdr}</div>', unsafe_allow_html=True)
-
-            if ordered_runs:
-                for i, r in enumerate(ordered_runs, 1):
-                    rc = st.columns([1,1,1,1,1,1,1])
-                    lang_short = "EN" if r.get("language")=="English" else "AR"
-                    vals = [
-                        str(i),
-                        lang_short,
-                        f"{r.get('auto_difficulty')}%" if r.get('auto_difficulty') is not None else "—",
-                        f"{r.get('auto_arabic')}%" if r.get('auto_arabic') is not None else "—",
-                        f"{r.get('auto_quality')}%" if r.get('auto_quality') is not None else "—",
-                        f"{r.get('auto_medical')}%" if r.get('auto_medical') is not None else "—",
-                        f"{r.get('overall')}/5 {'⭐'*int(r.get('overall',0))}" if r.get('overall') is not None else "—",
-                    ]
-                    for ci, val in enumerate(vals):
-                        with rc[ci]:
-                            st.markdown(f'<div style="color:#E2E8F0;font-size:.78rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.04);">{val}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div style="color:#6B7280;font-size:.8rem;padding:.5rem 0;">{("لا توجد دورات محفوظة لهذا المزوّد بعد" if _is_ar else "No cycles saved for this provider yet")}</div>', unsafe_allow_html=True)
+            box_rows = [box_items[i:i+3] for i in range(0, 9, 3)]
+            for row in box_rows:
+                bc = st.columns(3)
+                for ci, (lbl, val) in enumerate(row):
+                    with bc[ci]:
+                        st.markdown(f'<div style="text-align:center;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:.5rem;margin-bottom:.5rem;">'
+                                    f'<div style="font-size:.7rem;color:#9CA3AF;">{lbl}</div>'
+                                    f'<div style="font-size:1rem;font-weight:800;color:#E2E8F0;">{val}</div></div>', unsafe_allow_html=True)
 
             n_en, n_ar = len(p_runs_en), len(p_runs_ar)
             tag_en = "✅" if n_en >= TARGET_PER_LANG else "🟡"
             tag_ar = "✅" if n_ar >= TARGET_PER_LANG else "🟡"
-            st.markdown(f'<div style="color:#9CA3AF;font-size:.78rem;margin-top:.4rem;">'
+            st.markdown(f'<div style="color:#9CA3AF;font-size:.78rem;margin:.2rem 0 .6rem;">'
                         f'{tag_en} English: {n_en}/{TARGET_PER_LANG} &nbsp;&nbsp; {tag_ar} Arabic: {n_ar}/{TARGET_PER_LANG}</div>',
                         unsafe_allow_html=True)
+
+            # Detailed per-cycle table, tucked away in an expander so the
+            # 9 boxes above stay the clean at-a-glance summary.
+            with st.expander("📋 " + ("عرض تفاصيل الـ10 دورات" if _is_ar else "View detailed 10-cycle breakdown")):
+                cols_hdr = st.columns([1,1,1,1,1,1,1])
+                headers = [("#" ), ("لغة" if _is_ar else "Lang"), ("صعوبة%" if _is_ar else "Diff%"),
+                           ("عربي%" if _is_ar else "Arabic%"), ("جودة%" if _is_ar else "Quality%"),
+                           ("طبي%" if _is_ar else "Medical%"), ("انطباع" if _is_ar else "Overall")]
+                for ci, hdr in enumerate(headers):
+                    with cols_hdr[ci]:
+                        st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.72rem;border-bottom:1px solid rgba(255,255,255,.1);padding:.2rem 0;">{hdr}</div>', unsafe_allow_html=True)
+
+                if ordered_runs:
+                    for i, r in enumerate(ordered_runs, 1):
+                        rc = st.columns([1,1,1,1,1,1,1])
+                        lang_short = "EN" if r.get("language")=="English" else "AR"
+                        vals = [
+                            str(i),
+                            lang_short,
+                            f"{r.get('auto_difficulty')}%" if r.get('auto_difficulty') is not None else "—",
+                            f"{r.get('auto_arabic')}%" if r.get('auto_arabic') is not None else "—",
+                            f"{r.get('auto_quality')}%" if r.get('auto_quality') is not None else "—",
+                            f"{r.get('auto_medical')}%" if r.get('auto_medical') is not None else "—",
+                            f"{r.get('overall')}/5 {'⭐'*int(r.get('overall',0))}" if r.get('overall') is not None else "—",
+                        ]
+                        for ci, val in enumerate(vals):
+                            with rc[ci]:
+                                st.markdown(f'<div style="color:#E2E8F0;font-size:.78rem;padding:.3rem .3rem;border-radius:6px;'
+                                            f'background:{"rgba(255,255,255,.03)" if i%2==0 else "transparent"};">{val}</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div style="color:#6B7280;font-size:.8rem;padding:.5rem 0;">{("لا توجد دورات محفوظة لهذا المزوّد بعد" if _is_ar else "No cycles saved for this provider yet")}</div>', unsafe_allow_html=True)
+
             st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
 
         st.markdown(f'<div dir="{_dir}" style="font-size:.75rem;color:#6B7280;">{T("auto_manual_note")}</div>', unsafe_allow_html=True)
@@ -3492,12 +3513,23 @@ button[kind="primary"]:hover{{
             f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">{T("active_provider")}: {prov_label}</div>',
             unsafe_allow_html=True)
 
-        # Which language was this cycle run in? Defaults to the app's
-        # current language but can be overridden in case it was switched.
+        # Compute which cycle # comes next (based on saved cycles for this
+        # provider) BEFORE showing the language radio, so the radio can
+        # default to whatever the rotation plan says for that cycle.
+        _runs_now_pre = load_runs()
+        _n_done_total = len([r for r in _runs_now_pre if r.get("provider")==cur_prov])
+        _cycle_no = min(_n_done_total + 1, 10)
+        _plan = ROTATION_PLAN[_cycle_no - 1]
+        _plan_role = _plan["role_ar"] if _is_ar else _plan["role_en"]
+        _plan_diff = {"easy": ("سهل" if _is_ar else "Easy"), "medium": ("متوسط" if _is_ar else "Medium"), "hard": ("صعب" if _is_ar else "Hard")}[_plan["difficulty"]]
+        _plan_lang = _plan["language"]
+
+        # Which language was this cycle run in? Defaults to whatever the
+        # rotation plan says for this cycle number (can be overridden).
         lang_for_run = st.radio(
-            ("لغة هذي الدورة" if _is_ar else "Language of this cycle"),
+            ("🏷️ صنّفي بيانات هذي الدورة: المحتوى المولّد كان بـ" if _is_ar else "🏷️ Tag this cycle's data: generated content was in"),
             options=["English", "Arabic"],
-            index=0 if st.session_state.get("language","English")=="English" else 1,
+            index=0 if _plan_lang=="English" else 1,
             horizontal=True,
             key="run_lang_selector",
         )
@@ -3505,13 +3537,8 @@ button[kind="primary"]:hover{{
         # Progress counter for this provider+language combo (target 5+5=10)
         _runs_now = load_runs()
         _n_done_lang = len([r for r in _runs_now if r.get("provider")==cur_prov and r.get("language")==lang_for_run])
-        _n_done_total = len([r for r in _runs_now if r.get("provider")==cur_prov])
         _target_lang = 5
         _pct = min(_n_done_lang / _target_lang, 1.0)
-        _cycle_no = min(_n_done_total + 1, 10)
-        _plan = ROTATION_PLAN[_cycle_no - 1]
-        _plan_role = _plan["role_ar"] if _is_ar else _plan["role_en"]
-        _plan_diff = {"easy": ("سهل" if _is_ar else "Easy"), "medium": ("متوسط" if _is_ar else "Medium"), "hard": ("صعب" if _is_ar else "Hard")}[_plan["difficulty"]]
 
         st.markdown(
             f'<div style="margin:.3rem 0 .6rem;">'
@@ -3523,11 +3550,12 @@ button[kind="primary"]:hover{{
             f'</div></div>',
             unsafe_allow_html=True)
 
+        _plan_lang_show = ("🇸🇦 عربي" if _plan_lang=="Arabic" else "🇬🇧 إنجليزي") if _is_ar else _plan_lang
         st.markdown(
             f'<div dir="{_dir}" style="border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:.6rem .9rem;'
             f'background:rgba(40,30,4,.4);margin-bottom:1rem;font-size:.85rem;color:#FCD34D;">'
             f'📋 {("الدورة التالية حسب جدول التدوير رقم" if _is_ar else "Next cycle per rotation plan, #")} {_cycle_no}/10 — '
-            f'{("الوظيفة" if _is_ar else "Role")}: <b>{_plan_role}</b> | {("المستوى" if _is_ar else "Difficulty")}: <b>{_plan_diff}</b>'
+            f'{("الوظيفة" if _is_ar else "Role")}: <b>{_plan_role}</b> | {("المستوى" if _is_ar else "Difficulty")}: <b>{_plan_diff}</b> | {("اللغة" if _is_ar else "Language")}: <b>{_plan_lang_show}</b>'
             f'</div>',
             unsafe_allow_html=True)
 
