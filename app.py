@@ -123,13 +123,331 @@ def set_active_provider(pk):
     st.session_state["ai_provider"] = pk
     save_persistent_provider(pk)
 
+# =============================================================
+# PERSISTENT RESEARCH DATA — survives refresh/new sessions
+# -------------------------------------------------------------
+# Two JSON files on disk next to the app:
+#  - runs.json     : one record per FULL CYCLE (6 learning + 10
+#                     assessment) the researcher rated, holistically.
+#  - metrics.json   : raw auto-tracked API call stats (speed, JSON
+#                     success, errors, uniqueness) — accumulated
+#                     across every call regardless of session.
+# Both are best-effort: if the filesystem is read-only on a given
+# host, writes fail silently and behaviour falls back to the old
+# session-only behaviour (no crash either way).
+# =============================================================
+_RUNS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs.json")
+_METRICS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metrics.json")
+
+def load_runs():
+    try:
+        with open(_RUNS_FILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+def save_run(record):
+    """Append one holistic run-rating record and persist to disk."""
+    runs = load_runs()
+    runs.append(record)
+    try:
+        with open(_RUNS_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(runs, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return runs
+
+def delete_all_runs():
+    try:
+        with open(_RUNS_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump([], f)
+    except Exception:
+        pass
+
+def load_metrics_file():
+    try:
+        with open(_METRICS_FILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+def save_metrics_file(metrics_dict):
+    try:
+        with open(_METRICS_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(metrics_dict, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+# =============================================================
+# SYSTEMATIC ROTATION PLAN — 10 cycles, balanced role x difficulty
+# -------------------------------------------------------------
+# Purely informational for the researcher: she runs cycles 1-10
+# manually following this table (role + difficulty to pick on the
+# main app) so that, across 10 cycles, all 4 roles and 3 difficulty
+# levels get reasonably balanced coverage instead of relying on
+# pure chance with a small sample size.
+# =============================================================
+ROTATION_PLAN = [
+    {"cycle": 1,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "easy"},
+    {"cycle": 2,  "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "medium"},
+    {"cycle": 3,  "role_en": "IT",         "role_ar": "تقني",   "difficulty": "hard"},
+    {"cycle": 4,  "role_en": "Other",      "role_ar": "أخرى",  "difficulty": "easy"},
+    {"cycle": 5,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "medium"},
+    {"cycle": 6,  "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "hard"},
+    {"cycle": 7,  "role_en": "IT",         "role_ar": "تقني",   "difficulty": "easy"},
+    {"cycle": 8,  "role_en": "Other",      "role_ar": "أخرى",  "difficulty": "medium"},
+    {"cycle": 9,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "hard"},
+    {"cycle": 10, "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "easy"},
+]
+
+# =============================================================
+# AUTOMATIC EVALUATION — difficulty conformance, Arabic quality,
+# general quality, medical relevance. All computed from the
+# generated text itself, no human judgement involved.
+# =============================================================
+_DIRECT_PASSWORD_RE = re.compile(r"\b(password|otp|one[- ]time code|reply with your)\b|كلمة\s*(السر|المرور)|الرمز\s*المؤقت", re.I)
+_DIRECT_THREAT_RE    = re.compile(r"\b(suspend(ed)?|terminat(e|ed|ion)|legal action|account.*delet|deactivat)\b|تعليق|إيقاف|إنهاء|حذف\s*الحساب", re.I)
+_IMMEDIATE_URGENCY_RE = re.compile(r"\b(immediately|right now|within\s*(1|2|3)\s*hour|asap)\b|فورًا|الآن|خلال\s*ساعت", re.I)
+_WINDOW_URGENCY_RE    = re.compile(r"\b(24|48|72)\s*hours?\b|٢٤|٤٨|٧٢\s*ساعة", re.I)
+_GENERIC_GREETING_RE  = re.compile(r"^(dear (staff|team|healthcare professional|doctor|valued)|dear sir|عزيزي الموظف|إلى من يهمه)", re.I)
+_PERSONAL_GREETING_RE = re.compile(r"dear dr\.?\s+[a-z\u0600-\u06ff]+\s+[a-z\u0600-\u06ff]+|عزيزي\s+د\.?\s*[\u0600-\u06ff]+\s+[\u0600-\u06ff]+", re.I)
+_MEDICAL_KEYWORDS = [
+    "patient","hospital","clinical","emr","medical","pharmacy","lab","radiology",
+    "doctor","dr.","nurse","ministry of health","moh","healthcare","health record",
+    "مريض","المستشفى","سريري","نظام طبي","صيدلية","مخبر","أشعة","طبيب","ممرض",
+    "وزارة الصحة","صحي","سجل صحي","طبية","عيادة",
+]
+_PLACEHOLDER_LEFTOVER_RE = re.compile(r"\[QR(?:\s*Code)?\s*:?|suspicious_link\s*:|suspicious_text\s*:", re.I)
+
+def check_difficulty_conformance(result, difficulty, is_phishing=True):
+    """Score 0-100: how well the generated email matches the 9 textual
+    rules that were supposed to drive generation for this difficulty
+    level. Same 9 dimensions used as generation instructions, now used
+    as a post-hoc automatic check instead of a manual slider."""
+    if not isinstance(result, dict):
+        return None
+    body = str(result.get("body", ""))
+    subject = str(result.get("subject", ""))
+    frm = str(result.get("from", ""))
+    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
+    text = f"{subject} {body}"
+
+    domain_match = re.search(r"@([\w.-]+)>?", frm)
+    domain = (domain_match.group(1) if domain_match else "").lower()
+    domain_obvious = any(w in domain for w in ADVANCED_BANNED_DOMAIN_WORDS)
+
+    checks = []  # each: True = conforms to expectation for this difficulty
+    if not is_phishing:
+        # Legitimate emails: just check they avoid red flags regardless of level.
+        checks.append(not _DIRECT_PASSWORD_RE.search(text))
+        checks.append(not _DIRECT_THREAT_RE.search(text))
+        checks.append(not domain_obvious)
+        return round(sum(checks) / len(checks) * 100) if checks else None
+
+    if difficulty == "easy":
+        checks.append(bool(_GENERIC_GREETING_RE.search(body.strip())))
+        checks.append(domain_obvious)
+        checks.append(bool(_DIRECT_PASSWORD_RE.search(text)))
+        checks.append(bool(_DIRECT_THREAT_RE.search(text)))
+        checks.append(bool(_IMMEDIATE_URGENCY_RE.search(text)))
+        checks.append(len(indicators) >= 3)
+    elif difficulty == "hard":
+        checks.append(bool(_PERSONAL_GREETING_RE.search(body.strip())))
+        checks.append(not domain_obvious)
+        checks.append(not _DIRECT_PASSWORD_RE.search(text))
+        checks.append(not _DIRECT_THREAT_RE.search(text))
+        checks.append(not _IMMEDIATE_URGENCY_RE.search(text))
+        checks.append(len(indicators) <= 3)
+    else:  # medium
+        checks.append(not _GENERIC_GREETING_RE.search(body.strip()))
+        checks.append(not _DIRECT_PASSWORD_RE.search(text))
+        checks.append(not _DIRECT_THREAT_RE.search(text))
+        checks.append(bool(_WINDOW_URGENCY_RE.search(text)) or not _IMMEDIATE_URGENCY_RE.search(text))
+        checks.append(len(indicators) <= 3)
+
+    caps_words = re.findall(r"\b[A-Z]{4,}\b", body)
+    excl_count = body.count("!")
+    if difficulty == "easy":
+        checks.append((len(caps_words) + excl_count) >= 1)
+    else:
+        checks.append((len(caps_words) + excl_count) == 0)
+
+    return round(sum(checks) / len(checks) * 100) if checks else None
+
+def check_arabic_quality(result, is_ar):
+    """Score 0-100: cheap proxy for Arabic text cleanliness — leftover
+    Latin words, broken/garbled characters, obviously truncated text."""
+    if not is_ar or not isinstance(result, dict):
+        return None
+    body = str(result.get("body", ""))
+    if not body.strip():
+        return 0
+    words = body.split()
+    if not words:
+        return 0
+    latin_words = [w for w in words if re.fullmatch(r"[A-Za-z]+", w)]
+    latin_ratio = len(latin_words) / len(words)
+    score = 100
+    score -= min(60, int(latin_ratio * 200))            # too many stray English words
+    if re.search(r"\ufffd|\\u[0-9a-fA-F]{4}", body):     # mojibake / unescaped unicode
+        score -= 30
+    if not re.search(r"[.!؟،]\s*$", body.strip()):       # doesn't end cleanly
+        score -= 10
+    if re.search(r"(\b\w+\b)(\s+\1){2,}", body):          # same word repeated 3+ times in a row
+        score -= 20
+    return max(0, min(100, score))
+
+def check_general_quality(result):
+    """Score 0-100: structural completeness proxy — required fields
+    present, reasonable length, enough indicators, no leftover template
+    artifacts that should have been rendered (e.g. raw '[QR:' text)."""
+    if not isinstance(result, dict):
+        return 0
+    score = 100
+    for field in ["from", "subject", "body"]:
+        if not str(result.get(field, "")).strip():
+            score -= 25
+    body = str(result.get("body", ""))
+    wc = len(body.split())
+    if wc < 15:
+        score -= 25
+    elif wc > 220:
+        score -= 10
+    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
+    if len(indicators) < 2:
+        score -= 20
+    if _PLACEHOLDER_LEFTOVER_RE.search(body):
+        score -= 25
+    return max(0, min(100, score))
+
+def check_medical_relevance(result):
+    """Score 0/100 (with partial credit) — does this email actually sit
+    in a healthcare/hospital context, based on keyword presence."""
+    if not isinstance(result, dict):
+        return None
+    text = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body"]).lower()
+    hits = sum(1 for kw in _MEDICAL_KEYWORDS if kw in text)
+    if hits == 0:
+        return 0
+    if hits == 1:
+        return 60
+    return 100
+
+# =============================================================
+# PERSISTENT AUTO-EVAL LOG + PENDING-CYCLE BUCKET
+# -------------------------------------------------------------
+# auto_eval.json   : permanent raw log, one row per generated email,
+#                    with its 4 automatic scores — used for long-term
+#                    analysis / CSV export regardless of cycles.
+# pending_cycle.json: per (provider, language) bucket of scores
+#                    collected SINCE the last saved cycle rating, so
+#                    that when the researcher finishes a full cycle
+#                    (6 learning + 10 assessment) and rates it, we can
+#                    snapshot the average automatic scores for THAT
+#                    specific cycle into the run record.
+# =============================================================
+_AUTO_EVAL_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_eval.json")
+_PENDING_CYCLE_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pending_cycle.json")
+
+def _load_json_list(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+def _save_json_list(path, data):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _load_pending_buckets():
+    try:
+        with open(_PENDING_CYCLE_FILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+def _save_pending_buckets(buckets):
+    try:
+        with open(_PENDING_CYCLE_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(buckets, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True):
+    """Called right after a learning/assessment email is generated.
+    Computes the 4 automatic scores and logs them both permanently
+    (auto_eval.json) and into the current pending-cycle bucket so the
+    next saved manual rating can snapshot this cycle's averages."""
+    if not isinstance(result, dict) or "error" in result:
+        return
+    provider = st.session_state.get("ai_provider", "groq")
+    is_ar = (language == "Arabic")
+    rec = {
+        "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+        "provider": provider,
+        "language": language,
+        "difficulty": difficulty,
+        "difficulty_score": check_difficulty_conformance(result, difficulty, is_phishing),
+        "arabic_score": check_arabic_quality(result, is_ar),
+        "quality_score": check_general_quality(result),
+        "medical_score": check_medical_relevance(result),
+    }
+    log = _load_json_list(_AUTO_EVAL_FILE_PATH)
+    log.append(rec)
+    _save_json_list(_AUTO_EVAL_FILE_PATH, log)
+
+    buckets = _load_pending_buckets()
+    key = f"{provider}__{language}"
+    buckets.setdefault(key, []).append(rec)
+    _save_pending_buckets(buckets)
+
+def snapshot_and_clear_pending_cycle(provider, language):
+    """Average the pending bucket for this provider+language into one
+    snapshot (used when the researcher saves a holistic cycle rating),
+    then clear that bucket so the next cycle starts fresh."""
+    buckets = _load_pending_buckets()
+    key = f"{provider}__{language}"
+    items = buckets.get(key, [])
+
+    def _avg(field):
+        vals = [it[field] for it in items if it.get(field) is not None]
+        return round(sum(vals)/len(vals), 1) if vals else None
+
+    snapshot = {
+        "n_emails": len(items),
+        "difficulty_score": _avg("difficulty_score"),
+        "arabic_score": _avg("arabic_score"),
+        "quality_score": _avg("quality_score"),
+        "medical_score": _avg("medical_score"),
+    }
+    if key in buckets:
+        del buckets[key]
+        _save_pending_buckets(buckets)
+    return snapshot
+
 for k, v in [("language","English"),("page","home"),("role",""),
               ("example_index",0),("emails",{}),("difficulty","medium"),
               ("user_name",""),("user_email",""),
               ("ai_provider", load_persistent_provider("groq")),
               ("admin_authenticated",False),
-              ("metrics",{}),  # {provider: {speed:[], json_ok:int, json_fail:int, errors:int, calls:int, hashes:[]}}
-              ("manual_ratings",{}),  # {provider: {quality:[], difficulty:[], arabic:[], medical:[]}}
+              ("metrics", load_metrics_file()),  # {provider: {speed:[], json_ok:int, json_fail:int, errors:int, calls:int, hashes:[]}} — loaded from disk so it survives refresh
+              ("manual_ratings",{}),  # legacy in-session structure, kept for backward compatibility
              ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1408,12 +1726,14 @@ def _init_provider_metrics(provider):
         }
 
 def _record_metric(provider, speed_sec, json_success, content_hash=None, is_error=False):
-    """Record a single API call metric"""
+    """Record a single API call metric, and persist it to disk so it
+    survives refresh / new sessions (it used to live only in session_state)."""
     _init_provider_metrics(provider)
     m = st.session_state["metrics"][provider]
     m["calls"] += 1
     if is_error:
         m["errors"] += 1
+        save_metrics_file(st.session_state["metrics"])
         return
     m["speed"].append(round(speed_sec, 2))
     if json_success:
@@ -1422,6 +1742,7 @@ def _record_metric(provider, speed_sec, json_success, content_hash=None, is_erro
         m["json_fail"] += 1
     if content_hash and content_hash not in m["hashes"]:
         m["hashes"].append(content_hash)
+    save_metrics_file(st.session_state["metrics"])
 
 def call_ai(prompt, max_tokens=1600):
     import time
@@ -3016,105 +3337,145 @@ button[kind="primary"]:hover{{
             st.rerun()
 
     # ──────────────────────────────────────────────────────────
-    # TAB 2 — Score Card (8 metrics)
+    # TAB 2 — Score Card: one independent card per provider
     # ──────────────────────────────────────────────────────────
     with tab2:
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
         metrics = st.session_state.get("metrics", {})
-        manual  = st.session_state.get("manual_ratings", {})
+        runs = load_runs()
 
-        provider_labels = {
-            "groq":      "🟠 Groq",
-            "anthropic": "🟣 Claude",
-            "openai":    "🟢 OpenAI",
-            "gemini":    "🔵 Gemini",
+        PROV_ORDER = ["groq", "anthropic", "openai", "gemini"]
+        PROV_META = {
+            "groq":      {"label": "🟠 Groq — LLaMA 3.3-70b",      "color": "#F97316"},
+            "anthropic": {"label": "🟣 Claude — claude-sonnet-4-6", "color": "#A855F7"},
+            "openai":    {"label": "🟢 OpenAI — GPT-4o",            "color": "#22C55E"},
+            "gemini":    {"label": "🔵 Gemini — 2.5 Flash",         "color": "#3B82F6"},
         }
-
-        def stars(val, max_val=5):
-            filled = round((val / max_val) * 5) if max_val > 0 else 0
-            return "⭐" * filled + "☆" * (5 - filled)
+        TARGET_PER_LANG = 5
 
         def avg(lst):
-            return round(sum(lst)/len(lst), 2) if lst else None
-
-        rows = []
+            return round(sum(lst)/len(lst), 1) if lst else None
 
         def get_m(p): return metrics.get(p, {})
-        def get_man(p): return manual.get(p, {})
 
-        # 1. Speed
-        speed_row = [T('speed_metric')]
-        for p in ["groq","anthropic","openai","gemini"]:
-            speeds = get_m(p).get("speed", [])
-            speed_row.append(f"{avg(speeds):.1f}s" if speeds else "—")
-        rows.append(speed_row)
-
-        # 2. JSON Success Rate
-        json_row = [T('json_metric')]
-        for p in ["groq","anthropic","openai","gemini"]:
-            m = get_m(p)
-            total_j = m.get("json_ok",0) + m.get("json_fail",0)
-            rate = int(m.get("json_ok",0)/total_j*100) if total_j > 0 else None
-            json_row.append(f"{rate}%" if rate is not None else "—")
-        rows.append(json_row)
-
-        # 3. Error Rate
-        err_row = [T('error_metric')]
-        for p in ["groq","anthropic","openai","gemini"]:
-            m = get_m(p)
-            calls = m.get("calls",0)
-            errs  = m.get("errors",0)
-            rate  = int(errs/calls*100) if calls > 0 else None
-            err_row.append(f"{rate}%" if rate is not None else "—")
-        rows.append(err_row)
-
-        # 4. Diversity (unique hashes)
-        div_row = [T('diversity_metric')]
-        for p in ["groq","anthropic","openai","gemini"]:
-            hashes = get_m(p).get("hashes",[])
-            calls  = get_m(p).get("calls",0)
-            div_row.append(f"{len(hashes)}/{calls}" if calls > 0 else "—")
-        rows.append(div_row)
-
-        # 5-8 Manual ratings
-        for metric_key, metric_label in [
-            ("quality",    T('quality_metric')),
-            ("difficulty", T('difficulty_metric')),
-            ("arabic",     T('arabic_metric')),
-            ("medical",    T('medical_metric')),
-        ]:
-            row = [metric_label]
-            for p in ["groq","anthropic","openai","gemini"]:
-                ratings = get_man(p).get(metric_key, [])
-                a = avg(ratings)
-                row.append(f"{a:.1f}/5 {stars(a) if a else ''}" if a is not None else "—")
-            rows.append(row)
-
-        # Render table
-        st.markdown(f'<div dir="{_dir}" style="font-weight:900;color:#D1FAE5;font-size:1.1rem;margin-bottom:1rem;">{T("score_title")}</div>', unsafe_allow_html=True)
-
-        # Header
-        hcols = st.columns([2,1,1,1,1])
-        headers_list = [T('metric_col'), "🟠 Groq", "🟣 Claude", "🟢 OpenAI", "🔵 Gemini"]
-        for ci, hdr in enumerate(headers_list):
-            with hcols[ci]:
-                st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#9CA3AF;font-size:.82rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.1);">{hdr}</div>', unsafe_allow_html=True)
-
-        for row in rows:
-            rcols = st.columns([2,1,1,1,1])
-            for ci, cell in enumerate(row):
+        # ── Rotation plan reference table (informational only) ──
+        with st.expander("📋 " + ("جدول التدوير المنظّم (10 دورات)" if _is_ar else "Systematic Rotation Plan (10 cycles)")):
+            rcols = st.columns([1,2,2])
+            for ci, hdr in enumerate([("#" if _is_ar else "#"), ("الوظيفة" if _is_ar else "Role"), ("المستوى" if _is_ar else "Difficulty")]):
                 with rcols[ci]:
-                    clr = "#D1FAE5" if ci == 0 else "#F0FDF4"
-                    st.markdown(f'<div dir="{_dir}" style="color:{clr};font-size:.85rem;padding:.4rem 0;border-bottom:1px solid rgba(255,255,255,.05);">{cell}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.78rem;">{hdr}</div>', unsafe_allow_html=True)
+            for plan in ROTATION_PLAN:
+                rcols = st.columns([1,2,2])
+                role_show = plan["role_ar"] if _is_ar else plan["role_en"]
+                diff_show = {"easy": ("سهل" if _is_ar else "Easy"), "medium": ("متوسط" if _is_ar else "Medium"), "hard": ("صعب" if _is_ar else "Hard")}[plan["difficulty"]]
+                for ci, val in enumerate([str(plan["cycle"]), role_show, diff_show]):
+                    with rcols[ci]:
+                        st.markdown(f'<div style="color:#E2E8F0;font-size:.82rem;padding:.15rem 0;">{val}</div>', unsafe_allow_html=True)
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        st.markdown(f'<div dir="{_dir}" style="font-size:.75rem;color:#6B7280;">{T("auto_manual_note")}</div>', unsafe_allow_html=True)
 
-        if st.button(T('reset_metrics'), use_container_width=True):
-            st.session_state["metrics"] = {}
-            st.session_state["manual_ratings"] = {}
-            st.success(T('metrics_reset'))
-            st.rerun()
+        # ── One independent card per provider ──
+        for p in PROV_ORDER:
+            meta = PROV_META[p]
+            m = get_m(p)
+            speeds = m.get("speed", [])
+            total_j = m.get("json_ok",0) + m.get("json_fail",0)
+            json_rate = int(m.get("json_ok",0)/total_j*100) if total_j > 0 else None
+            calls = m.get("calls",0)
+            err_rate = int(m.get("errors",0)/calls*100) if calls > 0 else None
+            hashes = m.get("hashes",[])
+
+            st.markdown(f"""
+<div dir="{_dir}" style="border:1px solid {meta['color']}55;border-radius:14px;padding:1rem 1.2rem;margin-bottom:1.2rem;background:rgba(255,255,255,.02);">
+  <div style="font-weight:900;font-size:1.05rem;color:{meta['color']};margin-bottom:.6rem;">{meta['label']}</div>
+</div>""", unsafe_allow_html=True)
+
+            perf_cols = st.columns(4)
+            perf_items = [
+                (T('speed_metric'), f"{avg(speeds):.1f}s" if speeds else "—"),
+                (T('json_metric'),  f"{json_rate}%" if json_rate is not None else "—"),
+                (T('error_metric'), f"{err_rate}%" if err_rate is not None else "—"),
+                (T('diversity_metric'), f"{len(hashes)}/{calls}" if calls > 0 else "—"),
+            ]
+            for ci, (lbl, val) in enumerate(perf_items):
+                with perf_cols[ci]:
+                    st.markdown(f'<div style="text-align:center;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:.5rem;">'
+                                f'<div style="font-size:.7rem;color:#9CA3AF;">{lbl}</div>'
+                                f'<div style="font-size:1rem;font-weight:800;color:#E2E8F0;">{val}</div></div>', unsafe_allow_html=True)
+
+            st.markdown('<div style="height:.6rem"></div>', unsafe_allow_html=True)
+
+            # Combined table: first 5 English cycles, then 5 Arabic cycles
+            p_runs_en = [r for r in runs if r.get("provider")==p and r.get("language")=="English"]
+            p_runs_ar = [r for r in runs if r.get("provider")==p and r.get("language")=="Arabic"]
+            ordered_runs = p_runs_en + p_runs_ar
+
+            cols_hdr = st.columns([1,1,1,1,1,1,1])
+            headers = [("#" ), ("لغة" if _is_ar else "Lang"), ("صعوبة%" if _is_ar else "Diff%"),
+                       ("عربي%" if _is_ar else "Arabic%"), ("جودة%" if _is_ar else "Quality%"),
+                       ("طبي%" if _is_ar else "Medical%"), ("انطباع" if _is_ar else "Overall")]
+            for ci, hdr in enumerate(headers):
+                with cols_hdr[ci]:
+                    st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.72rem;border-bottom:1px solid rgba(255,255,255,.1);padding:.2rem 0;">{hdr}</div>', unsafe_allow_html=True)
+
+            if ordered_runs:
+                for i, r in enumerate(ordered_runs, 1):
+                    rc = st.columns([1,1,1,1,1,1,1])
+                    lang_short = "EN" if r.get("language")=="English" else "AR"
+                    vals = [
+                        str(i),
+                        lang_short,
+                        f"{r.get('auto_difficulty')}%" if r.get('auto_difficulty') is not None else "—",
+                        f"{r.get('auto_arabic')}%" if r.get('auto_arabic') is not None else "—",
+                        f"{r.get('auto_quality')}%" if r.get('auto_quality') is not None else "—",
+                        f"{r.get('auto_medical')}%" if r.get('auto_medical') is not None else "—",
+                        f"{r.get('overall')}/5 {'⭐'*int(r.get('overall',0))}" if r.get('overall') is not None else "—",
+                    ]
+                    for ci, val in enumerate(vals):
+                        with rc[ci]:
+                            st.markdown(f'<div style="color:#E2E8F0;font-size:.78rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.04);">{val}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="color:#6B7280;font-size:.8rem;padding:.5rem 0;">{("لا توجد دورات محفوظة لهذا المزوّد بعد" if _is_ar else "No cycles saved for this provider yet")}</div>', unsafe_allow_html=True)
+
+            n_en, n_ar = len(p_runs_en), len(p_runs_ar)
+            tag_en = "✅" if n_en >= TARGET_PER_LANG else "🟡"
+            tag_ar = "✅" if n_ar >= TARGET_PER_LANG else "🟡"
+            st.markdown(f'<div style="color:#9CA3AF;font-size:.78rem;margin-top:.4rem;">'
+                        f'{tag_en} English: {n_en}/{TARGET_PER_LANG} &nbsp;&nbsp; {tag_ar} Arabic: {n_ar}/{TARGET_PER_LANG}</div>',
+                        unsafe_allow_html=True)
+            st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
+
+        st.markdown(f'<div dir="{_dir}" style="font-size:.75rem;color:#6B7280;">{T("auto_manual_note")}</div>', unsafe_allow_html=True)
+        st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
+
+        col_exp, col_reset = st.columns(2)
+        with col_exp:
+            if runs:
+                import csv as _csv, io as _io
+                buf = _io.StringIO()
+                fieldnames = ["timestamp","provider","language","overall","auto_difficulty","auto_arabic","auto_quality","auto_medical","n_auto_emails","note"]
+                writer = _csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                for r in runs:
+                    writer.writerow(r)
+                st.download_button(
+                    "⬇️ " + ("تصدير كل الدورات CSV" if _is_ar else "Export all cycles as CSV"),
+                    data=buf.getvalue().encode("utf-8-sig"),
+                    file_name="cycles_export.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            else:
+                st.button("⬇️ " + ("تصدير كل الدورات CSV" if _is_ar else "Export all cycles as CSV"), use_container_width=True, disabled=True)
+        with col_reset:
+            if st.button(T('reset_metrics'), use_container_width=True):
+                st.session_state["metrics"] = {}
+                save_metrics_file({})
+                delete_all_runs()
+                _save_json_list(_AUTO_EVAL_FILE_PATH, [])
+                _save_pending_buckets({})
+                st.success(T('metrics_reset'))
+                st.rerun()
 
     # ──────────────────────────────────────────────────────────
     # TAB 3 — Manual Ratings (👍 اليدوية)
@@ -3124,26 +3485,73 @@ button[kind="primary"]:hover{{
         cur_prov = st.session_state.get("ai_provider", "groq")
         prov_label = provider_info.get(cur_prov, {}).get("label", cur_prov)
 
-        st.markdown(f'<div style="font-weight:900;color:#D1FAE5;margin-bottom:.3rem;">{T("rate_title")}</div>'
-                    f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">{T("active_provider")}: {prov_label}</div>',
-                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-weight:900;color:#D1FAE5;margin-bottom:.3rem;">'
+            f'{"قيّمي الدورة الكاملة (٦ تعلّم + ١٠ اختبار) بعد ما تخلّصينها" if _is_ar else "Rate the FULL cycle (6 learning + 10 assessment) after finishing it"}'
+            f'</div>'
+            f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">{T("active_provider")}: {prov_label}</div>',
+            unsafe_allow_html=True)
 
-        if "manual_ratings" not in st.session_state:
-            st.session_state["manual_ratings"] = {}
-        if cur_prov not in st.session_state["manual_ratings"]:
-            st.session_state["manual_ratings"][cur_prov] = {
-                "quality": [], "difficulty": [], "arabic": [], "medical": []
-            }
+        # Which language was this cycle run in? Defaults to the app's
+        # current language but can be overridden in case it was switched.
+        lang_for_run = st.radio(
+            ("لغة هذي الدورة" if _is_ar else "Language of this cycle"),
+            options=["English", "Arabic"],
+            index=0 if st.session_state.get("language","English")=="English" else 1,
+            horizontal=True,
+            key="run_lang_selector",
+        )
 
-        manual_metrics = [
-            ("quality",    T('quality_label'),     T('quality_desc')),
-            ("difficulty", T('diff_acc_label'),    T('diff_acc_desc')),
-            ("arabic",     T('arabic_label'),      T('arabic_desc')),
-            ("medical",    T('medical_label'),     T('medical_desc')),
-        ]
+        # Progress counter for this provider+language combo (target 5+5=10)
+        _runs_now = load_runs()
+        _n_done_lang = len([r for r in _runs_now if r.get("provider")==cur_prov and r.get("language")==lang_for_run])
+        _n_done_total = len([r for r in _runs_now if r.get("provider")==cur_prov])
+        _target_lang = 5
+        _pct = min(_n_done_lang / _target_lang, 1.0)
+        _cycle_no = min(_n_done_total + 1, 10)
+        _plan = ROTATION_PLAN[_cycle_no - 1]
+        _plan_role = _plan["role_ar"] if _is_ar else _plan["role_en"]
+        _plan_diff = {"easy": ("سهل" if _is_ar else "Easy"), "medium": ("متوسط" if _is_ar else "Medium"), "hard": ("صعب" if _is_ar else "Hard")}[_plan["difficulty"]]
 
-        ratings_to_save = {}
-        all_rated = True
+        st.markdown(
+            f'<div style="margin:.3rem 0 .6rem;">'
+            f'<div style="color:#93C5FD;font-size:.9rem;font-weight:700;margin-bottom:.3rem;">'
+            f'{("اللغة:" if _is_ar else "Language:")} {lang_for_run} — {_n_done_lang}/{_target_lang}'
+            f'</div>'
+            f'<div style="background:rgba(255,255,255,.1);border-radius:6px;height:8px;overflow:hidden;">'
+            f'<div style="background:#22C55E;height:100%;width:{_pct*100:.0f}%;"></div>'
+            f'</div></div>',
+            unsafe_allow_html=True)
+
+        st.markdown(
+            f'<div dir="{_dir}" style="border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:.6rem .9rem;'
+            f'background:rgba(40,30,4,.4);margin-bottom:1rem;font-size:.85rem;color:#FCD34D;">'
+            f'📋 {("الدورة التالية حسب جدول التدوير رقم" if _is_ar else "Next cycle per rotation plan, #")} {_cycle_no}/10 — '
+            f'{("الوظيفة" if _is_ar else "Role")}: <b>{_plan_role}</b> | {("المستوى" if _is_ar else "Difficulty")}: <b>{_plan_diff}</b>'
+            f'</div>',
+            unsafe_allow_html=True)
+
+        # Snapshot of the automatic scores collected since the last saved cycle
+        _pending = _load_pending_buckets().get(f"{cur_prov}__{lang_for_run}", [])
+        if _pending:
+            def _pavg(field):
+                vals = [it[field] for it in _pending if it.get(field) is not None]
+                return round(sum(vals)/len(vals), 1) if vals else None
+            st.markdown(
+                f'<div style="border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:.6rem .9rem;'
+                f'background:rgba(4,30,10,.4);margin-bottom:1rem;font-size:.82rem;color:#86EFAC;">'
+                f'⚙️ {("نتائج آلية لهذي الدورة لحد الآن" if _is_ar else "Automatic scores collected so far this cycle")} '
+                f'({len(_pending)} {("إيميل" if _is_ar else "emails")}): '
+                f'{("صعوبة" if _is_ar else "Difficulty")} {_pavg("difficulty_score")}% · '
+                f'{("عربي" if _is_ar else "Arabic")} {_pavg("arabic_score")}% · '
+                f'{("جودة" if _is_ar else "Quality")} {_pavg("quality_score")}% · '
+                f'{("طبي" if _is_ar else "Medical")} {_pavg("medical_score")}%'
+                f'</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(
+                f'<div style="color:#6B7280;font-size:.78rem;margin-bottom:1rem;">'
+                f'{("لسا ما ولّدتي أي إيميل بهذي الدورة — النتائج الآلية بتظهر هنا أوتوماتيك" if _is_ar else "No emails generated yet this cycle — automatic scores will appear here")}'
+                f'</div>', unsafe_allow_html=True)
 
         # تنسيق حقل الملاحظات بشكل شفاف مع إطار مثل باقي العناصر
         st.markdown("""<style>
@@ -3169,65 +3577,97 @@ button[kind="primary"]:hover{{
 }
 </style>""", unsafe_allow_html=True)
 
-        for mk, ml, mdesc in manual_metrics:
-            st.markdown(f'<div style="margin-bottom:.2rem;"><span style="font-weight:700;color:#E2E8F0;">{ml}</span>'
-                        f'<span style="color:#6B7280;font-size:.8rem;margin-right:.5rem;"> — {mdesc}</span></div>',
-                        unsafe_allow_html=True)
-            rating = st.select_slider(
-                label=ml,
-                options=[1, 2, 3, 4, 5],
-                value=3,
-                format_func=lambda x: f"{'⭐'*x}{'☆'*(5-x)} ({x}/5)",
-                key=f"rating_{mk}_{cur_prov}",
-                label_visibility="collapsed"
-            )
-            ratings_to_save[mk] = rating
-            st.markdown('<div style="height:.4rem"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="margin-bottom:.2rem;"><span style="font-weight:700;color:#E2E8F0;">⭐ '
+                    f'{("الانطباع العام" if _is_ar else "Overall Impression")}</span>'
+                    f'<span style="color:#6B7280;font-size:.8rem;margin-right:.5rem;"> — '
+                    f'{("حكمك الشامل عن جودة/واقعية/لغة هذي الدورة بالكامل" if _is_ar else "Your holistic judgement of quality/realism/language for this whole cycle")}</span></div>',
+                    unsafe_allow_html=True)
+        overall_rating = st.select_slider(
+            label="overall",
+            options=[1, 2, 3, 4, 5],
+            value=3,
+            format_func=lambda x: f"{'⭐'*x}{'☆'*(5-x)} ({x}/5)",
+            key=f"rating_overall_{cur_prov}_{lang_for_run}",
+            label_visibility="collapsed"
+        )
+        st.markdown('<div style="height:.4rem"></div>', unsafe_allow_html=True)
 
         col_note, _ = st.columns([2,1])
         with col_note:
             note = st.text_input(T('note_label'), placeholder=T('note_placeholder'),
-                                 key=f"note_{cur_prov}")
+                                 key=f"note_{cur_prov}_{lang_for_run}")
+
+        def _save_cycle_rating(overall_val, note_text):
+            snap = snapshot_and_clear_pending_cycle(cur_prov, lang_for_run)
+            record = {
+                "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                "provider": cur_prov,
+                "language": lang_for_run,
+                "overall": overall_val,
+                "auto_difficulty": snap["difficulty_score"],
+                "auto_arabic": snap["arabic_score"],
+                "auto_quality": snap["quality_score"],
+                "auto_medical": snap["medical_score"],
+                "n_auto_emails": snap["n_emails"],
+                "note": note_text or "",
+            }
+            save_run(record)
 
         if st.button(T('save_btn'), use_container_width=True):
-            for mk, val in ratings_to_save.items():
-                st.session_state["manual_ratings"][cur_prov][mk].append(val)
-            st.success(f"{T('ratings_saved')} {prov_label}!")
+            _save_cycle_rating(overall_rating, note)
+            st.success(f"{T('ratings_saved')} {prov_label} ({lang_for_run}) — {_n_done_lang+1}/{_target_lang}")
             st.rerun()
 
-        # Quick thumbs up/down shortcut
+        # Quick thumbs up/down shortcut — still one record per FULL cycle
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
         st.markdown(f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:.4rem;">{T("quick_rating")}</div>', unsafe_allow_html=True)
         qc1, qc2, qc3 = st.columns(3)
         with qc1:
             if st.button(T('good_btn'), use_container_width=True, key="quick_good"):
-                for mk in ["quality","difficulty","arabic","medical"]:
-                    st.session_state["manual_ratings"][cur_prov][mk].append(4)
+                _save_cycle_rating(4, note)
                 st.success(T('saved_45'))
                 st.rerun()
         with qc2:
             if st.button(T('avg_btn'), use_container_width=True, key="quick_avg"):
-                for mk in ["quality","difficulty","arabic","medical"]:
-                    st.session_state["manual_ratings"][cur_prov][mk].append(3)
+                _save_cycle_rating(3, note)
                 st.success(T('saved_35'))
                 st.rerun()
         with qc3:
             if st.button(T('poor_btn'), use_container_width=True, key="quick_bad"):
-                for mk in ["quality","difficulty","arabic","medical"]:
-                    st.session_state["manual_ratings"][cur_prov][mk].append(2)
+                _save_cycle_rating(2, note)
                 st.success(T('saved_25'))
                 st.rerun()
 
-        # History summary
+        # Undo last entry for this provider+language, in case of a mis-click
+        # (also restores the snapshot back into the pending bucket so no
+        # automatic data is lost).
+        st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
+        if st.button("↩️ " + ("تراجع عن آخر دورة محفوظة لهذا المزوّد/اللغة" if _is_ar else "Undo last saved cycle for this provider/language"),
+                     use_container_width=True, key="undo_last_run"):
+            all_runs = load_runs()
+            for i in range(len(all_runs) - 1, -1, -1):
+                if all_runs[i].get("provider") == cur_prov and all_runs[i].get("language") == lang_for_run:
+                    all_runs.pop(i)
+                    try:
+                        with open(_RUNS_FILE_PATH, "w", encoding="utf-8") as f:
+                            json.dump(all_runs, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                    st.success("✅ " + ("تم حذف آخر دورة" if _is_ar else "Last cycle removed"))
+                    st.rerun()
+                    break
+
+        # History summary for this provider+language
         st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
-        man = st.session_state["manual_ratings"].get(cur_prov, {})
-        if any(man.values()):
-            st.markdown(f'<div style="font-weight:700;color:#D1FAE5;margin-bottom:.4rem;">{T("rating_history")} {prov_label}</div>', unsafe_allow_html=True)
-            for mk, ml, _ in manual_metrics:
-                lst = man.get(mk, [])
-                if lst:
-                    a = round(sum(lst)/len(lst),1)
-                    st.markdown(f'<div style="color:#9CA3AF;font-size:.82rem;">{ml}: {T("avg_label")} {a}/5 ({len(lst)} {T("ratings_label")}) {"⭐"*round(a)}</div>', unsafe_allow_html=True)
+        my_runs = [r for r in load_runs() if r.get("provider")==cur_prov and r.get("language")==lang_for_run]
+        if my_runs:
+            overall_vals = [r.get("overall") for r in my_runs if r.get("overall") is not None]
+            if overall_vals:
+                a = round(sum(overall_vals)/len(overall_vals), 1)
+                st.markdown(f'<div style="font-weight:700;color:#D1FAE5;margin-bottom:.2rem;">{T("rating_history")} {prov_label} ({lang_for_run})</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="color:#9CA3AF;font-size:.82rem;">{("الانطباع العام" if _is_ar else "Overall")}: {T("avg_label")} {a}/5 ({len(overall_vals)} {("دورة" if _is_ar else "cycles")}) {"⭐"*round(a)}</div>', unsafe_allow_html=True)
+
+
 
 
 
@@ -4056,6 +4496,7 @@ def generate_email(role, index, language, difficulty="medium"):
     _, _, role_type = role_info
     if isinstance(result, dict) and "error" not in result:
         result = normalize_learning_analysis(result, role_type, difficulty, language == "Arabic")
+        evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
     return result
 
 def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
@@ -4064,18 +4505,21 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
     _, _, role_type = role_info
     if isinstance(result, dict) and "error" not in result:
         result = normalize_assessment_email(result, role_type, difficulty, is_phishing, language == "Arabic")
+        evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
     return result
 
 def generate_other_email(index, language, difficulty):
     result = _OLD_GENERATE_OTHER_EMAIL_STUDY3(index, language, difficulty)
     if isinstance(result, dict) and "error" not in result:
         result = normalize_learning_analysis(result, "other", difficulty, language == "Arabic")
+        evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
     return result
 
 def generate_other_assess_email(index, is_phishing, language, difficulty):
     result = _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3(index, is_phishing, language, difficulty)
     if isinstance(result, dict) and "error" not in result:
         result = normalize_assessment_email(result, "other", difficulty, is_phishing, language == "Arabic")
+        evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
     return result
 
 # Make the final system prompt shorter and more explicit for all providers.
