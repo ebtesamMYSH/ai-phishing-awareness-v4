@@ -1974,7 +1974,7 @@ def generate_other_email(index, language, difficulty):
                 return {"error": data['error'].get('message', str(data['error']))}
             result = parse_json_response(data["choices"][0]["message"]["content"].strip())
             result = clean_result(result, is_ar)
-            if result.get("suspicious_link", "").strip() and result["suspicious_link"] not in result.get("body", ""):
+            if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in result.get("body", ""):
                 result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
@@ -2000,7 +2000,7 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
             result = parse_json_response(data["choices"][0]["message"]["content"].strip())
             result = clean_result(result, is_ar)
             result["is_phishing"] = bool(is_phishing)
-            if result.get("suspicious_link", "").strip() and result["suspicious_link"] not in result.get("body", ""):
+            if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in result.get("body", ""):
                 result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
@@ -2032,7 +2032,7 @@ def generate_email(role, index, language, difficulty="medium"):
             result = parse_json_response(raw)
             result = clean_result(result, is_ar)
             result["to"] = get_recipient(role, index, language, phase="learn")
-            if result.get("suspicious_link","").strip():
+            if (result.get("suspicious_link") or "").strip():
                 if result["suspicious_link"] not in result.get("body",""):
                     result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
 
@@ -2067,7 +2067,7 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
             result = clean_result(result, is_ar)
             result["to"] = get_recipient(st.session_state.get("role","Clinical"), index, language, phase="assess")
             result["is_phishing"] = bool(is_phishing)
-            if result.get("suspicious_link","").strip():
+            if (result.get("suspicious_link") or "").strip():
                 if result["suspicious_link"] not in result.get("body",""):
                     result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
 
@@ -2146,7 +2146,7 @@ def render_email_window(email, is_arabic, show_badges=False):
         if link_bare not in body_raw:
             body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
 
-    has_attachment  = bool(email.get("attachment","").strip())
+    has_attachment  = bool((email.get("attachment") or "").strip())
 
     body_html   = html_lib.escape(body_raw)
     badge_count = [4 if has_attachment else 3]
@@ -4375,6 +4375,14 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     indicators = result.get("indicators")
     if not isinstance(indicators, list):
         indicators = []
+    # Defensive: some providers occasionally return indicator items as plain
+    # strings instead of {"number","title","description"} dicts, which
+    # crashes any .get() call on them downstream. Normalize every item to a
+    # dict shape before anything else touches it.
+    indicators = [
+        it if isinstance(it, dict) else {"number": i+1, "title": str(it or ""), "description": ""}
+        for i, it in enumerate(indicators)
+    ]
     while len(indicators) < 3:
         indicators.append({"number": len(indicators)+1, "title": "", "description": ""})
 
@@ -4389,11 +4397,11 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
             indicators[1] = {"number": 2, "title": "طلب أو سلوك غير معتاد", "description": "الرسالة تطلب إجراءً لا يتم عادة عبر بريد عادي في بيئة المستشفى."}
         if not indicators[2].get("title") or re.search(r"إملاء|Spelling", indicators[2].get("title", ""), re.I):
             indicators[2] = {"number": 3, "title": "عدم توافق السياق أو القناة", "description": "القناة أو المرسل لا يطابقان طريقة التعامل الرسمية مع هذا النوع من الطلبات."}
-        wr = result.get("why_risky", "").strip()
+        wr = (result.get("why_risky") or "").strip()
         if attack_type not in wr:
             wr = f"هذه رسالة {attack_type} بمستوى خطورة {risk}. " + (wr or f"قد تؤثر على {role_hint} إذا تم تنفيذ الطلب دون تحقق.")
         result["why_risky"] = wr
-        tip = result.get("learning_tip", "").strip()
+        tip = (result.get("learning_tip") or "").strip()
         if not tip:
             tip = "تحقق من الطلب عبر قناة المستشفى الرسمية قبل فتح رابط أو مرفق أو مشاركة أي بيانات."
         result["learning_tip"] = tip
@@ -4407,11 +4415,11 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
             indicators[1] = {"number": 2, "title": "Unusual request or workflow", "description": "The message asks for an action that should normally use an official hospital channel."}
         if not indicators[2].get("title") or re.search(r"Spelling", indicators[2].get("title", ""), re.I):
             indicators[2] = {"number": 3, "title": "Role-context or channel mismatch", "description": "The sender or channel does not match how this workplace process should be handled."}
-        wr = result.get("why_risky", "").strip()
+        wr = (result.get("why_risky") or "").strip()
         if attack_type not in wr:
             wr = f"This is a {attack_type} email with a {risk} risk level. " + (wr or f"It can affect {role_hint} if the recipient acts without verification.")
         result["why_risky"] = wr
-        tip = result.get("learning_tip", "").strip()
+        tip = (result.get("learning_tip") or "").strip()
         if not tip:
             tip = "Verify the request through an official hospital channel before opening links, attachments, QR codes, or sharing data."
         result["learning_tip"] = tip
@@ -4420,22 +4428,25 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     result["indicators"] = [{**indicators[i], "number": i+1} for i in range(3)]
     return result
 
+def _is_nonempty_str(v):
+    return isinstance(v, str) and bool(v.strip())
+
 def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar=False):
     """Keeps assessment focused on email content + difficulty, without adding learning-analysis sections."""
     if not isinstance(result, dict):
         return result
     result = _recover_from_nested_email_blob(result)
     if "error" not in result:
-        core_missing = not (str(result.get("from","")).strip() and
-                             str(result.get("subject","")).strip() and
-                             str(result.get("body","")).strip())
+        core_missing = not (_is_nonempty_str(result.get("from")) and
+                             _is_nonempty_str(result.get("subject")) and
+                             _is_nonempty_str(result.get("body")))
         if core_missing:
             debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
             return {"error": {"message": f"Generation returned incomplete content (empty from/subject/body). Parsed keys/values for diagnosis: {debug_keys}"}}
     result["is_phishing"] = bool(is_phishing)
     if is_phishing:
         result["attack_type"] = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
-        explanation = result.get("explanation", "").strip()
+        explanation = (result.get("explanation") or "").strip()
         attack_type = result["attack_type"]
         if attack_type and attack_type not in explanation:
             prefix = (f"التصنيف تصيد لأن نوع الهجوم هو {attack_type}. " if is_ar else f"This is phishing because the attack type is {attack_type}. ")
@@ -4755,50 +4766,61 @@ def _recover_from_nested_email_blob(result):
        STRINGIFIED nested object under an unexpected key like 'email' or
        'arabic_email' instead of the requested top-level fields. That blob
        isn't valid JSON (Python-dict-style quoting), so we try
-       ast.literal_eval first, then a regex fallback."""
+       ast.literal_eval first, then a regex fallback.
+    Wrapped in a try/except as a whole: this is glue code patching up
+    inconsistent provider output, so a bug in IT must never crash the whole
+    generation pipeline — worst case, it just leaves the original result
+    untouched and the existing core_missing check handles it normally."""
     if not isinstance(result, dict):
         return result
+    try:
+        SYNONYMS = {
+            "from": ["sender_email", "sender", "from_email", "from_address"],
+            "to": ["recipient", "recipient_email", "to_email", "to_address"],
+            "subject": ["email_subject"],
+            "body": ["email_body", "message_body", "content"],
+            "suspicious_link": ["link", "malicious_link", "phishing_link"],
+        }
+        for canonical, alts in SYNONYMS.items():
+            cur = result.get(canonical)
+            if not (isinstance(cur, str) and cur.strip()):
+                for alt in alts:
+                    alt_val = result.get(alt)
+                    if isinstance(alt_val, str) and alt_val.strip():
+                        result[canonical] = alt_val
+                        break
 
-    SYNONYMS = {
-        "from": ["sender_email", "sender", "from_email", "from_address"],
-        "to": ["recipient", "recipient_email", "to_email", "to_address"],
-        "subject": ["email_subject"],
-        "body": ["email_body", "message_body", "content"],
-        "suspicious_link": ["link", "malicious_link", "phishing_link"],
-    }
-    for canonical, alts in SYNONYMS.items():
-        if not str(result.get(canonical, "")).strip():
-            for alt in alts:
-                if str(result.get(alt, "")).strip():
-                    result[canonical] = result[alt]
-                    break
-
-    import ast
-    for key in ("email", "arabic_email", "analysis"):
-        blob = result.get(key)
-        if not (isinstance(blob, str) and "{" in blob):
-            continue
-        parsed = None
-        try:
-            parsed = ast.literal_eval(blob)
-        except Exception:
+        import ast
+        for key in ("email", "arabic_email", "analysis"):
+            blob = result.get(key)
+            if not (isinstance(blob, str) and "{" in blob):
+                continue
+            parsed = None
             try:
-                # Common breakage: a stray trailing backslash right before a
-                # closing quote (seen in real output), which trips literal_eval.
-                cleaned = re.sub(r'\\+(?=["\'])', '', blob)
-                parsed = ast.literal_eval(cleaned)
+                parsed = ast.literal_eval(blob)
             except Exception:
-                parsed = None
-        if isinstance(parsed, dict):
-            for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
-                if not str(result.get(field, "")).strip() and str(parsed.get(field, "")).strip():
-                    result[field] = str(parsed.get(field))
-        else:
-            for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
-                if not str(result.get(field, "")).strip():
-                    m = re.search(rf"['\"]{field}['\"]\s*:\s*['\"](.*?)['\"]\s*(?:,\s*['\"]\w+['\"]\s*:|\}}\s*$|\}})", blob, re.DOTALL)
-                    if m:
-                        result[field] = m.group(1).strip()
+                try:
+                    # Common breakage: a stray trailing backslash right before a
+                    # closing quote (seen in real output), which trips literal_eval.
+                    cleaned = re.sub(r'\\+(?=["\'])', '', blob)
+                    parsed = ast.literal_eval(cleaned)
+                except Exception:
+                    parsed = None
+            if isinstance(parsed, dict):
+                for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
+                    cur = result.get(field)
+                    alt_val = parsed.get(field)
+                    if not (isinstance(cur, str) and cur.strip()) and isinstance(alt_val, str) and alt_val.strip():
+                        result[field] = alt_val
+            else:
+                for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
+                    cur = result.get(field)
+                    if not (isinstance(cur, str) and cur.strip()):
+                        m = re.search(rf"['\"]{field}['\"]\s*:\s*['\"](.*?)['\"]\s*(?:,\s*['\"]\w+['\"]\s*:|\}}\s*$|\}})", blob, re.DOTALL)
+                        if m:
+                            result[field] = m.group(1).strip()
+    except Exception:
+        pass
     return result
 
 def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
@@ -4812,9 +4834,9 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     # clear error + retry button instead of silently rendering a blank
     # email window, which was confusing and hard to diagnose.
     if "error" not in result:
-        core_missing = not (str(result.get("from","")).strip() and
-                             str(result.get("subject","")).strip() and
-                             str(result.get("body","")).strip())
+        core_missing = not (_is_nonempty_str(result.get("from")) and
+                             _is_nonempty_str(result.get("subject")) and
+                             _is_nonempty_str(result.get("body")))
         if core_missing:
             debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
             return {"error": {"message": f"Generation returned incomplete content (empty from/subject/body). Parsed keys/values for diagnosis: {debug_keys}"}}
