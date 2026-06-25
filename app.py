@@ -1759,7 +1759,7 @@ def call_ai(prompt, max_tokens=1600):
             # plus any internal reasoning blocks both draw from max_tokens.
             # Without enough headroom, Arabic responses in particular were
             # getting cut off before any real text was produced.
-            anthropic_max_tokens = max(max_tokens, 2400)
+            anthropic_max_tokens = max(max_tokens, 3500)
             resp = requests.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -4424,6 +4424,12 @@ def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar
     """Keeps assessment focused on email content + difficulty, without adding learning-analysis sections."""
     if not isinstance(result, dict):
         return result
+    if "error" not in result:
+        core_missing = not (str(result.get("from","")).strip() and
+                             str(result.get("subject","")).strip() and
+                             str(result.get("body","")).strip())
+        if core_missing:
+            return {"error": {"message": "Generation returned incomplete content (empty from/subject/body) — likely cut off before the JSON finished. Click Try Again to regenerate this question."}}
     result["is_phishing"] = bool(is_phishing)
     if is_phishing:
         result["attack_type"] = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
@@ -4616,7 +4622,7 @@ def call_ai(prompt, max_tokens=1600):
     last = None
     for attempt in range(attempts):
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
-        data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 2600 if provider in {"gemini", "anthropic"} else max_tokens))
+        data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens))
         if not _is_retryable_ai_error(data):
             return data
         last = data
@@ -4737,6 +4743,17 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     result = _BASE_NORMALIZE_LEARNING_FINAL(result, role_type, difficulty, is_ar)
     if not isinstance(result, dict):
         return result
+    # SAFETY NET: if the core fields are still empty after every parsing /
+    # repair step, this generation effectively failed (most likely a
+    # response that got cut off before the JSON closed). Surface this as a
+    # clear error + retry button instead of silently rendering a blank
+    # email window, which was confusing and hard to diagnose.
+    if "error" not in result:
+        core_missing = not (str(result.get("from","")).strip() and
+                             str(result.get("subject","")).strip() and
+                             str(result.get("body","")).strip())
+        if core_missing:
+            return {"error": {"message": "Generation returned incomplete content (empty from/subject/body) — likely cut off before the JSON finished. Click Try Again to regenerate this example."}}
     attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
     result["attack_type"] = attack_type
     indicators = result.get("indicators") if isinstance(result.get("indicators"), list) else []
