@@ -75,6 +75,7 @@ import re
 import html as html_lib
 import random
 import urllib.parse
+import ast
 
 st.set_page_config(
     page_title="AI Phishing Awareness",
@@ -2087,6 +2088,22 @@ def render_email_window(email, is_arabic, show_badges=False):
     bd = 'rtl' if is_arabic else 'ltr'
     ta = 'right' if is_arabic else 'left'
     email_font = 'Tahoma,Arial,sans-serif' if is_arabic else "'Courier New',monospace"
+
+    # FINAL TYPE-SAFETY NET: no matter what slipped through every earlier
+    # parsing/recovery step, these fields must be plain strings here, or
+    # every re.sub()/.strip() below will crash with "expected string or
+    # bytes-like object, got 'dict'". Coerce defensively at the last mile.
+    def _as_text(v):
+        if isinstance(v, str):
+            return v
+        if v is None:
+            return ""
+        return str(v)
+    email = {**email, **{
+        k: _as_text(email.get(k)) for k in
+        ["body", "subject", "from", "to", "suspicious_text", "suspicious_link", "attachment"]
+        if k in email
+    }}
 
     body_raw        = re.sub(r'<[^>]+>','', (email.get("body") or ""))
     suspicious_text = re.sub(r'<[^>]+>','', (email.get("suspicious_text") or ""))
@@ -4756,69 +4773,118 @@ def _clean_indicator_title(title, attack_type, n, is_ar=False):
 
 _BASE_NORMALIZE_LEARNING_FINAL = normalize_learning_analysis
 
+_FIELD_SYNONYMS = {
+    "from":             ["from", "sender", "sender_email", "sender_address", "from_email", "from_address", "sender_display"],
+    "to":               ["to", "recipient", "recipient_email", "to_email", "to_address"],
+    "subject":          ["subject", "email_subject", "title"],
+    "body":             ["body", "body_html", "body_text", "message", "message_body", "content", "email_body"],
+    "suspicious_link":  ["suspicious_link", "link", "malicious_link", "phishing_link", "url"],
+    "attachment":       ["attachment", "attachment_name", "file_attachment"],
+}
+_CANONICAL_FIELDS = list(_FIELD_SYNONYMS.keys())
+
+def _strip_html(text):
+    """Quick plain-text fallback for a body field that came back as
+    body_html (e.g. '<p>Dear Doctor</p>') instead of plain text."""
+    if not isinstance(text, str):
+        return text
+    text = re.sub(r"</p>|</div>|<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    return text.strip()
+
+def _try_parse_blob(value):
+    """If `value` is a string that LOOKS like a stringified dict (Python-
+    repr style, single-quoted — not valid JSON), parse it into a real
+    dict. Tries the exact/clean parse first, then a couple of common
+    real-world breakages (stray backslashes) before giving up."""
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not (s.startswith("{") and s.endswith("}")):
+        return None
+    for candidate in (s, re.sub(r'\\+(?=["\'])', '', s)):
+        try:
+            parsed = ast.literal_eval(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            continue
+    return None
+
+def _deep_flatten(value, pool, depth=0):
+    """Walk `value` (dict, or a string that might itself be a stringified
+    dict) and collect EVERY scalar key/value pair it contains into `pool`,
+    at any nesting depth, under any key name the model invented — so it
+    does not matter whether a provider nests content under 'email',
+    'email_content', 'analysis', or anything else not seen before.
+    Shallower keys win: once a key is in the pool, deeper duplicates of
+    the same key name are ignored, so top-level fields are never
+    overwritten by something buried inside a sub-blob."""
+    if depth > 6:
+        return
+    if isinstance(value, dict):
+        # First pass at this level: capture plain scalars so this level's
+        # own keys take priority over anything nested deeper inside it.
+        # An EMPTY placeholder (e.g. top-level "subject": "") must NOT
+        # block a real, non-empty value found deeper from winning.
+        for k, v in value.items():
+            if isinstance(v, (str, int, float, bool)):
+                if k not in pool or (not pool[k] and v):
+                    pool[k] = v
+        # Second pass: recurse into nested dicts / stringified blobs.
+        for k, v in value.items():
+            if isinstance(v, dict):
+                _deep_flatten(v, pool, depth + 1)
+            elif isinstance(v, str):
+                parsed = _try_parse_blob(v)
+                if parsed is not None:
+                    _deep_flatten(parsed, pool, depth + 1)
+            elif isinstance(v, list):
+                for item in v:
+                    _deep_flatten(item, pool, depth + 1)
+
 def _recover_from_nested_email_blob(result):
-    """Defensive recovery, two layers:
-    1) Field-name synonyms: some providers occasionally use different
-       top-level key names than the schema asks for (observed: 'sender_email'/
-       'sender_name' instead of 'from', 'recipient' instead of 'to'). Map
-       any known synonym straight across if the canonical field is empty.
-    2) Nested blob recovery: some providers wrap the real content inside a
-       STRINGIFIED nested object under an unexpected key like 'email' or
-       'arabic_email' instead of the requested top-level fields. That blob
-       isn't valid JSON (Python-dict-style quoting), so we try
-       ast.literal_eval first, then a regex fallback.
+    """Universal recovery: regardless of WHICH unexpected shape a provider
+    used (wrong field names, content nested one or more levels deep under
+    an arbitrary wrapper key, HTML body instead of plain text, etc.), this
+    rebuilds the canonical top-level fields (from/to/subject/body/
+    suspicious_link/attachment) from whatever the model actually produced,
+    anywhere in the response. This intentionally does NOT special-case any
+    specific wrapper key name (like 'email' or 'analysis') — new naming
+    variants are handled automatically without needing a code change.
     Wrapped in a try/except as a whole: this is glue code patching up
-    inconsistent provider output, so a bug in IT must never crash the whole
+    inconsistent provider output, so a bug in it must never crash the whole
     generation pipeline — worst case, it just leaves the original result
     untouched and the existing core_missing check handles it normally."""
     if not isinstance(result, dict):
         return result
     try:
-        SYNONYMS = {
-            "from": ["sender_email", "sender", "from_email", "from_address"],
-            "to": ["recipient", "recipient_email", "to_email", "to_address"],
-            "subject": ["email_subject"],
-            "body": ["email_body", "message_body", "content"],
-            "suspicious_link": ["link", "malicious_link", "phishing_link"],
-        }
-        for canonical, alts in SYNONYMS.items():
-            cur = result.get(canonical)
-            if not (isinstance(cur, str) and cur.strip()):
-                for alt in alts:
-                    alt_val = result.get(alt)
-                    if isinstance(alt_val, str) and alt_val.strip():
-                        result[canonical] = alt_val
-                        break
+        pool = {}
+        _deep_flatten(result, pool)
 
-        import ast
-        for key in ("email", "arabic_email", "analysis"):
-            blob = result.get(key)
-            if not (isinstance(blob, str) and "{" in blob):
-                continue
-            parsed = None
-            try:
-                parsed = ast.literal_eval(blob)
-            except Exception:
-                try:
-                    # Common breakage: a stray trailing backslash right before a
-                    # closing quote (seen in real output), which trips literal_eval.
-                    cleaned = re.sub(r'\\+(?=["\'])', '', blob)
-                    parsed = ast.literal_eval(cleaned)
-                except Exception:
-                    parsed = None
-            if isinstance(parsed, dict):
-                for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
-                    cur = result.get(field)
-                    alt_val = parsed.get(field)
-                    if not (isinstance(cur, str) and cur.strip()) and isinstance(alt_val, str) and alt_val.strip():
-                        result[field] = alt_val
-            else:
-                for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
-                    cur = result.get(field)
-                    if not (isinstance(cur, str) and cur.strip()):
-                        m = re.search(rf"['\"]{field}['\"]\s*:\s*['\"](.*?)['\"]\s*(?:,\s*['\"]\w+['\"]\s*:|\}}\s*$|\}})", blob, re.DOTALL)
-                        if m:
-                            result[field] = m.group(1).strip()
+        for canonical in _CANONICAL_FIELDS:
+            cur = result.get(canonical)
+            if isinstance(cur, str) and cur.strip():
+                continue  # already has a real value, leave it alone
+            for alt in _FIELD_SYNONYMS[canonical]:
+                val = pool.get(alt)
+                if isinstance(val, str) and val.strip():
+                    result[canonical] = val
+                    break
+
+        # body_html (or any HTML-flavoured body) needs tag-stripping to be
+        # readable plain text in the email window.
+        body = result.get("body")
+        if isinstance(body, str) and re.search(r"<[a-zA-Z]+[^>]*>", body):
+            result["body"] = _strip_html(body)
+
+        # Final type safety net: nothing downstream expects these fields to
+        # ever be anything but a plain string. If recovery still leaves a
+        # non-string (e.g. a dict slipped through), drop it to "" rather
+        # than let it crash re.sub()/.strip() elsewhere.
+        for canonical in _CANONICAL_FIELDS:
+            if canonical in result and not isinstance(result[canonical], str):
+                result[canonical] = "" if result[canonical] is None else str(result[canonical])
     except Exception:
         pass
     return result
