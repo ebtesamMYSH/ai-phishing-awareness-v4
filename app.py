@@ -4430,7 +4430,8 @@ def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar
                              str(result.get("subject","")).strip() and
                              str(result.get("body","")).strip())
         if core_missing:
-            return {"error": {"message": "Generation returned incomplete content (empty from/subject/body) — likely cut off before the JSON finished. Click Try Again to regenerate this question."}}
+            debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
+            return {"error": {"message": f"Generation returned incomplete content (empty from/subject/body). Parsed keys/values for diagnosis: {debug_keys}"}}
     result["is_phishing"] = bool(is_phishing)
     if is_phishing:
         result["attack_type"] = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
@@ -4746,17 +4747,35 @@ def _recover_from_nested_email_blob(result):
     unexpected key like 'email' or 'arabic_email' instead of the requested
     top-level from/to/subject/body fields — even though the prompt's JSON
     schema never asked for that nesting. That blob isn't valid JSON (it uses
-    Python-dict-style single quotes), so we can't json.loads it; instead we
-    regex-extract each field directly out of the raw text and use it to fill
-    in whichever top-level field is still empty."""
+    Python-dict-style quoting), so we try ast.literal_eval first (handles
+    escaped/internal quotes correctly), then fall back to a looser regex
+    extraction for each field if that fails."""
     if not isinstance(result, dict):
         return result
+    import ast
     for key in ("email", "arabic_email"):
         blob = result.get(key)
-        if isinstance(blob, str) and "{" in blob:
+        if not (isinstance(blob, str) and "{" in blob):
+            continue
+        parsed = None
+        try:
+            parsed = ast.literal_eval(blob)
+        except Exception:
+            try:
+                # Common breakage: a stray trailing backslash right before a
+                # closing quote (seen in real output), which trips literal_eval.
+                cleaned = re.sub(r'\\+(?=["\'])', '', blob)
+                parsed = ast.literal_eval(cleaned)
+            except Exception:
+                parsed = None
+        if isinstance(parsed, dict):
+            for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
+                if not str(result.get(field, "")).strip() and str(parsed.get(field, "")).strip():
+                    result[field] = str(parsed.get(field))
+        else:
             for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
                 if not str(result.get(field, "")).strip():
-                    m = re.search(rf"'{field}'\s*:\s*'([^']*)'", blob, re.DOTALL)
+                    m = re.search(rf"['\"]{field}['\"]\s*:\s*['\"](.*?)['\"]\s*(?:,\s*['\"]\w+['\"]\s*:|\}}\s*$|\}})", blob, re.DOTALL)
                     if m:
                         result[field] = m.group(1).strip()
     return result
@@ -4776,7 +4795,7 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
                              str(result.get("subject","")).strip() and
                              str(result.get("body","")).strip())
         if core_missing:
-            debug_keys = {k: (str(v)[:60] if v else v) for k, v in result.items()}
+            debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
             return {"error": {"message": f"Generation returned incomplete content (empty from/subject/body). Parsed keys/values for diagnosis: {debug_keys}"}}
     attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
     result["attack_type"] = attack_type
