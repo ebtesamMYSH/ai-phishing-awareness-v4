@@ -373,6 +373,116 @@ def _save_json_list(path, data):
     except Exception:
         pass
 
+# =============================================================
+# FULL EXCEL EXPORT — one workbook, several sheets:
+#   - Summary: one row per (provider, language) with all 9 metrics
+#   - One sheet PER PROVIDER (Groq/Claude/OpenAI/Gemini) with its own
+#     10-cycle detailed breakdown — this is the part that keeps the
+#     four providers clearly separated instead of mixed in one table.
+#   - Raw_Email_Log: every individually auto-scored email (not just
+#     cycle averages), useful for deeper statistical analysis.
+#   - Rotation_Plan: the systematic 10-cycle role/difficulty/language plan.
+# Built fully in-memory and offered via st.download_button, so once the
+# researcher downloads it, the file lives on her own computer — totally
+# independent of the app's server storage from that point on.
+# =============================================================
+def build_excel_export():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    import io as _io
+
+    runs = load_runs()
+    auto_log = _load_json_list(_AUTO_EVAL_FILE_PATH)
+
+    PROV_ORDER_X = ["groq", "anthropic", "openai", "gemini"]
+    PROV_LABELS_X = {"groq": "Groq", "anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
+
+    HEADER_FILL = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
+    HEADER_FONT = Font(bold=True, color="FFFFFF")
+
+    def style_header(ws, ncols):
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=1, column=c)
+            cell.fill = HEADER_FILL
+            cell.font = HEADER_FONT
+            cell.alignment = Alignment(horizontal="center")
+        ws.freeze_panes = "A2"
+
+    def autosize(ws, ncols, width=16):
+        for c in range(1, ncols + 1):
+            ws.column_dimensions[get_column_letter(c)].width = width
+
+    wb = Workbook()
+
+    # ---- Sheet 1: Summary across all 4 providers x 2 languages ----
+    ws = wb.active
+    ws.title = "Summary"
+    headers = ["Provider", "Language", "Cycles", "Avg Speed (s)", "JSON %", "Error %",
+               "Difficulty %", "Arabic %", "Quality %", "Medical %", "Overall (avg/5)"]
+    ws.append(headers)
+    for p in PROV_ORDER_X:
+        for lang in ["English", "Arabic"]:
+            p_runs = [r for r in runs if r.get("provider") == p and r.get("language") == lang]
+            def avgf(field):
+                vals = [r.get(field) for r in p_runs if r.get(field) is not None]
+                return round(sum(vals) / len(vals), 2) if vals else None
+            ws.append([
+                PROV_LABELS_X[p], lang, len(p_runs),
+                avgf("avg_speed"), avgf("json_rate"), avgf("error_rate"),
+                avgf("auto_difficulty"), avgf("auto_arabic"), avgf("auto_quality"),
+                avgf("auto_medical"), avgf("overall"),
+            ])
+    style_header(ws, len(headers))
+    autosize(ws, len(headers))
+
+    # ---- One sheet per provider: its own 10-cycle breakdown ----
+    cycle_headers = ["#", "Timestamp", "Language", "Avg Speed (s)", "JSON %", "Error %",
+                      "Diversity", "Difficulty %", "Arabic %", "Quality %", "Medical %",
+                      "Overall /5", "Note"]
+    for p in PROV_ORDER_X:
+        ws_p = wb.create_sheet(PROV_LABELS_X[p])
+        ws_p.append(cycle_headers)
+        p_runs_en = [r for r in runs if r.get("provider") == p and r.get("language") == "English"]
+        p_runs_ar = [r for r in runs if r.get("provider") == p and r.get("language") == "Arabic"]
+        for i, r in enumerate(p_runs_en + p_runs_ar, 1):
+            ws_p.append([
+                i, r.get("timestamp"), r.get("language"), r.get("avg_speed"),
+                r.get("json_rate"), r.get("error_rate"), r.get("diversity"),
+                r.get("auto_difficulty"), r.get("auto_arabic"), r.get("auto_quality"),
+                r.get("auto_medical"), r.get("overall"), r.get("note"),
+            ])
+        style_header(ws_p, len(cycle_headers))
+        autosize(ws_p, len(cycle_headers))
+
+    # ---- Raw per-email auto-evaluation log (all providers together, filterable) ----
+    ws_raw = wb.create_sheet("Raw_Email_Log")
+    raw_headers = ["Timestamp", "Provider", "Language", "Difficulty Level",
+                   "Difficulty Score %", "Arabic Score %", "Quality Score %", "Medical Score %"]
+    ws_raw.append(raw_headers)
+    for rec in auto_log:
+        ws_raw.append([
+            rec.get("timestamp"), PROV_LABELS_X.get(rec.get("provider"), rec.get("provider")),
+            rec.get("language"), rec.get("difficulty"),
+            rec.get("difficulty_score"), rec.get("arabic_score"),
+            rec.get("quality_score"), rec.get("medical_score"),
+        ])
+    style_header(ws_raw, len(raw_headers))
+    autosize(ws_raw, len(raw_headers))
+
+    # ---- Rotation plan reference ----
+    ws_rot = wb.create_sheet("Rotation_Plan")
+    rot_headers = ["Cycle #", "Role", "Difficulty", "Language"]
+    ws_rot.append(rot_headers)
+    for plan in ROTATION_PLAN:
+        ws_rot.append([plan["cycle"], plan["role_en"], plan["difficulty"].capitalize(), plan["language"]])
+    style_header(ws_rot, len(rot_headers))
+    autosize(ws_rot, len(rot_headers), width=14)
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
 def _load_json_dict(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -3320,22 +3430,16 @@ button[kind="primary"]:hover{{
         col_exp, col_reset = st.columns(2)
         with col_exp:
             if runs:
-                import csv as _csv, io as _io
-                buf = _io.StringIO()
-                fieldnames = ["timestamp","provider","language","avg_speed","json_rate","error_rate","diversity","auto_difficulty","auto_arabic","auto_quality","auto_medical","overall","note"]
-                writer = _csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
-                writer.writeheader()
-                for r in runs:
-                    writer.writerow(r)
                 st.download_button(
-                    "⬇️ " + ("تصدير كل الدورات CSV" if _is_ar else "Export all cycles as CSV"),
-                    data=buf.getvalue().encode("utf-8-sig"),
-                    file_name="cycles_export.csv",
-                    mime="text/csv",
+                    "⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"),
+                    data=build_excel_export(),
+                    file_name="phishing_research_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
+                    key="export_excel_scorecard",
                 )
             else:
-                st.button("⬇️ " + ("تصدير كل الدورات CSV" if _is_ar else "Export all cycles as CSV"), use_container_width=True, disabled=True)
+                st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_scorecard_disabled")
         with col_reset:
             if st.button(T('reset_metrics'), use_container_width=True):
                 st.session_state["metrics"] = {}
@@ -3569,6 +3673,22 @@ button[kind="primary"]:hover{{
                 a = round(sum(overall_vals)/len(overall_vals), 1)
                 st.markdown(f'<div style="font-weight:700;color:#D1FAE5;margin-bottom:.2rem;">{T("rating_history")} {prov_label} ({lang_for_run})</div>', unsafe_allow_html=True)
                 st.markdown(f'<div style="color:#9CA3AF;font-size:.82rem;">{("الانطباع العام" if _is_ar else "Overall")}: {T("avg_label")} {a}/5 ({len(overall_vals)} {("دورة" if _is_ar else "cycles")}) {"⭐"*round(a)}</div>', unsafe_allow_html=True)
+
+        # Same full Excel export, available here too so the researcher
+        # doesn't need to switch tabs just to download her results.
+        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
+        _all_runs_now = load_runs()
+        if _all_runs_now:
+            st.download_button(
+                "⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"),
+                data=build_excel_export(),
+                file_name="phishing_research_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="export_excel_manual",
+            )
+        else:
+            st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_manual_disabled")
 
 
 
