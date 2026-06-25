@@ -4705,7 +4705,7 @@ _UX_CONTRACT_AR = """
 تنسيق إلزامي: QR → اكتب مرة واحدة فقط [QR: نص قصير]، والرابط الفعلي في suspicious_link فقط لا تكرره بالنص أو التوقيع.
 زر → اكتب مرة واحدة فقط [نص الزر](الرابط)، ولا تكرر الرابط بعدها.
 اجعل الصياغة كاملة تقرأ كبريد احترافي حقيقي، لا حشو تدريبي.
-مهم جدًا: أعد القيم بالحقول المباشرة بالمستوى الأول فقط كما هي بالمخطط تمامًا، بدون أي حقول إضافية أو متداخلة غير المطلوبة.
+مهم جدًا: أعد القيم بالحقول المباشرة بالمستوى الأول فقط كما هي بالمخطط تمامًا، بدون أي حقول إضافية أو متداخلة غير المطلوبة. استخدم نفس أسماء الحقول المحددة بالمخطط حرفيًا، بدون أي تسمية بديلة.
 اكتب المحتوى بلغة واحدة فقط هي اللغة المطلوبة بهذا الطلب. لا تضف نسخة ثانية بلغة أخرى بأي مكان من الرد.
 """
 _UX_CONTRACT_EN = """
@@ -4713,7 +4713,7 @@ _UX_CONTRACT_EN = """
 Mandatory format: QR -> write ONCE [QR: short label]; real URL only in suspicious_link, never repeated in body/signature.
 Button -> write ONCE [Button label](url); never print that URL again afterward.
 Write the whole message like a real professional email, no generic training filler.
-CRITICAL: Return values directly as the top-level fields defined in the schema only — no extra or nested fields beyond what is shown.
+CRITICAL: Return values directly as the top-level fields defined in the schema only — no extra or nested fields beyond what is shown. Use the exact field names given in the schema, character for character — do not substitute alternate names.
 Write the content in ONLY the single language requested for this request. Do not include a second-language version anywhere in the response.
 """
 
@@ -4746,16 +4746,33 @@ def _clean_indicator_title(title, attack_type, n, is_ar=False):
 _BASE_NORMALIZE_LEARNING_FINAL = normalize_learning_analysis
 
 def _recover_from_nested_email_blob(result):
-    """Defensive recovery: some providers (observed with Claude) occasionally
-    wrap the real email content inside a STRINGIFIED nested object under an
-    unexpected key like 'email' or 'arabic_email' instead of the requested
-    top-level from/to/subject/body fields — even though the prompt's JSON
-    schema never asked for that nesting. That blob isn't valid JSON (it uses
-    Python-dict-style quoting), so we try ast.literal_eval first (handles
-    escaped/internal quotes correctly), then fall back to a looser regex
-    extraction for each field if that fails."""
+    """Defensive recovery, two layers:
+    1) Field-name synonyms: some providers occasionally use different
+       top-level key names than the schema asks for (observed: 'sender_email'/
+       'sender_name' instead of 'from', 'recipient' instead of 'to'). Map
+       any known synonym straight across if the canonical field is empty.
+    2) Nested blob recovery: some providers wrap the real content inside a
+       STRINGIFIED nested object under an unexpected key like 'email' or
+       'arabic_email' instead of the requested top-level fields. That blob
+       isn't valid JSON (Python-dict-style quoting), so we try
+       ast.literal_eval first, then a regex fallback."""
     if not isinstance(result, dict):
         return result
+
+    SYNONYMS = {
+        "from": ["sender_email", "sender", "from_email", "from_address"],
+        "to": ["recipient", "recipient_email", "to_email", "to_address"],
+        "subject": ["email_subject"],
+        "body": ["email_body", "message_body", "content"],
+        "suspicious_link": ["link", "malicious_link", "phishing_link"],
+    }
+    for canonical, alts in SYNONYMS.items():
+        if not str(result.get(canonical, "")).strip():
+            for alt in alts:
+                if str(result.get(alt, "")).strip():
+                    result[canonical] = result[alt]
+                    break
+
     import ast
     for key in ("email", "arabic_email", "analysis"):
         blob = result.get(key)
