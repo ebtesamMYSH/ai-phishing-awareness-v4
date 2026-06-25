@@ -232,9 +232,9 @@ def check_difficulty_conformance(result, difficulty, is_phishing=True):
     as a post-hoc automatic check instead of a manual slider."""
     if not isinstance(result, dict):
         return None
-    body = str(result.get("body", ""))
-    subject = str(result.get("subject", ""))
-    frm = str(result.get("from", ""))
+    body = str((result.get("body") or ""))
+    subject = str((result.get("subject") or ""))
+    frm = str((result.get("from") or ""))
     indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
     text = f"{subject} {body}"
 
@@ -285,7 +285,7 @@ def check_arabic_quality(result, is_ar):
     Latin words, broken/garbled characters, obviously truncated text."""
     if not is_ar or not isinstance(result, dict):
         return None
-    body = str(result.get("body", ""))
+    body = str((result.get("body") or ""))
     if not body.strip():
         return 0
     words = body.split()
@@ -313,7 +313,7 @@ def check_general_quality(result):
     for field in ["from", "subject", "body"]:
         if not str(result.get(field, "")).strip():
             score -= 25
-    body = str(result.get("body", ""))
+    body = str((result.get("body") or ""))
     wc = len(body.split())
     if wc < 15:
         score -= 25
@@ -597,11 +597,11 @@ for k, v in [("language","English"),("page","home"),("role",""),
     if k not in st.session_state:
         st.session_state[k] = v
 
-_nav = st.query_params.get("nav", "")
+_nav = (st.query_params.get("nav") or "")
 if _nav in ("login", "register"):
     st.session_state["login_mode"] = _nav
     st.session_state["page"] = "login"
-    _lang = st.query_params.get("lang", "")
+    _lang = (st.query_params.get("lang") or "")
     if _lang in ("Arabic", "English"):
         st.session_state["language"] = _lang
     st.query_params.clear()
@@ -1162,10 +1162,10 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
     if not isinstance(result, dict):
         return ["result is not a JSON object"]
 
-    body = result.get("body", "") or ""
-    subject = result.get("subject", "") or ""
-    sender = result.get("from", "") or ""
-    link = result.get("suspicious_link", "") or ""
+    body = (result.get("body") or "") or ""
+    subject = (result.get("subject") or "") or ""
+    sender = (result.get("from") or "") or ""
+    link = (result.get("suspicious_link") or "") or ""
     combined = " ".join([body, subject, sender, link])
     domains = extract_domains_from_result(result)
     non_official = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
@@ -1784,7 +1784,7 @@ def call_ai(prompt, max_tokens=1600):
                 # Reading only content[0] silently returned an empty string
                 # in those cases. We now join ALL text-type blocks instead.
                 text = "".join(
-                    block.get("text", "")
+                    (block.get("text") or "")
                     for block in raw["content"]
                     if block.get("type") == "text"
                 )
@@ -1826,7 +1826,7 @@ def call_ai(prompt, max_tokens=1600):
             elapsed = time.time() - start_time
             try:
                 parts = raw["candidates"][0]["content"]["parts"]
-                text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+                text = "".join((p.get("text") or "") for p in parts if not p.get("thought"))
                 if not text.strip():
                     _record_metric(provider, elapsed, False, is_error=True)
                     return {"error": {"message": f"Gemini returned no text content (finishReason={raw['candidates'][0].get('finishReason')}): {str(raw)[:300]}"}}
@@ -1920,8 +1920,8 @@ def clean_result(result, is_arabic):
                 ind[k] = clean_foreign_only(ind[k])
                 if is_arabic:
                     ind[k] = remove_foreign_latin_words(ind[k])
-    result["from"] = clean_email_field(result.get("from",""))
-    result["to"] = extract_to_email(result.get("to",""))
+    result["from"] = clean_email_field((result.get("from") or ""))
+    result["to"] = extract_to_email((result.get("to") or ""))
     if result.get("suspicious_link"):
         sl = result["suspicious_link"]
         sl = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]','',sl).strip()
@@ -1974,8 +1974,8 @@ def generate_other_email(index, language, difficulty):
                 return {"error": data['error'].get('message', str(data['error']))}
             result = parse_json_response(data["choices"][0]["message"]["content"].strip())
             result = clean_result(result, is_ar)
-            if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in result.get("body", ""):
-                result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
+            if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in (result.get("body") or ""):
+                result["body"] = (result.get("body") or "") + "\n" + result["suspicious_link"]
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
             if not last_issues or attempt == 1:
@@ -2000,8 +2000,8 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
             result = parse_json_response(data["choices"][0]["message"]["content"].strip())
             result = clean_result(result, is_ar)
             result["is_phishing"] = bool(is_phishing)
-            if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in result.get("body", ""):
-                result["body"] = result.get("body", "") + "\n" + result["suspicious_link"]
+            if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in (result.get("body") or ""):
+                result["body"] = (result.get("body") or "") + "\n" + result["suspicious_link"]
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
             if not last_issues or attempt == 1:
@@ -2033,8 +2033,8 @@ def generate_email(role, index, language, difficulty="medium"):
             result = clean_result(result, is_ar)
             result["to"] = get_recipient(role, index, language, phase="learn")
             if (result.get("suspicious_link") or "").strip():
-                if result["suspicious_link"] not in result.get("body",""):
-                    result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
+                if result["suspicious_link"] not in (result.get("body") or ""):
+                    result["body"] = (result.get("body") or "") + f'\n{result["suspicious_link"]}'
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
             if not last_issues or attempt == 1:
@@ -2068,8 +2068,8 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
             result["to"] = get_recipient(st.session_state.get("role","Clinical"), index, language, phase="assess")
             result["is_phishing"] = bool(is_phishing)
             if (result.get("suspicious_link") or "").strip():
-                if result["suspicious_link"] not in result.get("body",""):
-                    result["body"] = result.get("body","") + f'\n{result["suspicious_link"]}'
+                if result["suspicious_link"] not in (result.get("body") or ""):
+                    result["body"] = (result.get("body") or "") + f'\n{result["suspicious_link"]}'
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
             if not last_issues or attempt == 1:
@@ -2088,9 +2088,9 @@ def render_email_window(email, is_arabic, show_badges=False):
     ta = 'right' if is_arabic else 'left'
     email_font = 'Tahoma,Arial,sans-serif' if is_arabic else "'Courier New',monospace"
 
-    body_raw        = re.sub(r'<[^>]+>','', email.get("body",""))
-    suspicious_text = re.sub(r'<[^>]+>','', email.get("suspicious_text",""))
-    suspicious_link = re.sub(r'<[^>]+>','', email.get("suspicious_link","")).strip()
+    body_raw        = re.sub(r'<[^>]+>','', (email.get("body") or ""))
+    suspicious_text = re.sub(r'<[^>]+>','', (email.get("suspicious_text") or ""))
+    suspicious_link = re.sub(r'<[^>]+>','', (email.get("suspicious_link") or "")).strip()
 
     body_raw = re.sub(r'suspicious_link\s*:\s*', '', body_raw, flags=re.IGNORECASE)
     body_raw = re.sub(r'suspicious_text\s*:\s*', '', body_raw, flags=re.IGNORECASE)
@@ -2248,10 +2248,10 @@ def render_email_window(email, is_arabic, show_badges=False):
         else:
             body_html += link_block_html
 
-    from_val = html_lib.escape(email.get("from",""))
+    from_val = html_lib.escape((email.get("from") or ""))
     to_val   = html_lib.escape(email.get("to","employee@hospital.org"))
-    subj_val = html_lib.escape(email.get("subject",""))
-    att_val  = html_lib.escape(email.get("attachment",""))
+    subj_val = html_lib.escape((email.get("subject") or ""))
+    att_val  = html_lib.escape((email.get("attachment") or ""))
 
     fl = t("From:","من:")
     tl = t("To:","إلى:")
@@ -2360,7 +2360,7 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
     nav_login    = t("Login","تسجيل الدخول")
     nav_register = t("Register","إنشاء حساب")
     nav_brand    = t("AI Phishing Awareness","التوعية بالتصيد الإلكتروني")
-    user_name    = st.session_state.get("user_name","")
+    user_name    = (st.session_state.get("user_name") or "")
     shield_small = SHIELD_SVG.replace('width="52"','width="20"').replace('height="56"','height="22"')
     flex_dir     = "row-reverse" if is_arabic else "row"
 
@@ -2452,7 +2452,7 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
             </div>'''
 
         st.markdown(step_label("1", t("Select your preferred language","اختر اللغة المفضلة")), unsafe_allow_html=True)
-        cur_lang  = st.session_state.get("language","")
+        cur_lang  = (st.session_state.get("language") or "")
         en_cls = "lang-btn-sel" if cur_lang == "English" else "lang-btn"
         ar_cls = "lang-btn-sel" if cur_lang == "Arabic"  else "lang-btn"
         st.markdown(f"""<style>
@@ -2560,7 +2560,7 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
             fr = other_role.strip() if sel==opts[-1] else sel
             lang_chosen = st.session_state.get("lang_explicitly_chosen", False)
             diff_chosen = st.session_state.get("diff_explicitly_chosen", False)
-            user_logged = st.session_state.get("user_name","").strip() != ""
+            user_logged = (st.session_state.get("user_name") or "").strip() != ""
 
             if not user_logged:
                 st.warning(t("⚠️ Please login or register first using the button at the top.",
@@ -2664,10 +2664,10 @@ def page_learning():
             indicators_html += f"""
 <div style="margin-bottom:1rem;">
   <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.3rem;direction:{row_dir};">
-    <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#DC2626;color:white;font-size:.75rem;font-weight:800;flex-shrink:0;">{ind.get('number','')}</span>
-    <span style="font-weight:700;color:#E2E8F0;font-size:.95rem;">{ind.get('title','')}</span>
+    <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#DC2626;color:white;font-size:.75rem;font-weight:800;flex-shrink:0;">{(ind.get('number') or '')}</span>
+    <span style="font-weight:700;color:#E2E8F0;font-size:.95rem;">{(ind.get('title') or '')}</span>
   </div>
-  <div style="color:#94A3B8;font-size:.9rem;line-height:1.65;{pad};direction:{row_dir};text-align:{ta2};">{ind.get('description','')}</div>
+  <div style="color:#94A3B8;font-size:.9rem;line-height:1.65;{pad};direction:{row_dir};text-align:{ta2};">{(ind.get('description') or '')}</div>
 </div>"""
 
         st.markdown(f"""
@@ -2677,9 +2677,9 @@ def page_learning():
   <div class="tutor-section">{t("What is suspicious?","ما هو المشبوه؟")}</div>
   {indicators_html}
   <div class="tutor-section">{t("Why is it risky?","لماذا هو خطير؟")}</div>
-  <div class="tutor-text">{email.get("why_risky","")}</div>
+  <div class="tutor-text">{(email.get("why_risky") or "")}</div>
   <div class="tutor-section">💡 {t("Learning Tip","نصيحة تعليمية")}</div>
-  <div class="tip-box">{email.get("learning_tip","")}</div>
+  <div class="tip-box">{(email.get("learning_tip") or "")}</div>
 </div>""", unsafe_allow_html=True)
 
     st.markdown('<div style="height:1.5rem"></div>',unsafe_allow_html=True)
@@ -2803,7 +2803,7 @@ def page_results():
         ua=answers.get(i,""); ca2="phishing" if pattern[i] else "legitimate"; ok=ua==ca2
         bc2="rgba(16,185,129,.5)" if ok else "rgba(239,68,68,.5)"; bg2="rgba(16,185,129,.05)" if ok else "rgba(239,68,68,.05)"
         ri="✅" if ok else "❌"; tl=tr("Phishing","تصيد") if pattern[i] else tr("Legitimate","شرعية"); ic="🚨" if pattern[i] else "✅"
-        exp=re.sub(r'<[^>]+>','',em.get("explanation",""))
+        exp=re.sub(r'<[^>]+>','',(em.get("explanation") or ""))
         # FIX: bidi issue — Arabic explanations often embed Latin/domain
         # substrings (e.g. "hosp1tal-clinic.org") in the middle of a
         # sentence, sometimes inside parentheses with Arabic words on
@@ -2820,7 +2820,7 @@ def page_results():
                 lambda m: f'<bdi dir="ltr">{m.group(0)}</bdi>',
                 exp
             )
-        st.markdown(f'<div style="border:1px solid {bc2};border-radius:14px;padding:1.2rem 1.5rem;background:{bg2};margin-bottom:1rem;direction:{da};"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;flex-wrap:wrap;gap:.5rem;"><span style="font-weight:800;color:#E2E8F0;">{ri} {tr(f"Q{i+1}",f"س{i+1}")} — {html_lib.escape(em.get("subject",""))}</span><span style="background:{"rgba(239,68,68,.2)" if pattern[i] else "rgba(16,185,129,.2)"};color:{"#FCA5A5" if pattern[i] else "#6EE7B7"};padding:.2rem .8rem;border-radius:99px;font-size:.85rem;font-weight:700;">{ic} {tl}</span></div><div dir="{da}" style="color:#94A3B8;font-size:.9rem;line-height:1.6;direction:{da};text-align:{"right" if is_arabic else "left"};unicode-bidi:embed;">{exp}</div></div>',unsafe_allow_html=True)
+        st.markdown(f'<div style="border:1px solid {bc2};border-radius:14px;padding:1.2rem 1.5rem;background:{bg2};margin-bottom:1rem;direction:{da};"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;flex-wrap:wrap;gap:.5rem;"><span style="font-weight:800;color:#E2E8F0;">{ri} {tr(f"Q{i+1}",f"س{i+1}")} — {html_lib.escape((em.get("subject") or ""))}</span><span style="background:{"rgba(239,68,68,.2)" if pattern[i] else "rgba(16,185,129,.2)"};color:{"#FCA5A5" if pattern[i] else "#6EE7B7"};padding:.2rem .8rem;border-radius:99px;font-size:.85rem;font-weight:700;">{ic} {tl}</span></div><div dir="{da}" style="color:#94A3B8;font-size:.9rem;line-height:1.6;direction:{da};text-align:{"right" if is_arabic else "left"};unicode-bidi:embed;">{exp}</div></div>',unsafe_allow_html=True)
     st.markdown('<div style="height:1rem"></div>',unsafe_allow_html=True)
     if st.button(tr("Go to Report →","← الانتقال للتقرير"),key="go_report"):
         st.session_state["page"]="report"; st.rerun()
@@ -2831,7 +2831,7 @@ def page_report():
     def tp(e,a): return a if is_arabic else e
     st.markdown(f"""<style>#MainMenu,header,footer{{visibility:hidden;}}.stApp{{background:radial-gradient(circle at top left,#0B2E68 0%,#020617 35%,#020617 100%);color:white;}}.block-container{{max-width:900px;padding-top:2rem;}}.stButton>button{{min-height:52px !important;font-weight:800 !important;border-radius:12px !important;background:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.55) !important;width:100% !important;}}.stButton>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border-color:#1EA7FF !important;}}div[style*="direction:rtl"]{{text-align:right;}}</style>""",unsafe_allow_html=True)
     answers=st.session_state.get("assess_answers",{}); pattern=st.session_state.get("assess_pattern",[True]*5+[False]*5)
-    role=st.session_state.get("role",""); lang=st.session_state.get("language","English")
+    role=(st.session_state.get("role") or ""); lang=st.session_state.get("language","English")
     score=pc=lc=0; pt=sum(1 for p in pattern if p); lt=TOTAL-pt
     for i in range(TOTAL):
         ca2="phishing" if pattern[i] else "legitimate"
@@ -2852,8 +2852,8 @@ def page_report():
           tp("Never click suspicious links — type URLs directly","لا تنقر على الروابط المشبوهة — اكتب العنوان مباشرة"),
           tp("Be cautious with unexpected attachments","كن حذراً مع المرفقات غير المتوقعة"),
           tp("When in doubt, contact IT or the sender directly","عند الشك، تواصل مع تقنية المعلومات أو المرسل مباشرة")]
-    user_name  = st.session_state.get("user_name","")
-    user_email = st.session_state.get("user_email","")
+    user_name  = (st.session_state.get("user_name") or "")
+    user_email = (st.session_state.get("user_email") or "")
     name_line  = f'<div style="color:#F8FAFC;font-size:1rem;font-weight:700;margin-bottom:.2rem;">{html_lib.escape(user_name)}</div>' if user_name else ""
     email_line = f'<div style="color:#64748B;font-size:.8rem;margin-bottom:.3rem;">{html_lib.escape(user_email)}</div>' if user_email else ""
     st.markdown(f'<div style="text-align:center;padding:2rem;border:1px solid rgba(37,99,235,.45);border-radius:24px;background:linear-gradient(135deg,rgba(2,6,23,.96),rgba(8,47,73,.88));margin-bottom:1.5rem;direction:{da};">'
@@ -2941,8 +2941,8 @@ div[data-testid="stHorizontalBlock"] > div:last-child .stButton>button{{backgrou
     if is_arabic:
         st.markdown('<style>.stTextInput label{direction:rtl;text-align:right;display:block;}.stTextInput input{text-align:right;direction:rtl;}</style>', unsafe_allow_html=True)
 
-    user_name  = st.text_input(tl("Full name","الاسم الكامل"), value=st.session_state.get("user_name",""), placeholder=tl("e.g. Dr. Sarah Al-Mutairi","مثال: د. سارة المطيري"))
-    user_email = st.text_input(tl("Email address","البريد الإلكتروني"), value=st.session_state.get("user_email",""), placeholder="name@hospital.org")
+    user_name  = st.text_input(tl("Full name","الاسم الكامل"), value=(st.session_state.get("user_name") or ""), placeholder=tl("e.g. Dr. Sarah Al-Mutairi","مثال: د. سارة المطيري"))
+    user_email = st.text_input(tl("Email address","البريد الإلكتروني"), value=(st.session_state.get("user_email") or ""), placeholder="name@hospital.org")
 
     st.markdown('<div style="height:.8rem;"></div>', unsafe_allow_html=True)
     st.markdown("""<style>div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button{height:48px !important;min-height:48px !important;max-height:48px !important;padding-top:0 !important;padding-bottom:0 !important;display:flex !important;align-items:center !important;justify-content:center !important;box-sizing:border-box !important;}</style>""", unsafe_allow_html=True)
@@ -4236,12 +4236,12 @@ Return only this JSON structure:
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     if not isinstance(result, dict):
         return ["result is not a JSON object"]
-    body = result.get("body", "") or ""
-    subject = result.get("subject", "") or ""
-    sender = result.get("from", "") or ""
-    link = result.get("suspicious_link", "") or ""
-    attach = result.get("attachment", "") or ""
-    attack_type = result.get("attack_type", "") or result.get("email_type", "") or ""
+    body = (result.get("body") or "") or ""
+    subject = (result.get("subject") or "") or ""
+    sender = (result.get("from") or "") or ""
+    link = (result.get("suspicious_link") or "") or ""
+    attach = (result.get("attachment") or "") or ""
+    attack_type = (result.get("attack_type") or "") or (result.get("email_type") or "") or ""
     combined = " ".join([body, subject, sender, link, attach, attack_type])
     domains = extract_domains_from_result(result)
     non_official = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
@@ -4871,13 +4871,13 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
         return issues
     if is_phishing:
         # Prevent model-copy artifacts that appeared during testing.
-        titles = " ".join(str(x.get("title", "")) for x in result.get("indicators", []) if isinstance(x, dict))
+        titles = " ".join(str((x.get("title") or "")) for x in result.get("indicators", []) if isinstance(x, dict))
         if _BAD_INDICATOR_TITLES.search(titles):
             issues.append("indicator titles must be concrete, not placeholders")
         # The analysis must mention the attack type in learning outputs.
         attack_type = result.get("attack_type") or result.get("email_type") or ""
         analysis_text = " ".join(str(result.get(k, "")) for k in ["why_risky", "learning_tip"])
-        analysis_text += " " + " ".join(str(x.get("description", "")) for x in result.get("indicators", []) if isinstance(x, dict))
+        analysis_text += " " + " ".join(str((x.get("description") or "")) for x in result.get("indicators", []) if isinstance(x, dict))
         if attack_type and attack_type not in analysis_text:
             issues.append("analysis must connect to attack_type")
     return issues
