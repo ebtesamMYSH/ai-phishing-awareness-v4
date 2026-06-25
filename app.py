@@ -4705,16 +4705,16 @@ _UX_CONTRACT_AR = """
 تنسيق إلزامي: QR → اكتب مرة واحدة فقط [QR: نص قصير]، والرابط الفعلي في suspicious_link فقط لا تكرره بالنص أو التوقيع.
 زر → اكتب مرة واحدة فقط [نص الزر](الرابط)، ولا تكرر الرابط بعدها.
 اجعل الصياغة كاملة تقرأ كبريد احترافي حقيقي، لا حشو تدريبي.
-مهم جدًا: أعد القيم بالحقول المباشرة بالمستوى الأول فقط (from, to, subject, body, ...) كما هي بالمخطط تمامًا.
-لا تضع الإيميل أو محتواه بداخل أي حقل فرعي متداخل مثل "email" أو "arabic_email" أو "analysis" أو أي تغليف إضافي — هذا يكسر التطبيق.
+مهم جدًا: أعد القيم بالحقول المباشرة بالمستوى الأول فقط كما هي بالمخطط تمامًا، بدون أي حقول إضافية أو متداخلة غير المطلوبة.
+اكتب المحتوى بلغة واحدة فقط هي اللغة المطلوبة بهذا الطلب. لا تضف نسخة ثانية بلغة أخرى بأي مكان من الرد.
 """
 _UX_CONTRACT_EN = """
 
 Mandatory format: QR -> write ONCE [QR: short label]; real URL only in suspicious_link, never repeated in body/signature.
 Button -> write ONCE [Button label](url); never print that URL again afterward.
 Write the whole message like a real professional email, no generic training filler.
-CRITICAL: Return the values directly as TOP-LEVEL fields (from, to, subject, body, ...) exactly as named in the schema.
-NEVER nest the email or its content inside any sub-object such as "email", "arabic_email", or "analysis" — that breaks the app.
+CRITICAL: Return values directly as the top-level fields defined in the schema only — no extra or nested fields beyond what is shown.
+Write the content in ONLY the single language requested for this request. Do not include a second-language version anywhere in the response.
 """
 
 def build_prompt(role, index, language):
