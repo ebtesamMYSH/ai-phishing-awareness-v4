@@ -4424,6 +4424,7 @@ def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar
     """Keeps assessment focused on email content + difficulty, without adding learning-analysis sections."""
     if not isinstance(result, dict):
         return result
+    result = _recover_from_nested_email_blob(result)
     if "error" not in result:
         core_missing = not (str(result.get("from","")).strip() and
                              str(result.get("subject","")).strip() and
@@ -4739,10 +4740,32 @@ def _clean_indicator_title(title, attack_type, n, is_ar=False):
 
 _BASE_NORMALIZE_LEARNING_FINAL = normalize_learning_analysis
 
+def _recover_from_nested_email_blob(result):
+    """Defensive recovery: some providers (observed with Claude) occasionally
+    wrap the real email content inside a STRINGIFIED nested object under an
+    unexpected key like 'email' or 'arabic_email' instead of the requested
+    top-level from/to/subject/body fields — even though the prompt's JSON
+    schema never asked for that nesting. That blob isn't valid JSON (it uses
+    Python-dict-style single quotes), so we can't json.loads it; instead we
+    regex-extract each field directly out of the raw text and use it to fill
+    in whichever top-level field is still empty."""
+    if not isinstance(result, dict):
+        return result
+    for key in ("email", "arabic_email"):
+        blob = result.get(key)
+        if isinstance(blob, str) and "{" in blob:
+            for field in ["from", "to", "subject", "body", "suspicious_link", "attachment"]:
+                if not str(result.get(field, "")).strip():
+                    m = re.search(rf"'{field}'\s*:\s*'([^']*)'", blob, re.DOTALL)
+                    if m:
+                        result[field] = m.group(1).strip()
+    return result
+
 def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     result = _BASE_NORMALIZE_LEARNING_FINAL(result, role_type, difficulty, is_ar)
     if not isinstance(result, dict):
         return result
+    result = _recover_from_nested_email_blob(result)
     # SAFETY NET: if the core fields are still empty after every parsing /
     # repair step, this generation effectively failed (most likely a
     # response that got cut off before the JSON closed). Surface this as a
