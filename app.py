@@ -4753,7 +4753,8 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
                              str(result.get("subject","")).strip() and
                              str(result.get("body","")).strip())
         if core_missing:
-            return {"error": {"message": "Generation returned incomplete content (empty from/subject/body) — likely cut off before the JSON finished. Click Try Again to regenerate this example."}}
+            debug_keys = {k: (str(v)[:60] if v else v) for k, v in result.items()}
+            return {"error": {"message": f"Generation returned incomplete content (empty from/subject/body). Parsed keys/values for diagnosis: {debug_keys}"}}
     attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
     result["attack_type"] = attack_type
     indicators = result.get("indicators") if isinstance(result.get("indicators"), list) else []
