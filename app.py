@@ -2933,12 +2933,12 @@ def page_admin():
         "save_btn":         {"en": "💾 Save Ratings",                     "ar": "💾 حفظ التقييم"},
         "ratings_saved":    {"en": "✅ Ratings saved for",                 "ar": "✅ تم حفظ التقييم لـ"},
         "quick_rating":     {"en": "Quick Rating",                        "ar": "تقييم سريع"},
-        "good_btn":         {"en": "👍 Good (4/5 all)",                   "ar": "👍 جيد (4/5 للكل)"},
+        "good_btn":         {"en": "👍 Good (4/5)",                   "ar": "👍 جيد (4/5)"},
         "avg_btn":          {"en": "😐 Average (3/5)",                   "ar": "😐 متوسط (3/5)"},
-        "poor_btn":         {"en": "👎 Poor (2/5 all)",                   "ar": "👎 ضعيف (2/5 للكل)"},
-        "saved_45":         {"en": "✅ Saved 4/5 for all metrics",         "ar": "✅ تم حفظ 4/5 لكل المعايير"},
-        "saved_35":         {"en": "✅ Saved 3/5 for all metrics",         "ar": "✅ تم حفظ 3/5 لكل المعايير"},
-        "saved_25":         {"en": "✅ Saved 2/5 for all metrics",         "ar": "✅ تم حفظ 2/5 لكل المعايير"},
+        "poor_btn":         {"en": "👎 Poor (2/5)",                   "ar": "👎 ضعيف (2/5)"},
+        "saved_45":         {"en": "✅ Saved this cycle — Overall 4/5",         "ar": "✅ تم حفظ هذي الدورة — الانطباع العام 4/5"},
+        "saved_35":         {"en": "✅ Saved this cycle — Overall 3/5",         "ar": "✅ تم حفظ هذي الدورة — الانطباع العام 3/5"},
+        "saved_25":         {"en": "✅ Saved this cycle — Overall 2/5",         "ar": "✅ تم حفظ هذي الدورة — الانطباع العام 2/5"},
         "rating_history":   {"en": "Rating History for",                  "ar": "سجل التقييم لـ"},
         "avg_label":        {"en": "avg",                                 "ar": "المتوسط"},
         "ratings_label":    {"en": "ratings",                             "ar": "تقييم"},
@@ -3467,12 +3467,21 @@ button[kind="primary"]:hover{{
                     f'<span style="color:#6B7280;font-size:.8rem;margin-right:.5rem;"> — '
                     f'{("حكمك الشامل عن جودة/واقعية/لغة هذي الدورة بالكامل" if _is_ar else "Your holistic judgement of quality/realism/language for this whole cycle")}</span></div>',
                     unsafe_allow_html=True)
+        # NEW: a per-(provider, language) "form version" counter. Bumping it
+        # after every successful save changes the slider/note widget keys,
+        # which forces Streamlit to reset them to their defaults instead of
+        # silently keeping the just-saved values — this was the root cause
+        # of accidental double-saves (clicking Save twice resubmitted the
+        # same note/rating because the widgets never visibly reset).
+        _form_ver_key = f"cycle_form_version_{cur_prov}_{lang_for_run}"
+        _form_ver = st.session_state.get(_form_ver_key, 0)
+
         overall_rating = st.select_slider(
             label="overall",
             options=[1, 2, 3, 4, 5],
             value=3,
             format_func=lambda x: f"{'⭐'*x}{'☆'*(5-x)} ({x}/5)",
-            key=f"rating_overall_{cur_prov}_{lang_for_run}",
+            key=f"rating_overall_{cur_prov}_{lang_for_run}_{_form_ver}",
             label_visibility="collapsed"
         )
         st.markdown('<div style="height:.4rem"></div>', unsafe_allow_html=True)
@@ -3480,7 +3489,7 @@ button[kind="primary"]:hover{{
         col_note, _ = st.columns([2,1])
         with col_note:
             note = st.text_input(T('note_label'), placeholder=T('note_placeholder'),
-                                 key=f"note_{cur_prov}_{lang_for_run}")
+                                 key=f"note_{cur_prov}_{lang_for_run}_{_form_ver}")
 
         def _save_cycle_rating(overall_val, note_text):
             snap = snapshot_and_clear_pending_cycle(cur_prov, lang_for_run)
@@ -3502,6 +3511,10 @@ button[kind="primary"]:hover{{
                 "note": note_text or "",
             }
             save_run(record)
+            # Bump the form version so the slider/note reset to defaults on
+            # the next render, making it visually obvious the save went
+            # through and preventing a second click from resubmitting it.
+            st.session_state[_form_ver_key] = _form_ver + 1
 
         if st.button(T('save_btn'), use_container_width=True):
             _save_cycle_rating(overall_rating, note)
