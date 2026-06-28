@@ -3190,23 +3190,21 @@ div[style*="justify-content:space-between"]{{flex-direction:{_flex_dir}!importan
     color:#E2E8F0!important;
     border-color:#1EA7FF!important;
 }}
+a[download],
+a[download]:link,
+a[download]:visited,
 div[data-testid="stDownloadButton"] button,
-div[data-testid="stDownloadButton"] a,
-div[data-testid="stDownloadButton"] a:link,
-div[data-testid="stDownloadButton"] a:visited{{
-    min-height:44px!important;
-    width:100%!important;
-    display:flex!important;
-    align-items:center!important;
-    justify-content:center!important;
+div[data-testid="stDownloadButton"] a{{
     font-weight:700!important;
     border-radius:10px!important;
     background:rgba(15,23,42,.8)!important;
     color:#94A3B8!important;
     border:1px solid rgba(37,99,235,.35)!important;
     text-decoration:none!important;
-    direction:{_dir};
 }}
+a[download]:hover,
+a[download]:focus,
+a[download]:active,
 div[data-testid="stDownloadButton"] button:hover,
 div[data-testid="stDownloadButton"] button:focus,
 div[data-testid="stDownloadButton"] button:active,
