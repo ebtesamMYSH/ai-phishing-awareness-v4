@@ -3342,27 +3342,12 @@ button[kind="primary"]:hover{{
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
 
-        col_diff, col_lang = st.columns(2)
-        with col_diff:
-            st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("difficulty_lvl")}</div>', unsafe_allow_html=True)
-            diff_opts = {"easy": f"🟢 {T('easy')}", "medium": f"🟡 {T('medium')}", "hard": f"🔴 {T('hard')}"}
-            cur_diff = st.session_state.get("difficulty", "medium")
-            for dk, dl in diff_opts.items():
-                is_d = cur_diff == dk
-                label = f"{dl} ✓" if is_d else dl
-                if st.button(label, key=f"adm_diff_{dk}", use_container_width=True,
-                             type="primary" if is_d else "secondary"):
-                    if not is_d:
-                        st.session_state["difficulty"] = dk
-                        st.session_state["emails"] = {}
-                        st.session_state["cache_version"] = int(__import__("time").time()) % 99999
-                        st.rerun()
-
-        with col_lang:
-            st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("language_lbl")}</div>', unsafe_allow_html=True)
-            cur_lang = st.session_state.get("language", "English")
-            lang_display = {"English": "English", "Arabic": "العربية"}
-            for lk in ["English", "Arabic"]:
+        st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.5rem;">{T("language_lbl")}</div>', unsafe_allow_html=True)
+        cur_lang = st.session_state.get("language", "English")
+        lang_display = {"English": "English", "Arabic": "العربية"}
+        col_lang1, col_lang2 = st.columns(2)
+        for lk, lcol in zip(["English", "Arabic"], [col_lang1, col_lang2]):
+            with lcol:
                 is_l = cur_lang == lk
                 label = f"{lang_display[lk]} ✓" if is_l else lang_display[lk]
                 if st.button(label, key=f"adm_lang_{lk}", use_container_width=True,
