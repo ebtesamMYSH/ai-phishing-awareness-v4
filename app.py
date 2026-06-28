@@ -628,7 +628,7 @@ def _safe_error_text(err, language):
     # If, despite everything, a low-level/raw message slipped through (very
     # long, or looks like a Python dict/JSON dump), replace it with a clean
     # generic sentence instead of exposing internals.
-    looks_raw = len(msg) > 220 or msg.strip().startswith("{") or "Parsed keys/values" in msg
+    looks_raw = len(msg) > 450 or msg.strip().startswith("{") or "Parsed keys/values" in msg
     if looks_raw or not msg.strip():
         return ("تعذّر توليد هذا المحتوى حالياً. يرجى الضغط على (حاول مرة أخرى)."
                 if is_ar else
@@ -4912,9 +4912,12 @@ def _short_hint(result):
     for pattern, label in _ERROR_CATEGORY_PATTERNS:
         if re.search(pattern, msg, re.I):
             return f" [{label}]"
-    if len(msg) <= 140 and not msg.startswith("{"):
-        return f" [{msg}]"
-    return " [unrecognized technical error — check debug log]"
+    # Always show the real message, truncated to a safe length, instead of
+    # a vague placeholder — the debug-log tab has proven unreliable across
+    # different hosting setups (ephemeral/multi-instance filesystems), so
+    # the on-screen hint is currently the only dependable diagnostic.
+    flat = re.sub(r"\s+", " ", msg)[:300]
+    return f" [{flat}]"
 
 def _language_clearly_mismatched(result, requested_is_ar):
     """Hard language gate: reject a generation outright if its OWN prose
