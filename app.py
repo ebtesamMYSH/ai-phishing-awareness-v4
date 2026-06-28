@@ -3539,6 +3539,8 @@ button[kind="primary"]:hover{{
         st.markdown(f'<div dir="{_dir}" style="font-size:.75rem;color:#6B7280;">{T("auto_manual_note")}</div>', unsafe_allow_html=True)
         st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
 
+        if not runs:
+            st.caption("⚠️ " + ("لا توجد دورات محفوظة بعد — احفظي تقييم واحد على الأقل (تبويب Manual Ratings) ليظهر زر التصدير فعّالًا." if _is_ar else "No saved cycles yet — save at least one rating (Manual Ratings tab) to activate this button."))
         col_exp, col_reset = st.columns(2)
         with col_exp:
             if runs:
@@ -3551,7 +3553,6 @@ button[kind="primary"]:hover{{
                     key="export_excel_scorecard",
                 )
             else:
-                st.caption("⚠️ " + ("لا توجد دورات محفوظة بعد — احفظي تقييم واحد على الأقل (تبويب Manual Ratings) ليظهر زر التصدير فعّالًا." if _is_ar else "No saved cycles yet — save at least one rating (Manual Ratings tab) to activate this button."))
                 st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_scorecard_disabled")
         with col_reset:
             if st.button(T('reset_metrics'), use_container_width=True):
