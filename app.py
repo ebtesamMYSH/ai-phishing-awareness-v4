@@ -2224,6 +2224,20 @@ def render_email_window(email, is_arabic, show_badges=False):
     body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
     # --------------------------------------------------------
+    # NEW: providers (Groq/Llama especially) often write a trailing
+    # punctuation mark right after the markdown link/QR syntax, e.g.
+    # "...here: [Button](url). Your input is crucial..." — once the
+    # bracket+url is swapped for a token, that stray "." (or ",")
+    # is left dangling right next to the token and renders as an
+    # ugly lone punctuation line. Strip stray punctuation that sits
+    # immediately before/after either token (allowing whitespace).
+    # --------------------------------------------------------
+    body_raw = re.sub(r'[ \t]*[.,؛;:]+[ \t]*(@@(?:QR|LINK)_TOKEN@@)', r'\1', body_raw)
+    body_raw = re.sub(r'(@@(?:QR|LINK)_TOKEN@@)[ \t]*[.,؛]+(?=[ \t]*(\n|$))', r'\1', body_raw)
+    body_raw = re.sub(r'(@@(?:QR|LINK)_TOKEN@@)[ \t]*[.,؛]+[ \t]*', r'\1 ', body_raw)
+    body_raw = body_raw.strip()
+
+    # --------------------------------------------------------
     # SAFETY NET: some providers still print the raw URL as plain
     # text (e.g. in the signature) EVEN THOUGH it is also being
     # rendered as a real QR image or a real button below. If we
@@ -4119,6 +4133,7 @@ def build_prompt(role, index, language):
     _, _, role_type = role_info
     seed = random.randint(100000, 999999)
     plan = get_generation_plan(role_type, is_phishing=True, is_ar=is_ar, phase="learn")
+    st.session_state["_last_learn_vector"] = plan.get("vector", "")
     recipient_email = get_recipient(role, index, language, phase="learn") if role_type != "other" else f"staff.{seed}@hospital.org"
     avoid_topics = get_avoid_list_text(role_type, "learn", is_ar)
     avoid_domains = get_used_domains_text(role_type, "learn", is_ar)
@@ -4235,6 +4250,7 @@ def build_assess_prompt(role, index, is_phishing, language):
     _, _, role_type = role_info
     seed = random.randint(100000, 999999)
     plan = get_generation_plan(role_type, is_phishing=is_phishing, is_ar=is_ar, phase="assess")
+    st.session_state["_last_assess_vector"] = plan.get("vector", "")
     recipient_email = get_recipient(role, index, language, phase="assess") if role_type != "other" else f"staff.{seed}@hospital.org"
     suffix = f"assess_{is_phishing}"
     avoid_topics = get_avoid_list_text(role_type, suffix, is_ar)
@@ -4457,10 +4473,67 @@ def infer_attack_type_from_content(result, is_ar=False):
     existing = result.get("attack_type") or result.get("email_type")
     return existing or ("تصيد موجه" if is_ar else "Spear Phishing")
 
+def _enforce_attack_vector(result, vector):
+    """Many providers (Groq/Llama especially) acknowledge the requested
+    attack vector in their reasoning but then default to inventing an
+    attachment filename regardless, or skip writing the required
+    [QR: ...] / [Label](url) marker in the body. This made every example
+    look the same (always an attachment) even when the diversity plan
+    asked for a link, QR code, or button. We post-process the raw result
+    against the vector that was actually requested for this generation:
+      - If the vector is NOT attachment-related, strip any attachment
+        the model invented anyway.
+      - If the vector IS attachment-related but the model gave a link
+        instead, drop the stray link/QR markers and keep it attachment-only.
+      - If the vector calls for a QR code and no [QR: ...] marker exists
+        in the body, synthesize one.
+      - If the vector calls for a link/button/portal and neither a QR nor
+        a [Label](url) marker exists, synthesize a button.
+    """
+    if not isinstance(result, dict) or not vector:
+        return result
+    v = vector.lower()
+    body = result.get("body") or ""
+    has_qr_marker  = bool(re.search(r'\[\s*QR', body, re.I))
+    has_btn_marker = bool(re.search(r'\[[^\]]{1,80}\]\s*\(\s*https?://', body))
+
+    wants_attachment = any(k in v for k in ["attachment", "pdf", "docx", "xlsm", "docm", "script"])
+    wants_qr         = "qr" in v
+    wants_link       = (not wants_attachment and not wants_qr and
+                        any(k in v for k in ["link", "portal", "document", "url", "console", "enrollment", "share"]))
+
+    if not wants_attachment and (result.get("attachment") or "").strip():
+        result["attachment"] = ""
+
+    if wants_attachment and (has_qr_marker or has_btn_marker):
+        # Vector says attachment but model produced a link/QR marker instead —
+        # strip the markers (keep the plain sentence) so the email stays
+        # attachment-only and doesn't show two vectors at once.
+        body = re.sub(r'\[\s*QR(?:\s*Code)?\s*:?\s*[^\]]*\]', '', body, flags=re.I)
+        body = re.sub(r'\[([^\]]{1,80})\]\s*\(\s*https?://[^\)\s]+\s*\)', r'\1', body)
+        result["body"] = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body).strip()
+        if not (result.get("attachment") or "").strip():
+            result["attachment"] = "Document.pdf"
+
+    elif wants_qr and not has_qr_marker:
+        link = (result.get("suspicious_link") or "").strip() or "https://example-training-only.invalid/verify"
+        result["suspicious_link"] = link
+        sep = "\n\n" if body.strip() else ""
+        result["body"] = (body.rstrip() + sep + "[QR: Scan to continue]").strip()
+
+    elif wants_link and not has_qr_marker and not has_btn_marker:
+        link = (result.get("suspicious_link") or "").strip() or "https://example-training-only.invalid/verify"
+        result["suspicious_link"] = link
+        sep = "\n\n" if body.strip() else ""
+        result["body"] = (body.rstrip() + sep + "[Open Link](" + link + ")").strip()
+
+    return result
+
 def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     """Post-processes model output so analysis is tied to the attack type and role context."""
     if not isinstance(result, dict):
         return result
+    result = _enforce_attack_vector(result, st.session_state.get("_last_learn_vector", ""))
     attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
     result["attack_type"] = attack_type
     if not result.get("email_type"):
@@ -4555,6 +4628,8 @@ def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar
     if not isinstance(result, dict):
         return result
     result = _recover_from_nested_email_blob(result)
+    if is_phishing:
+        result = _enforce_attack_vector(result, st.session_state.get("_last_assess_vector", ""))
     if "error" not in result:
         core_missing = not (_is_nonempty_str(result.get("from")) and
                              _is_nonempty_str(result.get("subject")) and
@@ -4669,8 +4744,16 @@ def _friendly_generation_error(language):
     return "We couldn't generate this example after several attempts. Please tap Try Again."
 
 def _is_incomplete_error(result):
-    return (isinstance(result, dict) and isinstance(result.get("error"), dict)
-            and result["error"].get("code") == "incomplete_content")
+    return isinstance(result, dict) and "error" in result
+
+def _is_fatal_error(result):
+    """A handful of error types where retrying is pointless (e.g. missing/
+    invalid API key) — fail fast instead of burning 3 attempts."""
+    if not (isinstance(result, dict) and "error" in result):
+        return False
+    err = result.get("error")
+    msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+    return bool(re.search(r"api[_\s]?key|unauthorized|401|403|invalid x-api-key", msg, re.I))
 
 def generate_email(role, index, language, difficulty="medium"):
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
@@ -4683,11 +4766,13 @@ def generate_email(role, index, language, difficulty="medium"):
         if isinstance(result, dict) and "error" not in result:
             evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
             return result
+        if _is_fatal_error(result):
+            return result
         if _is_incomplete_error(result):
-            _store_debug("generate_email", result["error"].get("debug"))
+            _store_debug("generate_email", result.get("error"))
             last_err = result
             continue
-        return result  # a real provider/API error — surface immediately
+        return result
     return {"error": {"message": _friendly_generation_error(language)}}
 
 def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
@@ -4700,8 +4785,10 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
         if isinstance(result, dict) and "error" not in result:
             evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
             return result
+        if _is_fatal_error(result):
+            return result
         if _is_incomplete_error(result):
-            _store_debug("generate_assess_email", result["error"].get("debug"))
+            _store_debug("generate_assess_email", result.get("error"))
             continue
         return result
     return {"error": {"message": _friendly_generation_error(language)}}
@@ -4714,8 +4801,10 @@ def generate_other_email(index, language, difficulty):
         if isinstance(result, dict) and "error" not in result:
             evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
             return result
+        if _is_fatal_error(result):
+            return result
         if _is_incomplete_error(result):
-            _store_debug("generate_other_email", result["error"].get("debug"))
+            _store_debug("generate_other_email", result.get("error"))
             continue
         return result
     return {"error": {"message": _friendly_generation_error(language)}}
@@ -4728,8 +4817,10 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
         if isinstance(result, dict) and "error" not in result:
             evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
             return result
+        if _is_fatal_error(result):
+            return result
         if _is_incomplete_error(result):
-            _store_debug("generate_other_assess_email", result["error"].get("debug"))
+            _store_debug("generate_other_assess_email", result.get("error"))
             continue
         return result
     return {"error": {"message": _friendly_generation_error(language)}}
