@@ -4530,7 +4530,16 @@ def _enforce_attack_vector(result, vector):
         body = re.sub(r'\[([^\]]{1,80})\]\s*\(\s*https?://[^\)\s]+\s*\)', r'\1', body)
         result["body"] = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body).strip()
         if not (result.get("attachment") or "").strip():
-            result["attachment"] = "Document.pdf"
+            if "docx" in v or "docm" in v:
+                ext = ".docm" if "docm" in v else ".docx"
+                stem = random.choice(["Patient_Report", "Handover_Notes", "Policy_Update", "Meeting_Minutes"])
+            elif "xlsm" in v:
+                ext, stem = ".xlsm", random.choice(["Backup_Verification", "Audit_Sheet", "Schedule_Update"])
+            elif "script" in v:
+                ext, stem = ".zip", random.choice(["Verification_Tool", "System_Update", "Backup_Script"])
+            else:
+                ext, stem = ".pdf", random.choice(["Patient_Report", "Invoice", "Policy_Notice", "Schedule_Update"])
+            result["attachment"] = f"{stem}{ext}"
 
     elif wants_qr and not has_qr_marker:
         link = (result.get("suspicious_link") or "").strip() or "https://example-training-only.invalid/verify"
@@ -4551,6 +4560,18 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     if not isinstance(result, dict):
         return result
     result = _enforce_attack_vector(result, st.session_state.get("_last_learn_vector", ""))
+    # Defensive: trust what the model actually wrote over the requested
+    # language flag. If the body/subject came back in Arabic script despite
+    # English being requested (or vice versa), all of OUR appended sentences
+    # below must match the model's actual language — otherwise we end up
+    # gluing an English clause onto an Arabic sentence (or the reverse).
+    _sample = f"{result.get('subject','')} {result.get('body','')}"
+    _has_ar_chars = bool(re.search(r'[\u0600-\u06FF]', _sample))
+    _has_lat_chars = bool(re.search(r'[A-Za-z]{4,}', _sample))
+    if _has_ar_chars and not _has_lat_chars:
+        is_ar = True
+    elif _has_lat_chars and not _has_ar_chars:
+        is_ar = False
     attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
     result["attack_type"] = attack_type
     if not result.get("email_type"):
@@ -4640,20 +4661,56 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
 def _is_nonempty_str(v):
     return isinstance(v, str) and bool(v.strip())
 
+def _is_substantial_str(v, min_len=15):
+    return isinstance(v, str) and len(v.strip()) >= min_len
+
+_GENERIC_HOSPITAL_NAME = {"en": "Riyadh Specialist Hospital", "ar": "مستشفى الرياض التخصصي"}
+
+def _resolve_leftover_placeholders(result, is_ar=False):
+    """Some providers occasionally leave an unfilled template placeholder
+    inside the body instead of inventing real content, e.g. literally
+    writing "[Hospital Name]" or "[اسم المستشفى]" instead of a name. These
+    survive because they aren't QR/link markers, so the renderer doesn't
+    touch them. Replace any leftover bracket placeholder that looks like a
+    hospital-name slot with a real, consistent generic name; for any other
+    leftover bracket placeholder, just drop the brackets and keep the
+    (likely still-readable) text inside, since a literal bracket label
+    looks far more obviously broken than blending it into the sentence."""
+    body = result.get("body")
+    if not isinstance(body, str) or "[" not in body:
+        return result
+    hospital_name = _GENERIC_HOSPITAL_NAME["ar" if is_ar else "en"]
+    body = re.sub(r"\[\s*(?:اسم\s*المستشفى|hospital\s*name)\s*\]", hospital_name, body, flags=re.I)
+    # Any other still-unresolved bracket placeholder that isn't one of our
+    # own QR/link/button markers (those are handled separately at render
+    # time) — drop the brackets but keep the label so it doesn't look like
+    # raw template syntax leaked into a "real" email.
+    body = re.sub(r"\[([^\]]{1,40})\](?!\s*\()", lambda m: m.group(1) if not re.match(r"^\s*QR", m.group(1), re.I) else m.group(0), body)
+    result["body"] = body
+    return result
+
 def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar=False):
     """Keeps assessment focused on email content + difficulty, without adding learning-analysis sections."""
     if not isinstance(result, dict):
         return result
     result = _recover_from_nested_email_blob(result)
+    _sample = f"{result.get('subject','')} {result.get('body','')}"
+    _has_ar_chars = bool(re.search(r'[\u0600-\u06FF]', _sample))
+    _has_lat_chars = bool(re.search(r'[A-Za-z]{4,}', _sample))
+    if _has_ar_chars and not _has_lat_chars:
+        is_ar = True
+    elif _has_lat_chars and not _has_ar_chars:
+        is_ar = False
     if is_phishing:
         result = _enforce_attack_vector(result, st.session_state.get("_last_assess_vector", ""))
     if "error" not in result:
         core_missing = not (_is_nonempty_str(result.get("from")) and
                              _is_nonempty_str(result.get("subject")) and
-                             _is_nonempty_str(result.get("body")))
+                             _is_substantial_str(result.get("body")))
         if core_missing:
             debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
             return {"error": {"code": "incomplete_content", "message": "incomplete_generation", "debug": debug_keys}}
+    result = _resolve_leftover_placeholders(result, is_ar)
     result["is_phishing"] = bool(is_phishing)
     if is_phishing:
         result["attack_type"] = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
@@ -5188,6 +5245,13 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     if not isinstance(result, dict):
         return result
     result = _recover_from_nested_email_blob(result)
+    _sample = f"{result.get('subject','')} {result.get('body','')}"
+    _has_ar_chars = bool(re.search(r'[\u0600-\u06FF]', _sample))
+    _has_lat_chars = bool(re.search(r'[A-Za-z]{4,}', _sample))
+    if _has_ar_chars and not _has_lat_chars:
+        is_ar = True
+    elif _has_lat_chars and not _has_ar_chars:
+        is_ar = False
     # SAFETY NET: if the core fields are still empty after every parsing /
     # repair step, this generation effectively failed (most likely a
     # response that got cut off before the JSON closed). Surface this as a
@@ -5196,10 +5260,11 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     if "error" not in result:
         core_missing = not (_is_nonempty_str(result.get("from")) and
                              _is_nonempty_str(result.get("subject")) and
-                             _is_nonempty_str(result.get("body")))
+                             _is_substantial_str(result.get("body")))
         if core_missing:
             debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
             return {"error": {"code": "incomplete_content", "message": "incomplete_generation", "debug": debug_keys}}
+    result = _resolve_leftover_placeholders(result, is_ar)
     attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
     result["attack_type"] = attack_type
     indicators = result.get("indicators") if isinstance(result.get("indicators"), list) else []
