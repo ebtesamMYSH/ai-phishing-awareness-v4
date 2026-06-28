@@ -3190,19 +3190,33 @@ div[style*="justify-content:space-between"]{{flex-direction:{_flex_dir}!importan
     color:#E2E8F0!important;
     border-color:#1EA7FF!important;
 }}
-.stDownloadButton>button{{
-    min-height:44px;
+div[data-testid="stDownloadButton"] button,
+div[data-testid="stDownloadButton"] a,
+div[data-testid="stDownloadButton"] a:link,
+div[data-testid="stDownloadButton"] a:visited{{
+    min-height:44px!important;
+    width:100%!important;
+    display:flex!important;
+    align-items:center!important;
+    justify-content:center!important;
     font-weight:700!important;
     border-radius:10px!important;
     background:rgba(15,23,42,.8)!important;
     color:#94A3B8!important;
     border:1px solid rgba(37,99,235,.35)!important;
+    text-decoration:none!important;
     direction:{_dir};
 }}
-.stDownloadButton>button:hover,.stDownloadButton>button:focus,.stDownloadButton>button:active{{
+div[data-testid="stDownloadButton"] button:hover,
+div[data-testid="stDownloadButton"] button:focus,
+div[data-testid="stDownloadButton"] button:active,
+div[data-testid="stDownloadButton"] a:hover,
+div[data-testid="stDownloadButton"] a:focus,
+div[data-testid="stDownloadButton"] a:active{{
     background:rgba(11,79,168,.3)!important;
     color:#E2E8F0!important;
     border-color:#1EA7FF!important;
+    text-decoration:none!important;
 }}
 button[kind="primary"]{{
     background:rgba(37,99,235,.18)!important;
