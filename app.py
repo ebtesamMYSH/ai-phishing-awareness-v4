@@ -3283,7 +3283,7 @@ button[kind="primary"]:hover{{
   <div style="font-size:.8rem;color:#4ADE80;">{T('authenticated')}</div>
 </div>""", unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs([T('tab_provider'), T('tab_score'), T('tab_manual')])
+    tab1, tab2, tab3, tab4 = st.tabs([T('tab_provider'), T('tab_score'), T('tab_manual'), "🐞 Debug Log"])
 
     _persist_pk = load_persistent_provider("groq")
     _persist_labels = {
@@ -3800,6 +3800,23 @@ button[kind="primary"]:hover{{
             )
         else:
             st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_manual_disabled")
+
+    with tab4:
+        st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">'
+            f'{"آخر 20 خطأ تقني حصل أثناء التوليد (مخفي عن المتدربين، لك فقط)" if _is_ar else "Last 20 technical generation errors (hidden from trainees, for you only)"}'
+            f'</div>', unsafe_allow_html=True)
+        debug_log = list(reversed(st.session_state.get("_debug_log", [])))
+        if not debug_log:
+            st.info("لا توجد أخطاء مسجّلة بعد بهذه الجلسة." if _is_ar else "No errors logged yet this session.")
+        else:
+            if st.button("🗑️ " + ("تفريغ السجل" if _is_ar else "Clear log"), key="clear_debug_log"):
+                st.session_state["_debug_log"] = []
+                st.rerun()
+            for i, entry in enumerate(debug_log):
+                with st.expander(f"#{len(debug_log)-i} — {entry.get('stage','?')}"):
+                    st.json(entry.get("error"))
 
 
 
@@ -4755,15 +4772,32 @@ def _is_fatal_error(result):
     msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
     return bool(re.search(r"api[_\s]?key|unauthorized|401|403|invalid x-api-key", msg, re.I))
 
+_ERROR_CATEGORY_PATTERNS = [
+    (r"JSON parse error|invalid JSON|Cannot parse JSON", "JSON parsing failed"),
+    (r"quality checks", "repeated quality-check rejection"),
+    (r"incomplete_generation|empty from/subject/body", "incomplete model output"),
+    (r"Unexpected API response", "unexpected API response shape"),
+    (r"no text content", "empty model response"),
+    (r"503|UNAVAILABLE|overloaded|high demand", "provider overloaded"),
+    (r"rate limit|429", "rate limited"),
+    (r"timeout|timed out|deadline", "request timed out"),
+    (r"Unknown provider", "unknown provider configured"),
+]
+
 def _short_hint(result):
     if not (isinstance(result, dict) and "error" in result):
         return ""
     err = result.get("error")
     msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
     msg = str(msg or "").strip()
-    if not msg or len(msg) > 140 or msg.strip().startswith("{"):
-        return ""
-    return f" [{msg}]"
+    if not msg:
+        return " [no details returned]"
+    for pattern, label in _ERROR_CATEGORY_PATTERNS:
+        if re.search(pattern, msg, re.I):
+            return f" [{label}]"
+    if len(msg) <= 140 and not msg.startswith("{"):
+        return f" [{msg}]"
+    return " [unrecognized technical error — check debug log]"
 
 def generate_email(role, index, language, difficulty="medium"):
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
