@@ -614,6 +614,29 @@ def set_language(lang):
 def t(en, ar):
     return ar if st.session_state["language"] == "Arabic" else en
 
+def _safe_error_text(err, language):
+    """Never show raw API/debug dicts to trainees. Always return a short,
+    human-readable sentence, and stash whatever technical detail we have in
+    the hidden debug log (visible only to the admin panel / developer)."""
+    is_ar = (language == "Arabic")
+    try:
+        log = st.session_state.setdefault("_debug_log", [])
+        log.append({"stage": "ui_display", "error": err})
+        st.session_state["_debug_log"] = log[-20:]
+    except Exception:
+        pass
+    msg = err.get("message") if isinstance(err, dict) else str(err)
+    msg = str(msg or "")
+    # If, despite everything, a low-level/raw message slipped through (very
+    # long, or looks like a Python dict/JSON dump), replace it with a clean
+    # generic sentence instead of exposing internals.
+    looks_raw = len(msg) > 160 or msg.strip().startswith("{") or "Parsed keys/values" in msg
+    if looks_raw or not msg.strip():
+        return ("تعذّر توليد هذا المحتوى حالياً. يرجى الضغط على (حاول مرة أخرى)."
+                if is_ar else
+                "This content couldn't be generated right now. Please tap Try Again.")
+    return msg
+
 def go_to_learning(role):
     st.session_state["role"]          = role
     st.session_state["page"]          = "learning"
@@ -1059,46 +1082,83 @@ OPEN_CATEGORIES = {
     ],
 }
 
+_USED_TOPICS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "used_topics.json")
+_USED_DOMAINS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "used_domains.json")
+
+def _load_used_store(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+def _save_used_store(path, data):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        # Read-only filesystem on some hosts — fall back silently to
+        # session-only memory for this run.
+        pass
+
 def get_avoid_list_text(role_type, key_suffix, is_ar):
     """
     EN: Returns a formatted "do not repeat these" instruction line built
-    from topics already generated earlier in THIS session (tracked in
-    session_state). Returns "" if nothing generated yet.
+    from topics already generated for this role/phase — combining the
+    current session's memory AND a persistent on-disk store, so variety is
+    maintained across page refreshes, logouts, and new sessions too (not
+    just within one browser tab).
     AR: يرجع سطر تعليمات "لا تكرر هذي" مبني على المواضيع اللي تولّدت
-    قبل بهذي الجلسة (محفوظة بـ session_state). يرجع "" لو ما تولّد شي بعد.
+    لهذا الدور/المرحلة — يجمع بين ذاكرة الجلسة الحالية وملف دائم على القرص،
+    حتى يستمر التنوع بين الجلسات وتسجيلات الخروج، وليس فقط بنفس المتصفح.
     """
-    used = st.session_state.get(f"used_topics_{role_type}_{key_suffix}", [])
+    key = f"used_topics_{role_type}_{key_suffix}"
+    session_used = st.session_state.get(key, [])
+    persisted = _load_used_store(_USED_TOPICS_PATH).get(key, [])
+    used = list(dict.fromkeys(persisted + session_used))[-25:]
     if not used:
         return ""
     items = "؛ ".join(used) if is_ar else "; ".join(used)
     if is_ar:
-        return f"\nمواضيع تولّدت سابقًا بهذي الجلسة — يجب أن يكون موضوعك الجديد مختلفًا عنها تمامًا: {items}\n"
-    return f"\nTopics already generated earlier in this session — your new topic MUST be clearly different from all of these: {items}\n"
+        return f"\nمواضيع تولّدت سابقًا لهذا الدور — يجب أن يكون موضوعك الجديد مختلفًا عنها تمامًا: {items}\n"
+    return f"\nTopics already generated earlier for this role — your new topic MUST be clearly different from all of these: {items}\n"
 
 def remember_used_topic(role_type, key_suffix, topic_text):
-    """EN: appends a short topic descriptor to the session's "used" list
-    (capped at 12 entries) so future prompts can avoid repeating it.
-    AR: يضيف وصف قصير للموضوع لقائمة "المستخدم" بالجلسة (بحد أقصى 12)،
-    حتى التعليمات الجايّة تتجنب تكراره."""
+    """Appends a short topic descriptor to BOTH the session's "used" list and
+    the persistent on-disk store (capped), so future prompts — even from a
+    brand-new session — avoid repeating it."""
     if not topic_text:
         return
     key = f"used_topics_{role_type}_{key_suffix}"
+    entry = str(topic_text)[:80]
     lst = st.session_state.get(key, [])
-    lst.append(str(topic_text)[:80])
+    lst.append(entry)
     st.session_state[key] = lst[-12:]
+    store = _load_used_store(_USED_TOPICS_PATH)
+    persisted = store.get(key, [])
+    persisted.append(entry)
+    store[key] = persisted[-30:]
+    _save_used_store(_USED_TOPICS_PATH, store)
 
 # FIX 1: build_prompt — upgraded to llama-3.3-70b-versatile
 # and enhanced difficulty rules with more detail
 # =============================================================
 def get_used_domains_text(role_type, key_suffix, is_ar):
-    """Return domains already generated in this session so the model avoids them."""
-    used = st.session_state.get(f"used_domains_{role_type}_{key_suffix}", [])
+    """Return domains already generated for this role/phase — combining
+    session memory with a persistent on-disk store (see get_avoid_list_text)."""
+    key = f"used_domains_{role_type}_{key_suffix}"
+    session_used = st.session_state.get(key, [])
+    persisted = _load_used_store(_USED_DOMAINS_PATH).get(key, [])
+    used = list(dict.fromkeys(persisted + session_used))[-40:]
     if not used:
         return ""
     items = "، ".join(used) if is_ar else ", ".join(used)
     if is_ar:
-        return f"\nالنطاقات التي استُخدمت سابقًا في هذه الجلسة ويُمنع تكرارها أو استخدام نطاق قريب منها: {items}\n"
-    return f"\nDomains already used in this session. Do NOT reuse these domains or close variants: {items}\n"
+        return f"\nالنطاقات التي استُخدمت سابقًا لهذا الدور ويُمنع تكرارها أو استخدام نطاق قريب منها: {items}\n"
+    return f"\nDomains already used earlier for this role. Do NOT reuse these domains or close variants: {items}\n"
 
 def extract_domains_from_result(result):
     """Extract domains from generated email fields for session-level anti-repeat memory."""
@@ -1114,7 +1174,8 @@ def extract_domains_from_result(result):
     return clean[:5]
 
 def remember_generated_artifacts(role_type, key_suffix, result):
-    """Remember topic + domains so later generations in the same session avoid repetition."""
+    """Remember topic + domains so later generations (this session AND future
+    sessions, via the on-disk store) avoid repetition."""
     remember_used_topic(role_type, key_suffix, result.get("email_type") or result.get("subject"))
     domains = extract_domains_from_result(result)
     if not domains:
@@ -1125,6 +1186,13 @@ def remember_generated_artifacts(role_type, key_suffix, result):
         if d not in current:
             current.append(d)
     st.session_state[key] = current[-30:]
+    store = _load_used_store(_USED_DOMAINS_PATH)
+    persisted = store.get(key, [])
+    for d in domains:
+        if d not in persisted:
+            persisted.append(d)
+    store[key] = persisted[-60:]
+    _save_used_store(_USED_DOMAINS_PATH, store)
 
 
 def _domain_root(domain):
@@ -1742,6 +1810,7 @@ def call_ai(prompt, max_tokens=1600):
                     "model":       "gpt-4o",
                     "max_tokens":  max_tokens,
                     "temperature": 0.85,
+                    "response_format": {"type": "json_object"},
                     "messages":    [
                         {"role": "system", "content": system_prompt},
                         {"role": "user",   "content": prompt}
@@ -1772,7 +1841,14 @@ def call_ai(prompt, max_tokens=1600):
                     "model":      "claude-sonnet-4-6",
                     "max_tokens": anthropic_max_tokens,
                     "system":     system_prompt,
-                    "messages":   [{"role": "user", "content": prompt}]
+                    "messages":   [
+                        {"role": "user", "content": prompt},
+                        # Prefill: forcing the assistant turn to already start
+                        # with "{" makes Claude continue directly inside the
+                        # JSON object instead of opening with prose/markdown,
+                        # which was the main cause of unparseable replies.
+                        {"role": "assistant", "content": "{"}
+                    ]
                 },
                 timeout=60
             )
@@ -1795,6 +1871,9 @@ def call_ai(prompt, max_tokens=1600):
                     # JSON parsing with a confusing "char 0" message.
                     _record_metric(provider, elapsed, False, is_error=True)
                     return {"error": {"message": f"Claude returned no text content (stop_reason={raw.get('stop_reason')}): {str(raw)[:300]}"}}
+                # Re-attach the "{" we prefilled on the assistant turn — the
+                # API only echoes back the continuation, not the prefix.
+                text = "{" + text
                 _record_metric(provider, elapsed, True, str(hash(text))[:8])
                 return {"choices": [{"message": {"content": text}}]}
             _record_metric(provider, elapsed, False, is_error=True)
@@ -1818,6 +1897,7 @@ def call_ai(prompt, max_tokens=1600):
                     "generationConfig": {
                         "maxOutputTokens": gemini_max_tokens,
                         "temperature":     0.85,
+                        "responseMimeType": "application/json",
                         "thinkingConfig":  {"thinkingBudget": 0}
                     }
                 },
@@ -2658,7 +2738,7 @@ def page_learning():
 </div>""", unsafe_allow_html=True)
 
     if "error" in email:
-        st.error(f"**Error:** {email['error']}")
+        st.error(f"**{t('Error','خطأ')}:** " + _safe_error_text(email['error'], st.session_state['language']))
         if st.button(t("🔄 Try Again","🔄 حاول مرة أخرى"),key="retry_btn"):
             del st.session_state["emails"][idx]; st.rerun()
         return
@@ -2767,7 +2847,7 @@ def page_assessment():
 </div>""",unsafe_allow_html=True)
 
     if "error" in email:
-        st.error(f"Error: {email['error']}")
+        st.error(f"{t('Error','خطأ')}: " + _safe_error_text(email['error'], st.session_state['language']))
         if st.button(ta("🔄 Try Again","🔄 حاول مرة أخرى"),key="assess_retry"):
             del st.session_state["assess_emails"][idx]; st.rerun()
         return
@@ -4403,38 +4483,60 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     while len(indicators) < 3:
         indicators.append({"number": len(indicators)+1, "title": "", "description": ""})
 
-    # Indicator 1 must connect the attack type to the risky action.
+    # Indicator 1 must connect the attack type to the risky action — but we
+    # only OVERWRITE the model's own wording when it's missing/empty or is a
+    # generic placeholder. Otherwise we keep the model's real (varied,
+    # non-repeating) analysis and merely make sure attack_type is mentioned
+    # somewhere in it. Forcing the exact same template sentence every time
+    # (regardless of provider/example) was the root cause of every "AI Tutor
+    # Analysis" panel reading identically across different examples.
+    def _is_placeholder(desc):
+        d = (desc or "").strip()
+        return (not d) or len(d) < 25
+
     if is_ar:
-        indicators[0] = {
-            "number": 1,
-            "title": f"نوع الهجوم: {attack_type}",
-            "description": f"الخطر الأساسي هنا مرتبط بـ {attack_type} داخل سياق {role_hint}."
-        }
-        if not indicators[1].get("title") or re.search(r"النطاق|Domain", indicators[1].get("title", ""), re.I):
-            indicators[1] = {"number": 2, "title": "طلب أو سلوك غير معتاد", "description": "الرسالة تطلب إجراءً لا يتم عادة عبر بريد عادي في بيئة المستشفى."}
-        if not indicators[2].get("title") or re.search(r"إملاء|Spelling", indicators[2].get("title", ""), re.I):
-            indicators[2] = {"number": 3, "title": "عدم توافق السياق أو القناة", "description": "القناة أو المرسل لا يطابقان طريقة التعامل الرسمية مع هذا النوع من الطلبات."}
+        d0 = (indicators[0].get("description") or "").strip()
+        if _is_placeholder(d0):
+            indicators[0] = {
+                "number": 1,
+                "title": indicators[0].get("title") or f"نوع الهجوم: {attack_type}",
+                "description": f"الخطر الأساسي هنا مرتبط بـ {attack_type} داخل سياق {role_hint}."
+            }
+        elif attack_type not in d0:
+            indicators[0]["description"] = f"{d0} (هذا يرتبط مباشرة بنوع هجوم {attack_type}.)"
+        if _is_placeholder(indicators[1].get("description")) or re.search(r"^النطاق$|^Domain$", indicators[1].get("title", "").strip(), re.I):
+            indicators[1] = {"number": 2, "title": indicators[1].get("title") or "طلب أو سلوك غير معتاد", "description": indicators[1].get("description") or "الرسالة تطلب إجراءً لا يتم عادة عبر بريد عادي في بيئة المستشفى."}
+        if _is_placeholder(indicators[2].get("description")) or re.search(r"^إملاء$|^Spelling$", indicators[2].get("title", "").strip(), re.I):
+            indicators[2] = {"number": 3, "title": indicators[2].get("title") or "عدم توافق السياق أو القناة", "description": indicators[2].get("description") or "القناة أو المرسل لا يطابقان طريقة التعامل الرسمية مع هذا النوع من الطلبات."}
         wr = (result.get("why_risky") or "").strip()
-        if attack_type not in wr:
-            wr = f"هذه رسالة {attack_type} بمستوى خطورة {risk}. " + (wr or f"قد تؤثر على {role_hint} إذا تم تنفيذ الطلب دون تحقق.")
+        if _is_placeholder(wr):
+            wr = f"هذه رسالة {attack_type} بمستوى خطورة {risk}. قد تؤثر على {role_hint} إذا تم تنفيذ الطلب دون تحقق."
+        elif attack_type not in wr:
+            wr = f"{wr} (هذه رسالة {attack_type}.)"
         result["why_risky"] = wr
         tip = (result.get("learning_tip") or "").strip()
         if not tip:
             tip = "تحقق من الطلب عبر قناة المستشفى الرسمية قبل فتح رابط أو مرفق أو مشاركة أي بيانات."
         result["learning_tip"] = tip
     else:
-        indicators[0] = {
-            "number": 1,
-            "title": f"Attack Type: {attack_type}",
-            "description": f"The main risk is {attack_type} in a hospital role involving {role_hint}."
-        }
-        if not indicators[1].get("title") or re.search(r"Domain", indicators[1].get("title", ""), re.I):
-            indicators[1] = {"number": 2, "title": "Unusual request or workflow", "description": "The message asks for an action that should normally use an official hospital channel."}
-        if not indicators[2].get("title") or re.search(r"Spelling", indicators[2].get("title", ""), re.I):
-            indicators[2] = {"number": 3, "title": "Role-context or channel mismatch", "description": "The sender or channel does not match how this workplace process should be handled."}
+        d0 = (indicators[0].get("description") or "").strip()
+        if _is_placeholder(d0):
+            indicators[0] = {
+                "number": 1,
+                "title": indicators[0].get("title") or f"Attack Type: {attack_type}",
+                "description": f"The main risk is {attack_type} in a hospital role involving {role_hint}."
+            }
+        elif attack_type not in d0:
+            indicators[0]["description"] = f"{d0} (This directly ties to the {attack_type} attack pattern.)"
+        if _is_placeholder(indicators[1].get("description")) or re.search(r"^Domain$", indicators[1].get("title", "").strip(), re.I):
+            indicators[1] = {"number": 2, "title": indicators[1].get("title") or "Unusual request or workflow", "description": indicators[1].get("description") or "The message asks for an action that should normally use an official hospital channel."}
+        if _is_placeholder(indicators[2].get("description")) or re.search(r"^Spelling$", indicators[2].get("title", "").strip(), re.I):
+            indicators[2] = {"number": 3, "title": indicators[2].get("title") or "Role-context or channel mismatch", "description": indicators[2].get("description") or "The sender or channel does not match how this workplace process should be handled."}
         wr = (result.get("why_risky") or "").strip()
-        if attack_type not in wr:
-            wr = f"This is a {attack_type} email with a {risk} risk level. " + (wr or f"It can affect {role_hint} if the recipient acts without verification.")
+        if _is_placeholder(wr):
+            wr = f"This is a {attack_type} email with a {risk} risk level. It can affect {role_hint} if the recipient acts without verification."
+        elif attack_type not in wr:
+            wr = f"{wr} (This is a {attack_type} email.)"
         result["why_risky"] = wr
         tip = (result.get("learning_tip") or "").strip()
         if not tip:
@@ -4459,7 +4561,7 @@ def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar
                              _is_nonempty_str(result.get("body")))
         if core_missing:
             debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
-            return {"error": {"message": f"Generation returned incomplete content (empty from/subject/body). Parsed keys/values for diagnosis: {debug_keys}"}}
+            return {"error": {"code": "incomplete_content", "message": "incomplete_generation", "debug": debug_keys}}
     result["is_phishing"] = bool(is_phishing)
     if is_phishing:
         result["attack_type"] = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
@@ -4549,37 +4651,88 @@ _OLD_GENERATE_ASSESS_EMAIL_STUDY3 = generate_assess_email
 _OLD_GENERATE_OTHER_EMAIL_STUDY3 = generate_other_email
 _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3 = generate_other_assess_email
 
+def _store_debug(stage, err):
+    """Keep technical diagnostics out of the user-facing UI; stash them in
+    session_state so the admin/debug panel (or developer) can inspect what
+    actually went wrong, instead of dumping a raw Python dict in front of
+    trainees."""
+    try:
+        log = st.session_state.setdefault("_debug_log", [])
+        log.append({"stage": stage, "error": err})
+        st.session_state["_debug_log"] = log[-20:]
+    except Exception:
+        pass
+
+def _friendly_generation_error(language):
+    if language == "Arabic":
+        return "تعذّر توليد هذا المثال حالياً بعد عدة محاولات. يرجى الضغط على (حاول مرة أخرى)."
+    return "We couldn't generate this example after several attempts. Please tap Try Again."
+
+def _is_incomplete_error(result):
+    return (isinstance(result, dict) and isinstance(result.get("error"), dict)
+            and result["error"].get("code") == "incomplete_content")
+
 def generate_email(role, index, language, difficulty="medium"):
-    result = _OLD_GENERATE_EMAIL_STUDY3(role, index, language, difficulty)
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
-    if isinstance(result, dict) and "error" not in result:
-        result = normalize_learning_analysis(result, role_type, difficulty, language == "Arabic")
-        evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
-    return result
+    last_err = None
+    for attempt in range(3):
+        result = _OLD_GENERATE_EMAIL_STUDY3(role, index, language, difficulty)
+        if isinstance(result, dict) and "error" not in result:
+            result = normalize_learning_analysis(result, role_type, difficulty, language == "Arabic")
+        if isinstance(result, dict) and "error" not in result:
+            evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
+            return result
+        if _is_incomplete_error(result):
+            _store_debug("generate_email", result["error"].get("debug"))
+            last_err = result
+            continue
+        return result  # a real provider/API error — surface immediately
+    return {"error": {"message": _friendly_generation_error(language)}}
 
 def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    result = _OLD_GENERATE_ASSESS_EMAIL_STUDY3(role, index, is_phishing, language, difficulty)
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
-    if isinstance(result, dict) and "error" not in result:
-        result = normalize_assessment_email(result, role_type, difficulty, is_phishing, language == "Arabic")
-        evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
-    return result
+    for attempt in range(3):
+        result = _OLD_GENERATE_ASSESS_EMAIL_STUDY3(role, index, is_phishing, language, difficulty)
+        if isinstance(result, dict) and "error" not in result:
+            result = normalize_assessment_email(result, role_type, difficulty, is_phishing, language == "Arabic")
+        if isinstance(result, dict) and "error" not in result:
+            evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
+            return result
+        if _is_incomplete_error(result):
+            _store_debug("generate_assess_email", result["error"].get("debug"))
+            continue
+        return result
+    return {"error": {"message": _friendly_generation_error(language)}}
 
 def generate_other_email(index, language, difficulty):
-    result = _OLD_GENERATE_OTHER_EMAIL_STUDY3(index, language, difficulty)
-    if isinstance(result, dict) and "error" not in result:
-        result = normalize_learning_analysis(result, "other", difficulty, language == "Arabic")
-        evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
-    return result
+    for attempt in range(3):
+        result = _OLD_GENERATE_OTHER_EMAIL_STUDY3(index, language, difficulty)
+        if isinstance(result, dict) and "error" not in result:
+            result = normalize_learning_analysis(result, "other", difficulty, language == "Arabic")
+        if isinstance(result, dict) and "error" not in result:
+            evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
+            return result
+        if _is_incomplete_error(result):
+            _store_debug("generate_other_email", result["error"].get("debug"))
+            continue
+        return result
+    return {"error": {"message": _friendly_generation_error(language)}}
 
 def generate_other_assess_email(index, is_phishing, language, difficulty):
-    result = _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3(index, is_phishing, language, difficulty)
-    if isinstance(result, dict) and "error" not in result:
-        result = normalize_assessment_email(result, "other", difficulty, is_phishing, language == "Arabic")
-        evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
-    return result
+    for attempt in range(3):
+        result = _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3(index, is_phishing, language, difficulty)
+        if isinstance(result, dict) and "error" not in result:
+            result = normalize_assessment_email(result, "other", difficulty, is_phishing, language == "Arabic")
+        if isinstance(result, dict) and "error" not in result:
+            evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
+            return result
+        if _is_incomplete_error(result):
+            _store_debug("generate_other_assess_email", result["error"].get("debug"))
+            continue
+        return result
+    return {"error": {"message": _friendly_generation_error(language)}}
 
 # Make the final system prompt shorter and more explicit for all providers.
 def get_system_prompt():
@@ -4905,7 +5058,7 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
                              _is_nonempty_str(result.get("body")))
         if core_missing:
             debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
-            return {"error": {"message": f"Generation returned incomplete content (empty from/subject/body). Parsed keys/values for diagnosis: {debug_keys}"}}
+            return {"error": {"code": "incomplete_content", "message": "incomplete_generation", "debug": debug_keys}}
     attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
     result["attack_type"] = attack_type
     indicators = result.get("indicators") if isinstance(result.get("indicators"), list) else []
