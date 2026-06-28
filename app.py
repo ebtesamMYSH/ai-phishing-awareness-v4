@@ -4510,7 +4510,8 @@ def _enforce_attack_vector(result, vector):
     if not isinstance(result, dict) or not vector:
         return result
     v = vector.lower()
-    body = result.get("body") or ""
+    body = result.get("body")
+    body = body if isinstance(body, str) else ""
     has_qr_marker  = bool(re.search(r'\[\s*QR', body, re.I))
     has_btn_marker = bool(re.search(r'\[[^\]]{1,80}\]\s*\(\s*https?://', body))
 
@@ -4519,7 +4520,10 @@ def _enforce_attack_vector(result, vector):
     wants_link       = (not wants_attachment and not wants_qr and
                         any(k in v for k in ["link", "portal", "document", "url", "console", "enrollment", "share"]))
 
-    if not wants_attachment and (result.get("attachment") or "").strip():
+    def _as_str(v):
+        return v if isinstance(v, str) else ("" if v is None else str(v))
+
+    if not wants_attachment and _as_str(result.get("attachment")).strip():
         result["attachment"] = ""
 
     if wants_attachment and (has_qr_marker or has_btn_marker):
@@ -4529,7 +4533,7 @@ def _enforce_attack_vector(result, vector):
         body = re.sub(r'\[\s*QR(?:\s*Code)?\s*:?\s*[^\]]*\]', '', body, flags=re.I)
         body = re.sub(r'\[([^\]]{1,80})\]\s*\(\s*https?://[^\)\s]+\s*\)', r'\1', body)
         result["body"] = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body).strip()
-        if not (result.get("attachment") or "").strip():
+        if not _as_str(result.get("attachment")).strip():
             if "docx" in v or "docm" in v:
                 ext = ".docm" if "docm" in v else ".docx"
                 stem = random.choice(["Patient_Report", "Handover_Notes", "Policy_Update", "Meeting_Minutes"])
@@ -4542,13 +4546,13 @@ def _enforce_attack_vector(result, vector):
             result["attachment"] = f"{stem}{ext}"
 
     elif wants_qr and not has_qr_marker:
-        link = (result.get("suspicious_link") or "").strip() or "https://example-training-only.invalid/verify"
+        link = _as_str(result.get("suspicious_link")).strip() or "https://example-training-only.invalid/verify"
         result["suspicious_link"] = link
         sep = "\n\n" if body.strip() else ""
         result["body"] = (body.rstrip() + sep + "[QR: Scan to continue]").strip()
 
     elif wants_link and not has_qr_marker and not has_btn_marker:
-        link = (result.get("suspicious_link") or "").strip() or "https://example-training-only.invalid/verify"
+        link = _as_str(result.get("suspicious_link")).strip() or "https://example-training-only.invalid/verify"
         result["suspicious_link"] = link
         sep = "\n\n" if body.strip() else ""
         result["body"] = (body.rstrip() + sep + "[Open Link](" + link + ")").strip()
@@ -4559,6 +4563,7 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     """Post-processes model output so analysis is tied to the attack type and role context."""
     if not isinstance(result, dict):
         return result
+    result = _recover_from_nested_email_blob(result)
     result = _enforce_attack_vector(result, st.session_state.get("_last_learn_vector", ""))
     # Defensive: trust what the model actually wrote over the requested
     # language flag. If the body/subject came back in Arabic script despite
@@ -4841,6 +4846,7 @@ def _is_fatal_error(result):
     return bool(re.search(r"api[_\s]?key|unauthorized|401|403|invalid x-api-key", msg, re.I))
 
 _ERROR_CATEGORY_PATTERNS = [
+    (r"language_mismatch", "wrong-language output, retried"),
     (r"JSON parse error|invalid JSON|Cannot parse JSON", "JSON parsing failed"),
     (r"quality checks", "repeated quality-check rejection"),
     (r"incomplete_generation|empty from/subject/body", "incomplete model output"),
@@ -4867,15 +4873,48 @@ def _short_hint(result):
         return f" [{msg}]"
     return " [unrecognized technical error — check debug log]"
 
+def _language_clearly_mismatched(result, requested_is_ar):
+    """Hard language gate: reject a generation outright if its OWN prose
+    clearly does not match the requested language. This is intentionally
+    stricter/different from _detect_is_ar (used for cosmetic text-merging
+    decisions) — here an ambiguous/mixed case is NOT rejected (it might be
+    a legitimately bilingual proper noun), but a CLEAR mismatch is:
+      - Arabic was requested but the prose contains no Arabic at all
+        (i.e. the model answered fully in English).
+      - English was requested but the prose contains any Arabic script
+        at all (i.e. the model answered fully or partly in Arabic).
+    """
+    if not isinstance(result, dict):
+        return False
+    subject = result.get("subject")
+    subject = subject if isinstance(subject, str) else ""
+    body = result.get("body")
+    body = body if isinstance(body, str) else ""
+    sample = f"{subject} {body}"
+    sample = re.sub(r"https?://\S+", " ", sample)
+    sample = re.sub(r"\[[^\]]{1,80}\](?:\s*\([^)]*\))?", " ", sample)
+    sample = re.sub(r"\b(Button|QR|Open|Link|Document|pdf|docx|xlsx|xlsm|docm)\b", " ", sample, flags=re.I)
+    has_ar = bool(re.search(r"[\u0600-\u06FF]", sample))
+    has_lat = bool(re.search(r"[A-Za-z]{4,}", sample))
+    if requested_is_ar:
+        return has_lat and not has_ar
+    else:
+        return has_ar
+
 def generate_email(role, index, language, difficulty="medium"):
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
+    requested_is_ar = (language == "Arabic")
     last_err = None
     for attempt in range(3):
         result = _OLD_GENERATE_EMAIL_STUDY3(role, index, language, difficulty)
         if isinstance(result, dict) and "error" not in result:
-            result = normalize_learning_analysis(result, role_type, difficulty, language == "Arabic")
+            result = normalize_learning_analysis(result, role_type, difficulty, requested_is_ar)
         if isinstance(result, dict) and "error" not in result:
+            if _language_clearly_mismatched(result, requested_is_ar):
+                _store_debug("generate_email", {"message": "language_mismatch", "requested_ar": requested_is_ar, "body": str(result.get("body"))[:300]})
+                last_err = {"error": {"message": "language_mismatch"}}
+                continue
             evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
             return result
         if _is_fatal_error(result):
@@ -4890,12 +4929,17 @@ def generate_email(role, index, language, difficulty="medium"):
 def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
+    requested_is_ar = (language == "Arabic")
     last_err = None
     for attempt in range(3):
         result = _OLD_GENERATE_ASSESS_EMAIL_STUDY3(role, index, is_phishing, language, difficulty)
         if isinstance(result, dict) and "error" not in result:
-            result = normalize_assessment_email(result, role_type, difficulty, is_phishing, language == "Arabic")
+            result = normalize_assessment_email(result, role_type, difficulty, is_phishing, requested_is_ar)
         if isinstance(result, dict) and "error" not in result:
+            if _language_clearly_mismatched(result, requested_is_ar):
+                _store_debug("generate_assess_email", {"message": "language_mismatch", "requested_ar": requested_is_ar, "body": str(result.get("body"))[:300]})
+                last_err = {"error": {"message": "language_mismatch"}}
+                continue
             evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
             return result
         if _is_fatal_error(result):
@@ -4908,12 +4952,17 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
     return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
 def generate_other_email(index, language, difficulty):
+    requested_is_ar = (language == "Arabic")
     last_err = None
     for attempt in range(3):
         result = _OLD_GENERATE_OTHER_EMAIL_STUDY3(index, language, difficulty)
         if isinstance(result, dict) and "error" not in result:
-            result = normalize_learning_analysis(result, "other", difficulty, language == "Arabic")
+            result = normalize_learning_analysis(result, "other", difficulty, requested_is_ar)
         if isinstance(result, dict) and "error" not in result:
+            if _language_clearly_mismatched(result, requested_is_ar):
+                _store_debug("generate_other_email", {"message": "language_mismatch", "requested_ar": requested_is_ar, "body": str(result.get("body"))[:300]})
+                last_err = {"error": {"message": "language_mismatch"}}
+                continue
             evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
             return result
         if _is_fatal_error(result):
@@ -4926,12 +4975,17 @@ def generate_other_email(index, language, difficulty):
     return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
 def generate_other_assess_email(index, is_phishing, language, difficulty):
+    requested_is_ar = (language == "Arabic")
     last_err = None
     for attempt in range(3):
         result = _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3(index, is_phishing, language, difficulty)
         if isinstance(result, dict) and "error" not in result:
-            result = normalize_assessment_email(result, "other", difficulty, is_phishing, language == "Arabic")
+            result = normalize_assessment_email(result, "other", difficulty, is_phishing, requested_is_ar)
         if isinstance(result, dict) and "error" not in result:
+            if _language_clearly_mismatched(result, requested_is_ar):
+                _store_debug("generate_other_assess_email", {"message": "language_mismatch", "requested_ar": requested_is_ar, "body": str(result.get("body"))[:300]})
+                last_err = {"error": {"message": "language_mismatch"}}
+                continue
             evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
             return result
         if _is_fatal_error(result):
@@ -5109,11 +5163,17 @@ Write the content in ONLY the single language requested for this request. Do not
 
 def build_prompt(role, index, language):
     base = _BASE_BUILD_PROMPT_UX(role, index, language)
-    return base + (_UX_CONTRACT_AR if language == "Arabic" else _UX_CONTRACT_EN)
+    base = base + (_UX_CONTRACT_AR if language == "Arabic" else _UX_CONTRACT_EN)
+    if language == "Arabic":
+        return base + "\n\nتعليمة لغة نهائية صارمة: كل حقل نصي (subject, body, indicators, why_risky, learning_tip) يجب يكون بالعربية الفصحى بالكامل. ممنوع أي كلمة أو جملة إنجليزية إلا أسماء العلامات التجارية أو الاختصارات التقنية الشائعة (مثل MFA، OTP، PACS). أي رد يحتوي فقرة كاملة بالإنجليزية يعتبر خطأ ويجب رفضه.\n"
+    return base + "\n\nFINAL strict language directive: every text field (subject, body, indicators, why_risky, learning_tip) must be written entirely in English. Do not include any Arabic word or sentence anywhere in the response.\n"
 
 def build_assess_prompt(role, index, is_phishing, language):
     base = _BASE_BUILD_ASSESS_PROMPT_UX(role, index, is_phishing, language)
-    return base + (_UX_CONTRACT_AR if language == "Arabic" else _UX_CONTRACT_EN)
+    base = base + (_UX_CONTRACT_AR if language == "Arabic" else _UX_CONTRACT_EN)
+    if language == "Arabic":
+        return base + "\n\nتعليمة لغة نهائية صارمة: كل حقل نصي يجب يكون بالعربية الفصحى بالكامل. ممنوع أي جملة إنجليزية كاملة إلا الاختصارات التقنية الشائعة.\n"
+    return base + "\n\nFINAL strict language directive: every text field must be written entirely in English. Do not include any Arabic word or sentence anywhere in the response.\n"
 # =============================================================
 # END UX REALISM PATCH
 # =============================================================
