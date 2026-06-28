@@ -620,9 +620,7 @@ def _safe_error_text(err, language):
     the hidden debug log (visible only to the admin panel / developer)."""
     is_ar = (language == "Arabic")
     try:
-        log = st.session_state.setdefault("_debug_log", [])
-        log.append({"stage": "ui_display", "error": err})
-        st.session_state["_debug_log"] = log[-20:]
+        _store_debug("ui_display", err)
     except Exception:
         pass
     msg = err.get("message") if isinstance(err, dict) else str(err)
@@ -3805,14 +3803,31 @@ button[kind="primary"]:hover{{
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
         st.markdown(
             f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">'
-            f'{"آخر 20 خطأ تقني حصل أثناء التوليد (مخفي عن المتدربين، لك فقط)" if _is_ar else "Last 20 technical generation errors (hidden from trainees, for you only)"}'
+            f'{"آخر 20 خطأ تقني حصل أثناء التوليد (محفوظ على القرص، يبقى حتى بعد تحديث الصفحة)" if _is_ar else "Last 20 technical generation errors (saved to disk — survives page reloads)"}'
             f'</div>', unsafe_allow_html=True)
-        debug_log = list(reversed(st.session_state.get("_debug_log", [])))
+        disk_log = _load_debug_log()
+        session_log = st.session_state.get("_debug_log", [])
+        # Merge + dedupe by (stage, ts) while preserving order, disk is the
+        # source of truth since it survives reloads; session entries cover
+        # the (rare) case a write to disk failed on a read-only host.
+        seen = set()
+        merged = []
+        for entry in disk_log + session_log:
+            key = (entry.get("stage"), str(entry.get("ts")), str(entry.get("error"))[:50])
+            if key not in seen:
+                seen.add(key)
+                merged.append(entry)
+        debug_log = list(reversed(merged))[:20]
         if not debug_log:
-            st.info("لا توجد أخطاء مسجّلة بعد بهذه الجلسة." if _is_ar else "No errors logged yet this session.")
+            st.info("لا توجد أخطاء مسجّلة حتى الآن." if _is_ar else "No errors logged yet.")
         else:
             if st.button("🗑️ " + ("تفريغ السجل" if _is_ar else "Clear log"), key="clear_debug_log"):
                 st.session_state["_debug_log"] = []
+                try:
+                    with open(_DEBUG_LOG_PATH, "w", encoding="utf-8") as f:
+                        json.dump([], f)
+                except Exception:
+                    pass
                 st.rerun()
             for i, entry in enumerate(debug_log):
                 with st.expander(f"#{len(debug_log)-i} — {entry.get('stage','?')}"):
@@ -4816,17 +4831,45 @@ _OLD_GENERATE_ASSESS_EMAIL_STUDY3 = generate_assess_email
 _OLD_GENERATE_OTHER_EMAIL_STUDY3 = generate_other_email
 _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3 = generate_other_assess_email
 
+_DEBUG_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_log.json")
+
 def _store_debug(stage, err):
-    """Keep technical diagnostics out of the user-facing UI; stash them in
-    session_state so the admin/debug panel (or developer) can inspect what
-    actually went wrong, instead of dumping a raw Python dict in front of
-    trainees."""
+    """Keep technical diagnostics out of the user-facing UI; persist them to
+    disk (not just session_state) so the admin/debug panel still shows the
+    real error even if the page was reloaded or the admin panel was opened
+    in a fresh session — which was making the log look empty right when it
+    was needed most."""
+    entry = {"stage": stage, "error": err, "ts": __import__("time").time()}
     try:
         log = st.session_state.setdefault("_debug_log", [])
-        log.append({"stage": stage, "error": err})
+        log.append(entry)
         st.session_state["_debug_log"] = log[-20:]
     except Exception:
         pass
+    try:
+        with open(_DEBUG_LOG_PATH, "r", encoding="utf-8") as f:
+            disk_log = json.load(f)
+        if not isinstance(disk_log, list):
+            disk_log = []
+    except Exception:
+        disk_log = []
+    disk_log.append(entry)
+    disk_log = disk_log[-20:]
+    try:
+        with open(_DEBUG_LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(disk_log, f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+def _load_debug_log():
+    try:
+        with open(_DEBUG_LOG_PATH, "r", encoding="utf-8") as f:
+            disk_log = json.load(f)
+        if isinstance(disk_log, list):
+            return disk_log
+    except Exception:
+        pass
+    return []
 
 def _friendly_generation_error(language):
     if language == "Arabic":
