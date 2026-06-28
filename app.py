@@ -3190,6 +3190,20 @@ div[style*="justify-content:space-between"]{{flex-direction:{_flex_dir}!importan
     color:#E2E8F0!important;
     border-color:#1EA7FF!important;
 }}
+.stDownloadButton>button{{
+    min-height:44px;
+    font-weight:700!important;
+    border-radius:10px!important;
+    background:rgba(15,23,42,.8)!important;
+    color:#94A3B8!important;
+    border:1px solid rgba(37,99,235,.35)!important;
+    direction:{_dir};
+}}
+.stDownloadButton>button:hover,.stDownloadButton>button:focus,.stDownloadButton>button:active{{
+    background:rgba(11,79,168,.3)!important;
+    color:#E2E8F0!important;
+    border-color:#1EA7FF!important;
+}}
 button[kind="primary"]{{
     background:rgba(37,99,235,.18)!important;
     color:#93C5FD!important;
