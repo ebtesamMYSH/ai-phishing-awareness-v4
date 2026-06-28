@@ -1840,12 +1840,7 @@ def call_ai(prompt, max_tokens=1600):
                     "max_tokens": anthropic_max_tokens,
                     "system":     system_prompt,
                     "messages":   [
-                        {"role": "user", "content": prompt},
-                        # Prefill: forcing the assistant turn to already start
-                        # with "{" makes Claude continue directly inside the
-                        # JSON object instead of opening with prose/markdown,
-                        # which was the main cause of unparseable replies.
-                        {"role": "assistant", "content": "{"}
+                        {"role": "user", "content": prompt}
                     ]
                 },
                 timeout=60
@@ -1869,9 +1864,6 @@ def call_ai(prompt, max_tokens=1600):
                     # JSON parsing with a confusing "char 0" message.
                     _record_metric(provider, elapsed, False, is_error=True)
                     return {"error": {"message": f"Claude returned no text content (stop_reason={raw.get('stop_reason')}): {str(raw)[:300]}"}}
-                # Re-attach the "{" we prefilled on the assistant turn — the
-                # API only echoes back the continuation, not the prefix.
-                text = "{" + text
                 _record_metric(provider, elapsed, True, str(hash(text))[:8])
                 return {"choices": [{"message": {"content": text}}]}
             _record_metric(provider, elapsed, False, is_error=True)
