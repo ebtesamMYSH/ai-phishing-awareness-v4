@@ -4565,13 +4565,7 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     # English being requested (or vice versa), all of OUR appended sentences
     # below must match the model's actual language — otherwise we end up
     # gluing an English clause onto an Arabic sentence (or the reverse).
-    _sample = f"{result.get('subject','')} {result.get('body','')}"
-    _has_ar_chars = bool(re.search(r'[\u0600-\u06FF]', _sample))
-    _has_lat_chars = bool(re.search(r'[A-Za-z]{4,}', _sample))
-    if _has_ar_chars and not _has_lat_chars:
-        is_ar = True
-    elif _has_lat_chars and not _has_ar_chars:
-        is_ar = False
+    is_ar = _detect_is_ar(result, is_ar)
     attack_type = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
     result["attack_type"] = attack_type
     if not result.get("email_type"):
@@ -4661,6 +4655,29 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
 def _is_nonempty_str(v):
     return isinstance(v, str) and bool(v.strip())
 
+def _detect_is_ar(result, fallback=False):
+    """Decide the real language of a generated email from its own prose,
+    ignoring URLs and our own [QR:...]/[Label](url) markup — those always
+    contain Latin characters (and English words like "Button"/"QR") even
+    inside a fully Arabic email, which previously made the script-based
+    language check always see "mixed" content and silently fall back to
+    the (unreliable) caller-provided flag. Stripping markup first means a
+    genuinely Arabic email is correctly detected as Arabic even though its
+    button/link markup is in Latin script."""
+    subject = result.get("subject") or ""
+    body = result.get("body") or ""
+    sample = f"{subject} {body}"
+    sample = re.sub(r"https?://\S+", " ", sample)
+    sample = re.sub(r"\[[^\]]{1,80}\](?:\s*\([^)]*\))?", " ", sample)
+    sample = re.sub(r"\b(Button|QR|Open|Link|Document|pdf|docx|xlsx|xlsm|docm)\b", " ", sample, flags=re.I)
+    has_ar = bool(re.search(r"[\u0600-\u06FF]", sample))
+    has_lat = bool(re.search(r"[A-Za-z]{4,}", sample))
+    if has_ar and not has_lat:
+        return True
+    if has_lat and not has_ar:
+        return False
+    return fallback
+
 def _is_substantial_str(v, min_len=15):
     return isinstance(v, str) and len(v.strip()) >= min_len
 
@@ -4694,13 +4711,7 @@ def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar
     if not isinstance(result, dict):
         return result
     result = _recover_from_nested_email_blob(result)
-    _sample = f"{result.get('subject','')} {result.get('body','')}"
-    _has_ar_chars = bool(re.search(r'[\u0600-\u06FF]', _sample))
-    _has_lat_chars = bool(re.search(r'[A-Za-z]{4,}', _sample))
-    if _has_ar_chars and not _has_lat_chars:
-        is_ar = True
-    elif _has_lat_chars and not _has_ar_chars:
-        is_ar = False
+    is_ar = _detect_is_ar(result, is_ar)
     if is_phishing:
         result = _enforce_attack_vector(result, st.session_state.get("_last_assess_vector", ""))
     if "error" not in result:
@@ -5245,13 +5256,7 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     if not isinstance(result, dict):
         return result
     result = _recover_from_nested_email_blob(result)
-    _sample = f"{result.get('subject','')} {result.get('body','')}"
-    _has_ar_chars = bool(re.search(r'[\u0600-\u06FF]', _sample))
-    _has_lat_chars = bool(re.search(r'[A-Za-z]{4,}', _sample))
-    if _has_ar_chars and not _has_lat_chars:
-        is_ar = True
-    elif _has_lat_chars and not _has_ar_chars:
-        is_ar = False
+    is_ar = _detect_is_ar(result, is_ar)
     # SAFETY NET: if the core fields are still empty after every parsing /
     # repair step, this generation effectively failed (most likely a
     # response that got cut off before the JSON closed). Surface this as a
