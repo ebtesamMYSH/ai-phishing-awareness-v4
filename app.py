@@ -630,7 +630,7 @@ def _safe_error_text(err, language):
     # If, despite everything, a low-level/raw message slipped through (very
     # long, or looks like a Python dict/JSON dump), replace it with a clean
     # generic sentence instead of exposing internals.
-    looks_raw = len(msg) > 160 or msg.strip().startswith("{") or "Parsed keys/values" in msg
+    looks_raw = len(msg) > 220 or msg.strip().startswith("{") or "Parsed keys/values" in msg
     if looks_raw or not msg.strip():
         return ("تعذّر توليد هذا المحتوى حالياً. يرجى الضغط على (حاول مرة أخرى)."
                 if is_ar else
@@ -4755,6 +4755,16 @@ def _is_fatal_error(result):
     msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
     return bool(re.search(r"api[_\s]?key|unauthorized|401|403|invalid x-api-key", msg, re.I))
 
+def _short_hint(result):
+    if not (isinstance(result, dict) and "error" in result):
+        return ""
+    err = result.get("error")
+    msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+    msg = str(msg or "").strip()
+    if not msg or len(msg) > 140 or msg.strip().startswith("{"):
+        return ""
+    return f" [{msg}]"
+
 def generate_email(role, index, language, difficulty="medium"):
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
@@ -4773,11 +4783,12 @@ def generate_email(role, index, language, difficulty="medium"):
             last_err = result
             continue
         return result
-    return {"error": {"message": _friendly_generation_error(language)}}
+    return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
 def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
+    last_err = None
     for attempt in range(3):
         result = _OLD_GENERATE_ASSESS_EMAIL_STUDY3(role, index, is_phishing, language, difficulty)
         if isinstance(result, dict) and "error" not in result:
@@ -4789,11 +4800,13 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
             return result
         if _is_incomplete_error(result):
             _store_debug("generate_assess_email", result.get("error"))
+            last_err = result
             continue
         return result
-    return {"error": {"message": _friendly_generation_error(language)}}
+    return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
 def generate_other_email(index, language, difficulty):
+    last_err = None
     for attempt in range(3):
         result = _OLD_GENERATE_OTHER_EMAIL_STUDY3(index, language, difficulty)
         if isinstance(result, dict) and "error" not in result:
@@ -4805,11 +4818,13 @@ def generate_other_email(index, language, difficulty):
             return result
         if _is_incomplete_error(result):
             _store_debug("generate_other_email", result.get("error"))
+            last_err = result
             continue
         return result
-    return {"error": {"message": _friendly_generation_error(language)}}
+    return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
 def generate_other_assess_email(index, is_phishing, language, difficulty):
+    last_err = None
     for attempt in range(3):
         result = _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3(index, is_phishing, language, difficulty)
         if isinstance(result, dict) and "error" not in result:
@@ -4821,9 +4836,10 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
             return result
         if _is_incomplete_error(result):
             _store_debug("generate_other_assess_email", result.get("error"))
+            last_err = result
             continue
         return result
-    return {"error": {"message": _friendly_generation_error(language)}}
+    return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
 # Make the final system prompt shorter and more explicit for all providers.
 def get_system_prompt():
