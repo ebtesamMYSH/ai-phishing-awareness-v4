@@ -3551,6 +3551,7 @@ button[kind="primary"]:hover{{
                     key="export_excel_scorecard",
                 )
             else:
+                st.caption("⚠️ " + ("لا توجد دورات محفوظة بعد — احفظي تقييم واحد على الأقل (تبويب Manual Ratings) ليظهر زر التصدير فعّالًا." if _is_ar else "No saved cycles yet — save at least one rating (Manual Ratings tab) to activate this button."))
                 st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_scorecard_disabled")
         with col_reset:
             if st.button(T('reset_metrics'), use_container_width=True):
@@ -3800,6 +3801,7 @@ button[kind="primary"]:hover{{
                 key="export_excel_manual",
             )
         else:
+            st.caption("⚠️ " + ("لا توجد دورات محفوظة بعد — احفظي تقييم واحد على الأقل بالأعلى ليظهر زر التصدير فعّالًا." if _is_ar else "No saved cycles yet — save at least one rating above to activate this button."))
             st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_manual_disabled")
 
     with tab4:
