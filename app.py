@@ -159,6 +159,10 @@ def save_run(record):
             json.dump(runs, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+    try:
+        push_run_to_gsheet(record)
+    except Exception:
+        pass
     return runs
 
 def delete_all_runs():
@@ -182,6 +186,149 @@ def save_metrics_file(metrics_dict):
     try:
         with open(_METRICS_FILE_PATH, "w", encoding="utf-8") as f:
             json.dump(metrics_dict, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+# =============================================================
+# GOOGLE SHEETS SYNC — durable copy independent of this app's
+# container/host, so research data survives redeploys/reboots.
+# -------------------------------------------------------------
+# Fully best-effort and optional: if gspread isn't installed, or
+# st.secrets["gcp_service_account"] / st.secrets["GSHEET_ID"]
+# aren't configured yet, every function below quietly no-ops.
+# Nothing here can ever crash the app or block local saving —
+# the local JSON files remain the primary, always-on storage;
+# this is purely an extra durable copy on top.
+#
+# ONE-TIME SETUP (done outside this code, in Google Cloud /
+# Google Sheets):
+#   1. Google Cloud Console → create a Service Account → create
+#      a JSON key for it → copy its "client_email".
+#   2. Create a new Google Sheet (any name) under the
+#      researcher's own Google account.
+#   3. Share that Sheet with the service account's client_email,
+#      giving it "Editor" access.
+#   4. In Streamlit Cloud → App settings → Secrets, add:
+#        GSHEET_ID = "<the sheet's ID from its URL>"
+#        [gcp_service_account]
+#        type = "service_account"
+#        ... (every field from the downloaded JSON key, as TOML)
+#   5. Add "gspread" and "google-auth" to requirements.txt.
+# That's it — every future "Save Ratings" / metrics update will
+# also land in the Sheet automatically, with three tabs:
+#   - "Cycle Ratings" : one row per manually-rated cycle
+#   - "Auto Metrics"  : one row per periodic metrics snapshot
+# =============================================================
+_GSHEET_CLIENT_CACHE = {"client": None, "tried": False}
+
+def _get_gsheet_client():
+    """Lazily build (and cache) an authorized gspread client from
+    st.secrets. Returns None — silently — if the library isn't
+    installed or secrets aren't configured, so callers never need
+    to special-case "not set up yet" themselves."""
+    if _GSHEET_CLIENT_CACHE["tried"]:
+        return _GSHEET_CLIENT_CACHE["client"]
+    _GSHEET_CLIENT_CACHE["tried"] = True
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        _GSHEET_CLIENT_CACHE["client"] = client
+    except Exception:
+        _GSHEET_CLIENT_CACHE["client"] = None
+    return _GSHEET_CLIENT_CACHE["client"]
+
+def _get_gsheet_id():
+    try:
+        sid = st.secrets.get("GSHEET_ID")
+        return sid.strip() if isinstance(sid, str) and sid.strip() else None
+    except Exception:
+        return None
+
+def gsheet_setup_status():
+    """Human-readable status for the admin panel — never raises."""
+    try:
+        import gspread  # noqa: F401
+    except Exception:
+        return False, "مكتبة gspread غير مثبتة (أضيفيها لـ requirements.txt)" if st.session_state.get("language") == "Arabic" else "gspread library not installed (add it to requirements.txt)"
+    if not _get_gsheet_id():
+        return False, "GSHEET_ID غير موجود بالـ Secrets" if st.session_state.get("language") == "Arabic" else "GSHEET_ID missing from Secrets"
+    try:
+        has_creds = "gcp_service_account" in st.secrets
+    except Exception:
+        has_creds = False
+    if not has_creds:
+        return False, "بيانات اعتماد gcp_service_account غير موجودة بالـ Secrets" if st.session_state.get("language") == "Arabic" else "gcp_service_account credentials missing from Secrets"
+    client = _get_gsheet_client()
+    if client is None:
+        return False, "فشل الاتصال — تأكدي من صحة بيانات الاعتماد ومشاركة الشيت مع الحساب الآلي" if st.session_state.get("language") == "Arabic" else "Connection failed — check credentials and that the Sheet is shared with the service account"
+    return True, "متصل وشغال ✅" if st.session_state.get("language") == "Arabic" else "Connected and working ✅"
+
+def _get_or_create_worksheet(sheet, tab_name, headers):
+    try:
+        ws = sheet.worksheet(tab_name)
+    except Exception:
+        ws = sheet.add_worksheet(title=tab_name, rows=1000, cols=max(10, len(headers)))
+        ws.append_row(headers)
+        return ws
+    try:
+        existing_header = ws.row_values(1)
+        if not existing_header:
+            ws.append_row(headers)
+    except Exception:
+        pass
+    return ws
+
+def push_run_to_gsheet(record):
+    """Append one manually-rated cycle to the 'Cycle Ratings' tab.
+    Best-effort: any failure (offline, not configured, quota, etc.)
+    is swallowed so the researcher's local save never fails because
+    of this extra step."""
+    client = _get_gsheet_client()
+    sheet_id = _get_gsheet_id()
+    if not client or not sheet_id:
+        return
+    try:
+        sheet = client.open_by_key(sheet_id)
+        headers = ["timestamp", "provider", "language", "overall",
+                   "auto_difficulty", "auto_arabic", "auto_quality", "auto_medical",
+                   "n_auto_emails", "avg_speed", "json_rate", "error_rate",
+                   "diversity", "note"]
+        ws = _get_or_create_worksheet(sheet, "Cycle Ratings", headers)
+        ws.append_row([record.get(h, "") for h in headers], value_input_option="USER_ENTERED")
+    except Exception:
+        pass
+
+def push_metrics_snapshot_to_gsheet(provider, m):
+    """Append one timestamped snapshot row per provider to the
+    'Auto Metrics' tab, using the SAME raw shape _record_metric keeps
+    in st.session_state['metrics'][provider] (speed list, json_ok/
+    json_fail counts, errors, calls, hashes) — summarized here into
+    the same percentages shown on the Score Card."""
+    client = _get_gsheet_client()
+    sheet_id = _get_gsheet_id()
+    if not client or not sheet_id:
+        return
+    try:
+        sheet = client.open_by_key(sheet_id)
+        headers = ["timestamp", "provider", "calls", "avg_speed_s",
+                   "json_success_rate_pct", "error_rate_pct", "unique_responses"]
+        ws = _get_or_create_worksheet(sheet, "Auto Metrics", headers)
+        m = m or {}
+        speeds = m.get("speed") or []
+        avg_speed = round(sum(speeds) / len(speeds), 2) if speeds else ""
+        json_total = (m.get("json_ok", 0) + m.get("json_fail", 0))
+        json_rate = round(100 * m.get("json_ok", 0) / json_total, 1) if json_total else ""
+        calls = m.get("calls", 0)
+        err_rate = round(100 * m.get("errors", 0) / calls, 1) if calls else ""
+        unique = len(m.get("hashes") or [])
+        ws.append_row([
+            __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+            provider, calls, avg_speed, json_rate, err_rate, unique,
+        ], value_input_option="USER_ENTERED")
     except Exception:
         pass
 
@@ -1749,6 +1896,10 @@ def _record_metric(provider, speed_sec, json_success, content_hash=None, is_erro
     if is_error:
         m["errors"] += 1
         save_metrics_file(st.session_state["metrics"])
+        try:
+            push_metrics_snapshot_to_gsheet(provider, m)
+        except Exception:
+            pass
         return
     m["speed"].append(round(speed_sec, 2))
     if json_success:
@@ -1758,6 +1909,10 @@ def _record_metric(provider, speed_sec, json_success, content_hash=None, is_erro
     if content_hash and content_hash not in m["hashes"]:
         m["hashes"].append(content_hash)
     save_metrics_file(st.session_state["metrics"])
+    try:
+        push_metrics_snapshot_to_gsheet(provider, m)
+    except Exception:
+        pass
 
 def call_ai(prompt, max_tokens=1600):
     import time
@@ -3382,6 +3537,25 @@ button[kind="primary"]:hover{{
                         st.session_state["language"] = lk
                         st.session_state["emails"] = {}
                         st.rerun()
+
+        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
+        _gs_ok, _gs_msg = gsheet_setup_status()
+        _gs_id = _get_gsheet_id()
+        st.markdown(
+            f'''<div dir="{_dir}" style="padding:.8rem 1rem;border-radius:10px;
+            border:1px solid {"rgba(34,197,94,.4)" if _gs_ok else "rgba(245,158,11,.4)"};
+            background:{"rgba(4,20,4,.5)" if _gs_ok else "rgba(40,30,4,.5)"};
+            display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
+              <div>
+                <div style="font-weight:800;color:{"#86EFAC" if _gs_ok else "#FCD34D"};">
+                  {"📊 " + ("نسخة Google Sheets الدائمة" if _is_ar else "Durable Google Sheets backup")}
+                </div>
+                <div style="font-size:.8rem;color:#9CA3AF;">{_gs_msg}</div>
+              </div>
+              {f'<a href="https://docs.google.com/spreadsheets/d/{_gs_id}/edit" target="_blank" style="color:#60A5FA;font-weight:700;text-decoration:none;">{"فتح الشيت ↗" if _is_ar else "Open Sheet ↗"}</a>' if (_gs_ok and _gs_id) else ''}
+            </div>''',
+            unsafe_allow_html=True
+        )
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
         if st.button(T('clear_cache'), use_container_width=True):
