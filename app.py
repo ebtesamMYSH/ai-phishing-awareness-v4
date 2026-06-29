@@ -3541,21 +3541,30 @@ button[kind="primary"]:hover{{
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
         _gs_ok, _gs_msg = gsheet_setup_status()
         _gs_id = _get_gsheet_id()
-        st.markdown(
-            f'''<div dir="{_dir}" style="padding:.8rem 1rem;border-radius:10px;
-            border:1px solid {"rgba(34,197,94,.4)" if _gs_ok else "rgba(245,158,11,.4)"};
-            background:{"rgba(4,20,4,.5)" if _gs_ok else "rgba(40,30,4,.5)"};
-            display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">
-              <div>
-                <div style="font-weight:800;color:{"#86EFAC" if _gs_ok else "#FCD34D"};">
-                  {"📊 " + ("نسخة Google Sheets الدائمة" if _is_ar else "Durable Google Sheets backup")}
-                </div>
-                <div style="font-size:.8rem;color:#9CA3AF;">{_gs_msg}</div>
-              </div>
-              {f'<a href="https://docs.google.com/spreadsheets/d/{_gs_id}/edit" target="_blank" style="color:#60A5FA;font-weight:700;text-decoration:none;">{"فتح الشيت ↗" if _is_ar else "Open Sheet ↗"}</a>' if (_gs_ok and _gs_id) else ''}
-            </div>''',
-            unsafe_allow_html=True
+        _gs_border = "rgba(34,197,94,.4)" if _gs_ok else "rgba(245,158,11,.4)"
+        _gs_bg = "rgba(4,20,4,.5)" if _gs_ok else "rgba(40,30,4,.5)"
+        _gs_title_color = "#86EFAC" if _gs_ok else "#FCD34D"
+        _gs_title = "📊 " + ("نسخة Google Sheets الدائمة" if _is_ar else "Durable Google Sheets backup")
+        _gs_link_html = ""
+        if _gs_ok and _gs_id:
+            _gs_link_text = "فتح الشيت ↗" if _is_ar else "Open Sheet ↗"
+            _gs_link_html = (
+                '<a href="https://docs.google.com/spreadsheets/d/' + _gs_id + '/edit" '
+                'target="_blank" style="color:#60A5FA;font-weight:700;text-decoration:none;">'
+                + _gs_link_text + '</a>'
+            )
+        _gs_html = (
+            '<div dir="' + _dir + '" style="padding:.8rem 1rem;border-radius:10px;'
+            'border:1px solid ' + _gs_border + ';background:' + _gs_bg + ';'
+            'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">'
+            '<div>'
+            '<div style="font-weight:800;color:' + _gs_title_color + ';">' + _gs_title + '</div>'
+            '<div style="font-size:.8rem;color:#9CA3AF;">' + _gs_msg + '</div>'
+            '</div>'
+            + _gs_link_html +
+            '</div>'
         )
+        st.markdown(_gs_html, unsafe_allow_html=True)
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
         if st.button(T('clear_cache'), use_container_width=True):
