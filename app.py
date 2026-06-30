@@ -3847,7 +3847,7 @@ button[kind="primary"]:hover{{
         st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
 
         if not runs:
-            st.caption("⚠️ " + ("لا توجد دورات محفوظة بعد — احفظي تقييم واحد على الأقل (تبويب Manual Ratings) ليظهر زر التصدير فعّالًا." if _is_ar else "No saved cycles yet — save at least one rating (Manual Ratings tab) to activate this button."))
+            st.markdown(f'<div dir="{_dir}" style="text-align:{_align};font-size:.8rem;color:#6B7280;">⚠️ ' + ("احفظي تقييمًا واحدًا على الأقل من تبويب Manual Ratings لتفعيل التصدير." if _is_ar else "Save at least one rating from the Manual Ratings tab to enable export.") + '</div>', unsafe_allow_html=True)
         col_exp, col_reset = st.columns(2)
         with col_exp:
             if runs:
@@ -4111,7 +4111,7 @@ button[kind="primary"]:hover{{
                 key="export_excel_manual",
             )
         else:
-            st.caption("⚠️ " + ("لا توجد دورات محفوظة بعد — احفظي تقييم واحد على الأقل بالأعلى ليظهر زر التصدير فعّالًا." if _is_ar else "No saved cycles yet — save at least one rating above to activate this button."))
+            st.markdown(f'<div dir="{_dir}" style="text-align:{_align};font-size:.8rem;color:#6B7280;">⚠️ ' + ("احفظي تقييمًا واحدًا على الأقل أعلاه لتفعيل التصدير." if _is_ar else "Save at least one rating above to enable export.") + '</div>', unsafe_allow_html=True)
             st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_manual_disabled")
 
     with tab4:
