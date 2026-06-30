@@ -336,6 +336,37 @@ def push_metrics_snapshot_to_gsheet(provider, m):
     except Exception:
         pass
 
+def pull_latest_auto_metrics_from_gsheet():
+    """Read the 'Auto Metrics' tab and return the LATEST snapshot row per
+    provider (since each save appends a new timestamped row rather than
+    updating in place). Used as a durable fallback for the Score Card's
+    live performance boxes (Avg Speed / JSON% / Error% / Unique Responses)
+    when the local in-session 'metrics' dict is empty for that provider —
+    e.g. right after the app container restarts and metrics.json is wiped,
+    even though real generation activity already happened and was synced."""
+    cache = st.session_state.get("_gsheet_auto_metrics_cache")
+    now = __import__("time").time()
+    if cache and (now - cache.get("ts", 0) < 60):
+        return cache["latest"]
+    client = _get_gsheet_client()
+    sheet_id = _get_gsheet_id()
+    latest = {}
+    if not client or not sheet_id:
+        return latest
+    try:
+        sheet = client.open_by_key(sheet_id)
+        ws = sheet.worksheet("Auto Metrics")
+        records = ws.get_all_records()
+        for rec in records:
+            p = str(rec.get("provider", "")).strip()
+            if not p:
+                continue
+            latest[p] = rec  # later rows overwrite earlier ones -> last wins
+    except Exception:
+        latest = {}
+    st.session_state["_gsheet_auto_metrics_cache"] = {"ts": now, "latest": latest}
+    return latest
+
 def pull_runs_from_gsheet():
     """Read every row back from the 'Cycle Ratings' tab and reshape it into
     the exact same record dicts load_runs()/save_run() use locally. This is
@@ -3681,6 +3712,7 @@ button[kind="primary"]:hover{{
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
 
         # ── One independent card per provider ──
+        _gsheet_auto_latest = pull_latest_auto_metrics_from_gsheet()
         for p in PROV_ORDER:
             meta = PROV_META[p]
             m = get_m(p)
@@ -3690,6 +3722,36 @@ button[kind="primary"]:hover{{
             calls = m.get("calls",0)
             err_rate = int(m.get("errors",0)/calls*100) if calls > 0 else None
             hashes = m.get("hashes",[])
+
+            # No local activity recorded for this provider this session
+            # (e.g. right after a container restart) — fall back to the
+            # last snapshot synced to Google Sheets instead of showing
+            # blank boxes for data that genuinely exists.
+            if calls == 0:
+                _snap = _gsheet_auto_latest.get(p)
+                if _snap:
+                    try:
+                        _sp = _snap.get("avg_speed_s")
+                        speeds = [float(_sp)] if _sp not in ("", None) else []
+                    except (ValueError, TypeError):
+                        speeds = []
+                    try:
+                        json_rate = int(float(_snap.get("json_success_rate_pct"))) if _snap.get("json_success_rate_pct") not in ("", None) else None
+                    except (ValueError, TypeError):
+                        json_rate = None
+                    try:
+                        err_rate = int(float(_snap.get("error_rate_pct"))) if _snap.get("error_rate_pct") not in ("", None) else None
+                    except (ValueError, TypeError):
+                        err_rate = None
+                    try:
+                        calls = int(float(_snap.get("calls"))) if _snap.get("calls") not in ("", None) else 0
+                    except (ValueError, TypeError):
+                        calls = 0
+                    try:
+                        _uniq = int(float(_snap.get("unique_responses"))) if _snap.get("unique_responses") not in ("", None) else 0
+                    except (ValueError, TypeError):
+                        _uniq = 0
+                    hashes = list(range(_uniq))  # only its length is used below
 
             p_runs_en = [r for r in runs if r.get("provider")==p and r.get("language")=="English"]
             p_runs_ar = [r for r in runs if r.get("provider")==p and r.get("language")=="Arabic"]
