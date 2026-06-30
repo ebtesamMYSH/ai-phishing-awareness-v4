@@ -141,14 +141,18 @@ _RUNS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs
 _METRICS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metrics.json")
 
 def load_runs():
+    local = []
     try:
         with open(_RUNS_FILE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
-            return data
+            local = data
     except Exception:
-        pass
-    return []
+        local = []
+    try:
+        return merge_local_and_gsheet_runs(local)
+    except Exception:
+        return local
 
 def save_run(record):
     """Append one holistic run-rating record and persist to disk."""
@@ -331,6 +335,64 @@ def push_metrics_snapshot_to_gsheet(provider, m):
         ], value_input_option="USER_ENTERED")
     except Exception:
         pass
+
+def pull_runs_from_gsheet():
+    """Read every row back from the 'Cycle Ratings' tab and reshape it into
+    the exact same record dicts load_runs()/save_run() use locally. This is
+    what lets the Score Card / Manual Ratings counts / Excel export keep
+    working even after the app's own container restarts and wipes
+    runs.json — Google Sheets is the durable source of truth, the local
+    file is just a fast first-read cache. Cached for 60s per session so
+    we don't re-fetch from the Sheets API on every single rerun."""
+    cache = st.session_state.get("_gsheet_runs_cache")
+    now = __import__("time").time()
+    if cache and (now - cache.get("ts", 0) < 60):
+        return cache["rows"]
+    client = _get_gsheet_client()
+    sheet_id = _get_gsheet_id()
+    if not client or not sheet_id:
+        return []
+    rows = []
+    try:
+        sheet = client.open_by_key(sheet_id)
+        ws = sheet.worksheet("Cycle Ratings")
+        records = ws.get_all_records()
+        numeric_fields = ["overall", "auto_difficulty", "auto_arabic", "auto_quality",
+                           "auto_medical", "n_auto_emails", "avg_speed", "json_rate",
+                           "error_rate"]
+        for rec in records:
+            row = dict(rec)
+            for f in numeric_fields:
+                v = row.get(f)
+                if v in ("", None):
+                    row[f] = None
+                else:
+                    try:
+                        row[f] = float(v) if f in ("avg_speed",) else int(float(v))
+                    except (ValueError, TypeError):
+                        row[f] = None
+            rows.append(row)
+    except Exception:
+        rows = []
+    st.session_state["_gsheet_runs_cache"] = {"ts": now, "rows": rows}
+    return rows
+
+def merge_local_and_gsheet_runs(local_runs):
+    """Combine local runs.json entries with whatever's in the durable
+    Google Sheet copy, deduplicating by (timestamp, provider, language)
+    so the same cycle saved locally AND already synced to the sheet
+    doesn't get double-counted."""
+    sheet_runs = pull_runs_from_gsheet()
+    if not sheet_runs:
+        return local_runs
+    seen = {(r.get("timestamp"), r.get("provider"), r.get("language")) for r in local_runs}
+    merged = list(local_runs)
+    for r in sheet_runs:
+        key = (r.get("timestamp"), r.get("provider"), r.get("language"))
+        if key not in seen:
+            seen.add(key)
+            merged.append(r)
+    return merged
 
 # =============================================================
 # SYSTEMATIC ROTATION PLAN — 10 cycles, balanced role x difficulty
@@ -3742,6 +3804,7 @@ button[kind="primary"]:hover{{
                 st.session_state["metrics"] = {}
                 save_metrics_file({})
                 delete_all_runs()
+                clear_gsheet_data()
                 _save_json_list(_AUTO_EVAL_FILE_PATH, [])
                 _save_pending_buckets({})
                 _save_json_dict(_PENDING_PERF_FILE_PATH, {})
@@ -3951,12 +4014,13 @@ button[kind="primary"]:hover{{
             all_runs = load_runs()
             for i in range(len(all_runs) - 1, -1, -1):
                 if all_runs[i].get("provider") == cur_prov and all_runs[i].get("language") == lang_for_run:
-                    all_runs.pop(i)
+                    removed_record = all_runs.pop(i)
                     try:
                         with open(_RUNS_FILE_PATH, "w", encoding="utf-8") as f:
                             json.dump(all_runs, f, ensure_ascii=False, indent=2)
                     except Exception:
                         pass
+                    delete_run_from_gsheet(removed_record)
                     st.success("✅ " + ("تم حذف آخر دورة" if _is_ar else "Last cycle removed"))
                     st.rerun()
                     break
@@ -4860,6 +4924,61 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
     # Keep exactly three indicators and correct numbering.
     result["indicators"] = [{**indicators[i], "number": i+1} for i in range(3)]
     return result
+
+def clear_gsheet_data():
+    """Wipe all data rows (keeping headers) from both synced tabs. Used by
+    'Reset All Metrics' — now that load_runs() merges in the durable
+    Google Sheet copy, a local-only reset would otherwise be silently
+    undone on the next page load as old rows get pulled back in."""
+    client = _get_gsheet_client()
+    sheet_id = _get_gsheet_id()
+    if not client or not sheet_id:
+        return
+    for tab_name in ["Cycle Ratings", "Auto Metrics"]:
+        try:
+            sheet = client.open_by_key(sheet_id)
+            ws = sheet.worksheet(tab_name)
+            n_rows = ws.row_count
+            if n_rows > 1:
+                ws.delete_rows(2, n_rows)
+        except Exception:
+            pass
+    st.session_state.pop("_gsheet_runs_cache", None)
+
+def delete_run_from_gsheet(record):
+    """Remove the matching row (by timestamp+provider+language) from the
+    'Cycle Ratings' tab. Used by the Undo button so a removed cycle
+    doesn't silently reappear on the next load_runs() merge — without
+    this, Undo would only ever be temporary since Google Sheets is the
+    durable source of truth and gets re-merged in on every page load."""
+    client = _get_gsheet_client()
+    sheet_id = _get_gsheet_id()
+    if not client or not sheet_id or not record:
+        return
+    try:
+        sheet = client.open_by_key(sheet_id)
+        ws = sheet.worksheet("Cycle Ratings")
+        all_vals = ws.get_all_values()
+        if not all_vals:
+            return
+        headers = all_vals[0]
+        try:
+            ts_i = headers.index("timestamp")
+            prov_i = headers.index("provider")
+            lang_i = headers.index("language")
+        except ValueError:
+            return
+        target = (str(record.get("timestamp", "")), str(record.get("provider", "")), str(record.get("language", "")))
+        for row_idx in range(len(all_vals) - 1, 0, -1):
+            row = all_vals[row_idx]
+            if len(row) > max(ts_i, prov_i, lang_i):
+                if (row[ts_i], row[prov_i], row[lang_i]) == target:
+                    ws.delete_rows(row_idx + 1)  # +1: sheet rows are 1-indexed
+                    break
+        # Invalidate the cached pull so the next load_runs() reflects the deletion.
+        st.session_state.pop("_gsheet_runs_cache", None)
+    except Exception:
+        pass
 
 def _is_nonempty_str(v):
     return isinstance(v, str) and bool(v.strip())
