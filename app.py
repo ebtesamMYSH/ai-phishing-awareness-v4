@@ -95,7 +95,7 @@ st.set_page_config(
 _PROVIDER_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "provider_config.json")
 _VALID_PROVIDERS = {"groq", "anthropic", "openai", "gemini"}
 
-def load_persistent_provider(default="groq"):
+def load_persistent_provider(default="openai"):
     try:
         with open(_PROVIDER_CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -830,7 +830,7 @@ def snapshot_and_clear_pending_cycle(provider, language):
 for k, v in [("language","English"),("page","home"),("role",""),
               ("example_index",0),("emails",{}),("difficulty","medium"),
               ("user_name",""),("user_email",""),
-              ("ai_provider", load_persistent_provider("groq")),
+              ("ai_provider", load_persistent_provider("openai")),
               ("admin_authenticated",False),
               ("metrics", load_metrics_file()),  # {provider: {speed:[], json_ok:int, json_fail:int, errors:int, calls:int, hashes:[]}} — loaded from disk so it survives refresh
               ("manual_ratings",{}),  # legacy in-session structure, kept for backward compatibility
@@ -1536,182 +1536,188 @@ Regenerate from scratch with a completely different idea, sender, and domain. Fo
 
 def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
     """
-    Strong 9-criterion difficulty contract.
-    Goal: Beginner / Intermediate / Advanced must be visibly different in BOTH Arabic and English.
+    4-Axis Difficulty Framework — Scientific calibration for phishing email difficulty.
+    Axis 1: Sender Identity & Credibility
+    Axis 2: Content & Style
+    Axis 3: Technical Elements (QR is EXCLUSIVE to Advanced/Hard)
+    Axis 4: Role Alignment & Healthcare Context
     """
     if is_ar:
         if is_phishing:
             rules = {
                 "easy": """
-مستوى مبتدئ — اجعل التصيد واضحًا جدًا ومناسبًا للمبتدئين عبر 9 معايير إلزامية:
-1) النطاق: مزيف وواضح، بنطاق جديد بالكامل، ولا تستخدم نطاقًا سبق استعماله.
-2) الأخطاء: ضع بالضبط خطأين إملائيين/لغويين واضحين في جسم الرسالة.
-3) الإلحاح: تهديد مباشر وصريح خلال ساعات قليلة أو اليوم نفسه.
-4) التحية: عامة فقط مثل "عزيزي الموظف" أو "Dear Staff".
-5) المرسل: جهة عامة أو اسم قسم غير دقيق.
-6) الطلب الحساس: طلب واضح لكلمة مرور/بيانات دخول/تحديث حساب عبر رابط.
-7) المعرفة الداخلية: لا تستخدم تفاصيل داخلية حقيقية؛ الرسالة عامة.
-8) التعقيد: ناقل هجوم واحد فقط: رابط أو مرفق، وليس الاثنين معًا.
-9) التكتيك النفسي: خوف وإلحاح مباشر بصياغة سهلة الاكتشاف.
+مستوى سهل — المحاور الأربعة الإلزامية:
 
-ممنوع في المبتدئ: التفاصيل الدقيقة جدًا، اللغة الرسمية المبالغ فيها، أو النطاقات القريبة جدًا من الرسمية.
+المحور الأول — هوية المرسل:
+- التحية: عامة فقط ("عزيزي الموظف" أو "عزيزي الزميل") — ممنوع استخدام الاسم الشخصي.
+- نطاق البريد: واضح التزوير وبعيد عن الرسمي (مثل hospital-alert.com أو medupdate.net).
+- المرسل: جهة عامة أو اسم قسم مبهم.
+
+المحور الثاني — المحتوى والأسلوب:
+- الأخطاء: ضع بالضبط خطأين إملائيين واضحين في جسم الرسالة.
+- الإلحاح: تهديد مباشر وصريح ("الآن فوراً" أو "سيُغلق حسابك").
+- الطلب: طلب واضح ومباشر لكلمة المرور أو بيانات الدخول.
+- الطول: قصير (3-5 أسطر فقط).
+
+المحور الثالث — العناصر التقنية:
+- الرابط: مكشوف وواضح التزوير كنص عادي في الرسالة.
+- QR: ممنوع تماماً في هذا المستوى.
+- المرفق: ممنوع في هذا المستوى.
+- الزر: نص رابط عادي فقط.
+
+المحور الرابع — الارتباط الوظيفي والسياق الصحي:
+- الارتباط بالوظيفة: عام لأي موظف بغض النظر عن دوره.
+- السياق الصحي: ذكر كلمة "مستشفى" فقط دون تفاصيل.
+- المصداقية: منخفضة جداً — سهل الكشف.
 """,
                 "medium": """
-مستوى متوسط — اجعل التصيد متوسط الوضوح عبر 9 معايير إلزامية:
-1) النطاق: يبدو قريبًا من بيئة العمل لكنه يحتوي فرقًا واضحًا عند التدقيق، ويجب أن يكون جديدًا بالكامل.
-2) الأخطاء: خطأ واحد فقط وخفيف في جسم الرسالة.
-3) الإلحاح: مهني ومتوسط؛ موعد خلال 24–72 ساعة، بدون تهديد عدواني.
-4) التحية: شبه مخصصة: الاسم الأول أو المسمى الوظيفي.
-5) المرسل: قسم أو موظف يبدو معقولًا لكنه غير مثالي.
-6) الطلب الحساس: طلب غير معتاد لكنه يبدو ممكنًا في العمل.
-7) المعرفة الداخلية: تفصيل داخلي خفيف مثل اسم قسم أو نظام.
-8) التعقيد: ناقل أساسي واحد مع لمسة هندسة اجتماعية.
-9) التكتيك النفسي: مصداقية مهنية + ضغط زمني خفيف.
+مستوى متوسط — المحاور الأربعة الإلزامية:
 
-ممنوع في المتوسط: كل الحروف الكبيرة، التهديد الشديد، أو طلب كلمة المرور بشكل فاضح جدًا.
+المحور الأول — هوية المرسل:
+- التحية: شبه مخصصة بالاسم الأول أو المسمى الوظيفي (مثل "عزيزي د. أحمد").
+- نطاق البريد: مشابه للرسمي مع فرق عند التدقيق (مثل hospital-it.net).
+- المرسل: قسم أو شخص يبدو معقولاً لكن غير رسمي تماماً.
+
+المحور الثاني — المحتوى والأسلوب:
+- الأخطاء: خطأ واحد فقط وخفيف في جسم الرسالة.
+- الإلحاح: مهني ومتوسط، موعد 24-72 ساعة بدون تهديد عدواني.
+- الطلب: غير مباشر — تحديث حساب أو رابط خارجي.
+- الطول: متوسط (6-10 أسطر).
+
+المحور الثالث — العناصر التقنية:
+- الرابط: مختصر أو مموّه جزئياً.
+- QR: ممنوع تماماً في هذا المستوى.
+- المرفق: مرفق PDF بسيط وعام مسموح به.
+- الزر: زر بسيط.
+
+المحور الرابع — الارتباط الوظيفي والسياق الصحي:
+- الارتباط بالوظيفة: مرتبط بالقسم الوظيفي المحدد (سريري/إداري/تقني).
+- السياق الصحي: اسم قسم حقيقي + اسم نظام أو إجراء داخلي.
+- المصداقية: متوسطة — يحتاج انتباهاً للكشف.
 """,
                 "hard": """
-مستوى متقدم — اجعل التصيد شبه شرعي وصعب الاكتشاف عبر 9 معايير إلزامية:
-1) النطاق: قريب بذكاء من جهة عمل/منصة صحية، لكن ليس مطابقًا للرسمي، وجديد بالكامل.
-   لا تستخدم كلمات مكشوفة في النطاق مثل: secure, update, verify, login, reset, password, urgent.
-2) الأخطاء: صفر أخطاء إملائية أو لغوية.
-3) الإلحاح: مهذب وخفي، بدون تهديد، بدون حروف كبيرة، بدون "ACT NOW".
-4) التحية: مخصصة بالاسم والمسمى/الدور المناسب.
-5) المرسل: شخص أو قسم واقعي جدًا مع توقيع مهني.
-6) الطلب الحساس: لا تطلب كلمة المرور مباشرة؛ اجعل الخطر عبر إجراء يبدو طبيعيًا مثل مراجعة حالة، تأكيد امتثال، أو فتح بوابة.
-7) المعرفة الداخلية: تفاصيل سياقية محددة لكن غير مبالغ فيها.
-8) التعقيد: يمكن دمج رابط + سياق إداري/سريري طبيعي، لكن بدون فوضى.
-9) التكتيك النفسي: سلطة/ثقة/روتين مهني، وليس خوفًا مباشرًا.
+مستوى صعب — المحاور الأربعة الإلزامية (الكل إلزامي):
 
-ممنوع في المتقدم: التحية العامة، الأخطاء، التهديدات، النطاقات الفاضحة، أو طلب "أدخل كلمة المرور" مباشرة.
+المحور الأول — هوية المرسل:
+- التحية: الاسم الكامل + اللقب الوظيفي الدقيق (مثل "عزيزتي د. نورة العتيبي، استشارية الأمراض الداخلية").
+- نطاق البريد: شبه رسمي بذكاء (مثل moh-staff.net) — ممنوع: secure, update, verify, login, reset.
+- المرسل: شخص واقعي جداً مع توقيع مهني كامل (الاسم + المنصب + القسم + رقم التحويلة).
+
+المحور الثاني — المحتوى والأسلوب:
+- الأخطاء: صفر أخطاء — لغة احترافية كاملة.
+- الإلحاح: مهذب وخفي فقط ("إجراء روتيني") — ممنوع تماماً أي تهديد.
+- الطلب: لا تطلب كلمة المرور مباشرة — الخطر عبر إجراء يبدو طبيعياً.
+- الطول: طويل ومفصّل بصيغة احترافية.
+
+المحور الثالث — العناصر التقنية (كل ما يلي إلزامي):
+- الرابط: مخفي خلف زر رسمي فقط — ممنوع ظهور الرابط الخام في النص.
+- QR: إلزامي — يجب أن يظهر رمز QR. اكتب [QR: نص قصير وصفي] في موضعه المناسب.
+- المرفق: مستند رسمي مسمّى بتفاصيل واقعية (مثل بروتوكول_الامتثال_2024.pdf).
+- الزر: زر رسمي احترافي.
+
+المحور الرابع — الارتباط الوظيفي والسياق الصحي:
+- الارتباط بالوظيفة: مرتبط بمهمة يومية محددة جداً للدور المختار.
+- السياق الصحي: نظام EMR أو بروتوكول سريري أو رقم تذكرة داخلية.
+- المصداقية: عالية جداً — يصعب كشفه.
+- يجب ذكر اسم زميل أو قسم داخلي محدد وواقعي.
 """,
             }
         else:
             rules = {
-                "easy": """
-رسالة شرعية سهلة:
-1) نطاق رسمي فقط hospital.org أو moh.gov.sa.
-2) لا أخطاء.
-3) لا تهديد.
-4) تحية واضحة.
-5) مرسل رسمي.
-6) لا طلب بيانات حساسة.
-7) تفاصيل بسيطة.
-8) لا روابط خارجية.
-9) هدف إداري/سريري واضح وآمن.
-""",
-                "medium": """
-رسالة شرعية متوسطة:
-1) نطاق رسمي فقط.
-2) لا أخطاء.
-3) موعد أو إجراء طبيعي.
-4) تحية شبه مخصصة.
-5) مرسل مناسب.
-6) لا طلب كلمة مرور أو بيانات حساسة.
-7) تفاصيل عمل واقعية.
-8) قد تشير للإنترانت أو رقم تحويلة، بدون رابط خارجي.
-9) تبدو مهمة لكن آمنة.
-""",
-                "hard": """
-رسالة شرعية متقدمة:
-1) نطاق رسمي فقط.
-2) لا أخطاء.
-3) قد تكون عاجلة مهنيًا لكن بدون تهديد.
-4) تحية مخصصة.
-5) مرسل واقعي جدًا.
-6) لا بيانات حساسة.
-7) تفاصيل دقيقة ومهنية.
-8) لا رابط خارجي مشبوه.
-9) قد تشبه التصيد ظاهريًا لكنها آمنة تمامًا عند الفحص.
-""",
+                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط (hospital.org أو moh.gov.sa)، لا أخطاء، لا تهديد، تحية واضحة، مرسل رسمي، لا طلب بيانات حساسة، لا روابط خارجية.",
+                "medium": "رسالة شرعية متوسطة: نطاق رسمي فقط، لا أخطاء، موعد أو إجراء طبيعي، تحية شبه مخصصة، مرسل مناسب، لا طلب بيانات حساسة، قد تشير للإنترانت.",
+                "hard": "رسالة شرعية متقدمة: نطاق رسمي فقط، لا أخطاء، قد تكون عاجلة مهنياً بدون تهديد، تحية مخصصة كاملة، مرسل واقعي جداً، تفاصيل دقيقة ومهنية، لا رابط خارجي مشبوه.",
             }
     else:
         if is_phishing:
             rules = {
                 "easy": """
-BEGINNER difficulty — make the phishing obvious through all 9 criteria:
-1) Domain realism: clearly fake, brand-new, and not reused.
-2) Spelling: include exactly two obvious spelling/grammar mistakes in the email body.
-3) Urgency: direct threat within hours or today.
-4) Greeting: generic only, such as "Dear Staff" or "Dear Team".
-5) Sender credibility: vague department or suspicious generic sender.
-6) Sensitive request: obvious password/credential/account-update request through a link.
-7) Insider knowledge: none; generic message.
-8) Attack complexity: one attack vector only: either link or attachment, not both.
-9) Psychological tactic: blunt fear and urgency.
+EASY level — 4-Axis mandatory framework:
 
-Do not make Beginner subtle, polished, or highly realistic.
+AXIS 1 — Sender Identity:
+- Greeting: generic ONLY ("Dear Employee" or "Dear Staff") — NO personal names allowed.
+- Domain: obviously fake and far from official (e.g. hospital-alert.com, medupdate.net).
+- Sender: vague department or suspicious generic sender name.
+
+AXIS 2 — Content & Style:
+- Errors: include exactly TWO obvious spelling or grammar mistakes in the body.
+- Urgency: direct explicit threat ("Act NOW", "within hours", "or your account closes").
+- Request: obvious direct password / credential / account-update request via link.
+- Length: short (3-5 lines only).
+
+AXIS 3 — Technical Elements:
+- Link: fully visible obviously fake URL as plain text in the body.
+- QR Code: STRICTLY FORBIDDEN at this level.
+- Attachment: FORBIDDEN at this level.
+- Button: plain text hyperlink only.
+
+AXIS 4 — Role & Healthcare Context:
+- Role alignment: generic — suitable for ANY employee regardless of role.
+- Healthcare context: mention word "hospital" only — no internal details.
+- Believability: very low — easily detected.
 """,
                 "medium": """
-INTERMEDIATE difficulty — mixed red flags through all 9 criteria:
-1) Domain realism: workplace-plausible but imperfect, brand-new, and not reused.
-2) Spelling: exactly one subtle spelling/grammar mistake in the body.
-3) Urgency: moderate workplace deadline within 24–72 hours; no aggressive threats.
-4) Greeting: semi-personal, using first name or role.
-5) Sender credibility: plausible but not perfect.
-6) Sensitive request: unusual but possible in workplace context.
-7) Insider knowledge: light department/system detail.
-8) Attack complexity: one main vector plus light social engineering.
-9) Psychological tactic: professional credibility plus mild deadline pressure.
+INTERMEDIATE level — 4-Axis mandatory framework:
 
-Do not use all-caps, severe threats, or an obviously fake domain in Intermediate.
+AXIS 1 — Sender Identity:
+- Greeting: semi-personalized using first name or job title (e.g. "Dear Dr. Ahmed" or "Dear IT Coordinator").
+- Domain: plausible but imperfect — similar to official but detectable (e.g. hospital-it.net, hr-moh.com).
+- Sender: plausible department or person but not perfectly official.
+
+AXIS 2 — Content & Style:
+- Errors: exactly ONE subtle spelling or grammar mistake in the body.
+- Urgency: moderate professional deadline within 24-72 hours — no aggressive threats.
+- Request: indirect — account update or click external link.
+- Length: medium (6-10 lines).
+
+AXIS 3 — Technical Elements:
+- Link: shortened or partially hidden URL (e.g. bit.ly or long obfuscated link).
+- QR Code: STRICTLY FORBIDDEN at this level.
+- Attachment: simple generic PDF attachment is allowed.
+- Button: simple button without professional styling.
+
+AXIS 4 — Role & Healthcare Context:
+- Role alignment: tied to the specific job department (Clinical / Administrative / IT).
+- Healthcare context: real department name + system name or internal procedure.
+- Believability: moderate — requires attention to detect.
 """,
                 "hard": """
-ADVANCED difficulty — almost legitimate and hard to detect through all 9 criteria:
-1) Domain realism: intelligently close to a healthcare/workplace service, but not official, brand-new, and not reused.
-   Do NOT use obvious domain words: secure, update, verify, login, reset, password, urgent.
-2) Spelling: zero spelling or grammar mistakes.
-3) Urgency: polite and subtle only; no threats, no all-caps, no "ACT NOW".
-4) Greeting: personalized with full name and correct role/title.
-5) Sender credibility: realistic person or department with professional signature.
-6) Sensitive request: do NOT ask directly for a password; make the risky action look like a normal workflow.
-7) Insider knowledge: specific realistic context, not excessive.
-8) Attack complexity: natural combination of link + professional process is allowed.
-9) Psychological tactic: authority, trust, routine compliance, or professional responsibility.
+ADVANCED level — 4-Axis mandatory framework (ALL elements are mandatory):
 
-Advanced must NOT look like Beginner. Avoid generic greeting, obvious spelling errors, obvious fake domains, direct password requests, and aggressive threats.
+AXIS 1 — Sender Identity:
+- Greeting: full name + precise job title (e.g. "Dear Dr. Noura Al-Otaibi, Internal Medicine Consultant").
+- Domain: intelligently near-official but not matching (e.g. moh-staff.net, nhc-portal.org).
+  FORBIDDEN domain words: secure, update, verify, login, reset, password, urgent.
+- Sender: highly realistic person with complete professional signature (name + title + dept + extension).
+
+AXIS 2 — Content & Style:
+- Errors: ZERO errors — completely flawless professional language.
+- Urgency: polite and subtle ONLY ("routine procedure", "at your earliest convenience") — NO threats.
+- Request: do NOT ask for password directly — risky action looks like normal workflow.
+- Length: long and detailed in professional format.
+
+AXIS 3 — Technical Elements (ALL mandatory):
+- Link: hidden behind official button ONLY — raw URL must NOT appear in body text.
+- QR Code: MANDATORY — a QR code MUST appear. Write [QR: short descriptive label] at the appropriate position.
+- Attachment: officially named document with realistic details (e.g. Compliance_Protocol_2024.pdf).
+- Button: professionally styled official button.
+
+AXIS 4 — Role & Healthcare Context:
+- Role alignment: tied to a specific daily task of the selected role.
+- Healthcare context: EMR system / clinical protocol / internal ticket number / real reference.
+- Believability: very high — difficult to detect without careful inspection.
+- Must mention a specific colleague name, unit, or internal department.
 """,
             }
         else:
             rules = {
-                "easy": """
-Legitimate Beginner item:
-1) official hospital.org or moh.gov.sa domain only,
-2) no mistakes,
-3) no urgency threat,
-4) clear greeting,
-5) official sender,
-6) no sensitive data request,
-7) simple workplace context,
-8) no external link,
-9) clearly safe.
-""",
-                "medium": """
-Legitimate Intermediate item:
-1) official domain only,
-2) no mistakes,
-3) normal deadline,
-4) semi-personal greeting,
-5) plausible sender,
-6) no credentials/payment request,
-7) realistic workflow detail,
-8) may mention intranet or extension number but no external link,
-9) important but safe.
-""",
-                "hard": """
-Legitimate Advanced item:
-1) official domain only,
-2) no mistakes,
-3) may be professionally urgent but not threatening,
-4) personalized greeting,
-5) realistic sender,
-6) no sensitive request,
-7) detailed healthcare context,
-8) no suspicious external link,
-9) may look important but remains safe under inspection.
-""",
+                "easy": "Legitimate Easy: official hospital.org or moh.gov.sa domain only, no errors, no urgency, clear greeting, official sender, no sensitive data request, no external links.",
+                "medium": "Legitimate Intermediate: official domain only, no errors, normal deadline, semi-personal greeting, plausible sender, no credentials request, realistic workflow detail.",
+                "hard": "Legitimate Advanced: official domain only, no errors, may be professionally urgent but not threatening, personalized greeting, realistic sender, detailed healthcare context, no suspicious external link.",
             }
     return rules.get(difficulty, rules.get("medium"))
+
+
 
 def get_role_unbounded_context(role_type, is_ar=False):
     """Role context only; not a scenario template list. The model must invent the actual scenario."""
@@ -1752,21 +1758,28 @@ def build_prompt(role, index, language):
 
 المطلوب: ولّد مثال تعلم واحد فقط لتصيد إلكتروني.
 
-قواعد مهمة جدًا:
-- لا تستخدم أي قالب ثابت.
-- لا تستخدم أي نطاق من أمثلة محفوظة أو نطاقات تكررت سابقًا.
-- اختر فكرة جديدة من الصفر: نظام، مرسل، سبب، رابط، رسالة، وتحليل.
-- يجب أن تكون الفكرة مناسبة للدور والسياق، لكنها غير مكررة.
+قواعد إلزامية — الارتباط بالوظيفة والسياق الصحي:
+- يجب أن يكون الإيميل مرتبطًا 100٪ بالدور الوظيفي المحدد: {role_context}
+- كل عنصر في الإيميل (المرسل، الموضوع، المحتوى، الطلب) يجب أن يعكس هذا الدور مباشرةً.
+- ممنوع تمامًا إرسال إيميل إداري عام أو من الموارد البشرية لشخص في دور سريري أو تقني.
+- يجب أن يتضمن الإيميل سياقًا صحيًا واضحًا: نظام طبي أو قسم مستشفى أو إجراء سريري محدد.
+- ممنوع تكرار نوع "تقديم العروض التجارية" إلا إذا كان نادرًا وغير مكرر في هذه الجلسة.
+- لا تستخدم أي قالب ثابت أو نطاق مكرر.
 - ممنوع استخدام النص الحرفي: suspicious_link داخل body. ضع رابطًا حقيقي الشكل.
 - أخرج JSON فقط بدون Markdown.
 
-السياق:
+السياق الوظيفي الإلزامي:
 {role_context}
 المستلم: {recipient_email}
 رقم عشوائي لكسر التكرار: {seed}
 {avoid_topics}{avoid_domains}
-قواعد الصعوبة:
+قواعد مستوى الصعوبة (إلزامية):
 {diff_rule}
+
+قواعد التحية والتوقيع:
+- التحية: يجب أن تتبع قواعد مستوى الصعوبة أعلاه بدقة.
+- التوقيع: يجب أن ينتهي الإيميل بتوقيع كامل (الاسم + المنصب + القسم) — ممنوع الانتهاء بعنوان بريد إلكتروني مجرد.
+- ممنوع وضع الرابط الخام مرتين — مرة كنص ومرة كزر.
 
 أخرج JSON بهذا الشكل فقط:
 {{
@@ -1792,21 +1805,28 @@ You generate phishing-awareness learning examples for a Saudi hospital.
 
 Task: Generate ONE new phishing learning email.
 
-Critical rules:
-- Do NOT use a fixed template.
-- Do NOT use memorized example domains or domains already used in this session.
-- Invent a fresh scenario from scratch: system, sender, reason, domain, message, and AI analysis.
-- The idea must fit the role context but must not repeat previous topics.
+MANDATORY rules — Role Alignment & Healthcare Context:
+- The email MUST be 100% aligned with the specified job role: {role_context}
+- Every element (sender, subject, body, request) must directly reflect this specific role.
+- FORBIDDEN: sending a generic HR or administrative email to a clinical or IT role.
+- The email MUST contain a clear healthcare context: a medical system, hospital department, or specific clinical procedure.
+- AVOID repeating commercial offer-type phishing — use it only if rarely used in this session.
+- Do NOT use a fixed template or reused domain.
 - Never write the literal placeholder suspicious_link inside body. Use a realistic-looking URL.
 - Return JSON only. No Markdown.
 
-Context:
+Mandatory role context:
 {role_context}
 Recipient: {recipient_email}
 Anti-repeat random seed: {seed}
 {avoid_topics}{avoid_domains}
-Difficulty rules:
+Difficulty rules (mandatory):
 {diff_rule}
+
+Greeting & Sign-off rules:
+- Greeting: must follow the difficulty level rules above precisely.
+- Sign-off: must end with a complete signature (name + title + department) — NEVER end with a bare email address.
+- NEVER repeat the raw URL twice — once as text AND once as a button.
 
 Return only this JSON structure:
 {{
@@ -2565,17 +2585,21 @@ def render_email_window(email, is_arabic, show_badges=False):
     # the attachment chip — instead of leaving "[Label] (url)" as
     # inert bracketed text.
     # --------------------------------------------------------
+    # Warning page trigger ID
+    _warn_key = f"phishing_warn_{id(email)}"
+
     link_block_html = ""
     if has_link_button:
         link_badge = make_badge(next_badge()) if show_badges else ""
+        safe_label = html_lib.escape(link_label)
         link_block_html = f"""
 <div style="margin:.8rem 0;direction:{bd};">
-  <a href="{html_lib.escape(link_url)}" target="_blank" rel="noopener"
-     style="display:inline-flex;align-items:center;gap:.5rem;border:1px solid rgba(37,99,235,.55);
-            border-radius:8px;padding:.5rem 1.1rem;background:rgba(37,99,235,.18);color:#93C5FD;
-            font-size:.92rem;font-weight:700;text-decoration:none;">
-    {link_badge}🔗 {html_lib.escape(link_label)}
-  </a>
+  <button onclick="window.parent.postMessage({{type:'phishing_click',element:'link',label:'{safe_label}'}},\'*\')"
+     style="display:inline-flex;align-items:center;gap:.5rem;border:1px solid #0078D4;
+            border-radius:6px;padding:.5rem 1.1rem;background:#0078D4;color:white;
+            font-size:.92rem;font-weight:700;cursor:pointer;font-family:inherit;">
+    {link_badge}🔗 {safe_label}
+  </button>
 </div>"""
 
     # --------------------------------------------------------
@@ -2613,50 +2637,129 @@ def render_email_window(email, is_arabic, show_badges=False):
     att_html = ""
     if att_val:
         att_html = (f'<div style="display:inline-flex;align-items:center;gap:.5rem;'
-                    f'border:1px solid rgba(37,99,235,.5);border-radius:8px;padding:.4rem .8rem;'
-                    f'background:rgba(37,99,235,.15);color:#93C5FD;font-size:.88rem;margin:.4rem 0;">'
+                    f'border:1px solid #0078D4;border-radius:4px;padding:.4rem .8rem;'
+                    f'background:rgba(0,120,212,.12);color:#60A5FA;font-size:.88rem;margin:.4rem 0;'
+                    f'cursor:pointer;" onclick="window.parent.postMessage({{type:\'phishing_click\',element:\'attachment\'}},\'*\')">'
                     f'{b_att}📎 {att_val}</div>')
 
+    # Outlook-style toolbar buttons (visual only)
+    reply_lbl    = "رد" if is_arabic else "Reply"
+    forward_lbl  = "إعادة توجيه" if is_arabic else "Forward"
+    delete_lbl   = "حذف" if is_arabic else "Delete"
+    toolbar_dir  = "rtl" if is_arabic else "ltr"
+
     st.markdown(f"""
-<div style="background:#0F172A;border:1px solid rgba(37,99,235,.5);
-            border-radius:16px 16px 0 0;overflow:hidden;">
-  <div style="background:#1E293B;padding:.6rem 1rem;display:flex;gap:8px;align-items:center;">
-    <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57;"></div>
-    <div style="width:12px;height:12px;border-radius:50%;background:#FFBD2E;"></div>
-    <div style="width:12px;height:12px;border-radius:50%;background:#28C840;"></div>
+<div style="background:#1F1F1F;border:1px solid #333;border-radius:12px 12px 0 0;overflow:hidden;font-family:'Segoe UI',Arial,sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);">
+  <!-- Outlook-style title bar -->
+  <div style="background:#2B2B2B;padding:.45rem 1rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #444;">
+    <div style="display:flex;gap:6px;align-items:center;">
+      <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57;"></div>
+      <div style="width:12px;height:12px;border-radius:50%;background:#FFBD2E;"></div>
+      <div style="width:12px;height:12px;border-radius:50%;background:#28C840;"></div>
+    </div>
+    <div style="color:#999;font-size:.78rem;letter-spacing:.5px;">📧 {"صندوق الوارد — Microsoft Outlook" if is_arabic else "Inbox — Microsoft Outlook"}</div>
+    <div style="width:60px;"></div>
   </div>
-  <div style="padding:1rem 1.6rem .5rem;font-size:.92rem;color:#CBD5E1;
-              direction:{bd};text-align:{ta};
-              font-family:{email_font};">
+  <!-- Outlook-style action toolbar -->
+  <div style="background:#252525;padding:.35rem 1rem;display:flex;gap:.5rem;align-items:center;border-bottom:1px solid #333;direction:{toolbar_dir};">
+    <button style="background:#0078D4;color:white;border:none;border-radius:4px;padding:.28rem .75rem;font-size:.78rem;cursor:pointer;font-family:inherit;">↩ {reply_lbl}</button>
+    <button style="background:#333;color:#ccc;border:1px solid #555;border-radius:4px;padding:.28rem .75rem;font-size:.78rem;cursor:pointer;font-family:inherit;">→ {forward_lbl}</button>
+    <button style="background:#333;color:#ccc;border:1px solid #555;border-radius:4px;padding:.28rem .75rem;font-size:.78rem;cursor:pointer;font-family:inherit;">🗑 {delete_lbl}</button>
+    <div style="flex:1;"></div>
+    <span style="color:#666;font-size:.75rem;">{"اليوم، 09:42 ص" if is_arabic else "Today, 9:42 AM"}</span>
+  </div>
+  <!-- Email header -->
+  <div style="padding:.9rem 1.6rem .5rem;font-size:.92rem;color:#CBD5E1;direction:{bd};text-align:{ta};background:#1A1A1A;border-bottom:1px solid #2D2D2D;">
     <table style="width:100%;border-collapse:collapse;direction:{bd};">
       <tr style="vertical-align:top;">
-        <td style="color:#64748B;font-weight:700;padding:0 8px 6px 0;white-space:nowrap;width:70px;">{fl}</td>
+        <td style="color:#888;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;width:80px;font-size:.85rem;">{fl}</td>
         <td style="color:#E2E8F0;padding:0 0 6px 0;word-break:break-all;">{b_from}{from_val}</td>
       </tr>
       <tr style="vertical-align:middle;">
-        <td style="color:#64748B;font-weight:700;padding:0 8px 6px 0;white-space:nowrap;">{tl}</td>
-        <td style="color:#93C5FD;padding:0 0 6px 0;direction:ltr;text-align:{('right' if bd=='rtl' else 'left')};overflow:hidden;text-overflow:ellipsis;">{to_val}</td>
+        <td style="color:#888;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;font-size:.85rem;">{tl}</td>
+        <td style="color:#60A5FA;padding:0 0 6px 0;direction:ltr;text-align:{('right' if bd=='rtl' else 'left')};overflow:hidden;text-overflow:ellipsis;">{to_val}</td>
       </tr>
       <tr style="vertical-align:top;">
-        <td style="color:#64748B;font-weight:700;padding:0 8px 6px 0;white-space:nowrap;">{sl}</td>
-        <td style="color:#E2E8F0;padding:0 0 6px 0;word-break:break-word;">{b_subj}{subj_val}</td>
+        <td style="color:#888;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;font-size:.85rem;">{sl}</td>
+        <td style="color:#F1F5F9;padding:0 0 6px 0;word-break:break-word;font-weight:600;">{b_subj}{subj_val}</td>
       </tr>
     </table>
     {att_html}
   </div>
 </div>
-<div style="background:#0F172A;border:1px solid rgba(37,99,235,.5);border-top:none;
-            border-radius:0 0 16px 16px;padding:.8rem 1.6rem 1.4rem;
-            font-family:{email_font};
-            font-size:.92rem;color:#CBD5E1;
-            line-height:2;direction:{bd};text-align:{ta};
+<div style="background:#1A1A1A;border:1px solid #333;border-top:none;
+            border-radius:0 0 12px 12px;padding:1.2rem 1.6rem 1.6rem;
+            font-family:'Segoe UI',Arial,sans-serif;
+            font-size:.93rem;color:#D1D5DB;
+            line-height:1.9;direction:{bd};text-align:{ta};
             box-shadow:0 20px 60px rgba(0,0,0,.5);">
   {body_html}
 </div>""", unsafe_allow_html=True)
 
 
+def page_phishing_caught():
+    """Warning page shown when user clicks a phishing link, button, or scans QR."""
+    is_arabic = st.session_state.get("language") == "Arabic"
+    _dir = "rtl" if is_arabic else "ltr"
+    _align = "right" if is_arabic else "left"
+
+    if is_arabic:
+        title     = "⚠️ تنبيه! لقد وقعت في فخ التصيد الاحتيالي"
+        subtitle  = "هذا بريد تصيد تدريبي — في الواقع الحقيقي كنت ستتعرض للاختراق"
+        msg       = "الرابط أو الزر الذي ضغطت عليه كان يؤدي إلى موقع مزيف مصمم لسرقة بياناتك. في بيئة حقيقية، كان يمكن للمهاجم الحصول على معلوماتك الشخصية أو بيانات دخولك."
+        tip_title = "💡 ماذا كان يجب أن تفعل؟"
+        tips = [
+            "تحقق من نطاق البريد الإلكتروني للمرسل قبل الضغط على أي رابط.",
+            "لا تضغط على روابط مجهولة المصدر — تواصل مع قسم تقنية المعلومات للتحقق.",
+            "تحقق من عنوان URL الفعلي قبل إدخال أي بيانات.",
+            "الجهات الرسمية لا تطلب كلمة المرور عبر البريد الإلكتروني.",
+        ]
+        btn_label = "← العودة ومتابعة التدريب"
+    else:
+        title     = "⚠️ Alert! You clicked a phishing link"
+        subtitle  = "This was a training phishing email — in a real scenario you would have been compromised"
+        msg       = "The link or button you clicked would have led to a fake website designed to steal your credentials. In a real attack, the attacker could have obtained your personal information or login details."
+        tip_title = "💡 What should you have done?"
+        tips = [
+            "Always verify the sender's email domain before clicking any link.",
+            "Never click unknown links — contact IT to verify first.",
+            "Check the actual URL before entering any information.",
+            "Official organizations never ask for your password via email.",
+        ]
+        btn_label = "← Return and Continue Training"
+
+    tips_html = "".join(f'<li style="margin-bottom:.5rem;color:#E2E8F0;">{tip}</li>' for tip in tips)
+
+    st.markdown(f"""
+<div dir="{_dir}" style="max-width:700px;margin:3rem auto;text-align:{_align};">
+  <div style="background:linear-gradient(135deg,rgba(127,29,29,.95),rgba(69,10,10,.9));
+              border:2px solid #EF4444;border-radius:20px;padding:2.5rem;
+              box-shadow:0 0 60px rgba(239,68,68,.3);">
+    <div style="font-size:3rem;text-align:center;margin-bottom:1rem;">🎣</div>
+    <h2 style="color:#FCA5A5;font-size:1.6rem;font-weight:900;text-align:center;margin-bottom:.5rem;">{title}</h2>
+    <p style="color:#FECACA;font-size:1rem;text-align:center;margin-bottom:1.5rem;font-style:italic;">{subtitle}</p>
+    <div style="background:rgba(0,0,0,.3);border-radius:12px;padding:1.2rem;margin-bottom:1.5rem;">
+      <p style="color:#E2E8F0;line-height:1.8;margin:0;">{msg}</p>
+    </div>
+    <div style="margin-bottom:1.5rem;">
+      <p style="color:#FCD34D;font-weight:700;font-size:1rem;margin-bottom:.7rem;">{tip_title}</p>
+      <ul style="padding-{('right' if is_arabic else 'left')}:1.2rem;margin:0;line-height:1.9;">
+        {tips_html}
+      </ul>
+    </div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button(btn_label, use_container_width=True, type="primary"):
+            st.session_state["page"] = "learning"
+            st.session_state.pop("phishing_caught", None)
+            st.rerun()
+
+
 def page_home():
-    is_arabic      = st.session_state["language"] == "Arabic"
+    is_arabic      = st.session_state.get("language") == "Arabic"
     dir_attr       = 'rtl' if is_arabic else 'ltr'
     text_align     = 'right' if is_arabic else 'left'
     hero_grid_cols = '1fr 230px' if is_arabic else '230px 1fr'
@@ -2953,6 +3056,26 @@ def page_learning():
     text_align = 'right' if is_arabic else 'left'
     TOTAL      = 6
     idx       = st.session_state["example_index"]
+
+    # Inject JS listener for phishing click events from email buttons
+    import streamlit.components.v1 as _comp
+    _comp.html("""
+    <script>
+    window.addEventListener('message', function(e) {
+        if (e.data && e.data.type === 'phishing_click') {
+            // Send to Streamlit via query param change to trigger rerun
+            const url = new URL(window.parent.location.href);
+            url.searchParams.set('phishing_click', '1');
+            window.parent.history.replaceState({}, '', url.toString());
+        }
+    });
+    </script>
+    """, height=0, width=0)
+
+    if st.query_params.get("phishing_click") == "1":
+        st.query_params.clear()
+        st.session_state["page"] = "phishing_caught"
+        st.rerun()
 
     if st.session_state.get("cache_version",0) < 13:
         st.session_state["emails"]={}; st.session_state["cache_version"]=13
@@ -5893,7 +6016,11 @@ pg = st.session_state.get("page", "home")
 if pg == "admin":
     page_admin()
 else:
-    {"home":page_home,"login":page_login,"learning":page_learning,"complete":page_complete,
-     "assessment":page_assessment,"results":page_results,"report":page_report}.get(pg, page_home)()
+    {
+        "home":page_home,"login":page_login,"learning":page_learning,
+        "complete":page_complete,"assessment":page_assessment,
+        "results":page_results,"report":page_report,
+        "phishing_caught":page_phishing_caught
+    }.get(pg, page_home)()
 
 # تم الاستبدال في الأسفل
