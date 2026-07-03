@@ -1536,11 +1536,9 @@ Regenerate from scratch with a completely different idea, sender, and domain. Fo
 
 def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
     """
-    4-Axis Difficulty Framework — Scientific calibration for phishing email difficulty.
-    Axis 1: Sender Identity & Credibility
-    Axis 2: Content & Style
-    Axis 3: Technical Elements (QR is EXCLUSIVE to Advanced/Hard)
-    Axis 4: Role Alignment & Healthcare Context
+    4-Axis Difficulty Framework — QR is EXCLUSIVE to hard/Advanced only.
+    Axis 1: Sender Identity | Axis 2: Content & Style
+    Axis 3: Technical Elements | Axis 4: Role & Healthcare Context
     """
     if is_ar:
         if is_phishing:
@@ -1549,25 +1547,25 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
 مستوى سهل — المحاور الأربعة الإلزامية:
 
 المحور الأول — هوية المرسل:
-- التحية: عامة فقط ("عزيزي الموظف" أو "عزيزي الزميل") — ممنوع استخدام الاسم الشخصي.
-- نطاق البريد: واضح التزوير وبعيد عن الرسمي (مثل hospital-alert.com أو medupdate.net).
-- المرسل: جهة عامة أو اسم قسم مبهم.
+- التحية: عامة فقط ("عزيزي الموظف" أو "عزيزي الزميل") — ممنوع منعاً باتاً استخدام أي اسم شخصي.
+- نطاق البريد: واضح التزوير تماماً وبعيد عن الرسمي (مثل hospital-alert.com أو medupdate.net).
+- المرسل: جهة عامة أو اسم قسم مبهم وغير دقيق.
 
 المحور الثاني — المحتوى والأسلوب:
-- الأخطاء: ضع بالضبط خطأين إملائيين واضحين في جسم الرسالة.
-- الإلحاح: تهديد مباشر وصريح ("الآن فوراً" أو "سيُغلق حسابك").
+- الأخطاء: ضع بالضبط خطأين إملائيين واضحين في جسم الرسالة — هذا إلزامي.
+- الإلحاح: تهديد مباشر وصريح ("الآن فوراً" أو "سيُغلق حسابك اليوم").
 - الطلب: طلب واضح ومباشر لكلمة المرور أو بيانات الدخول.
 - الطول: قصير (3-5 أسطر فقط).
 
 المحور الثالث — العناصر التقنية:
-- الرابط: مكشوف وواضح التزوير كنص عادي في الرسالة.
-- QR: ممنوع تماماً في هذا المستوى.
-- المرفق: ممنوع في هذا المستوى.
-- الزر: نص رابط عادي فقط.
+- الرابط: رابط خام مكشوف كنص عادي في الرسالة — لا تستخدم زراً أو markdown.
+- QR: محظور تماماً في هذا المستوى — لا تضع أي رمز QR.
+- المرفق: محظور في هذا المستوى.
+- الزر: محظور — الرابط فقط كنص.
 
 المحور الرابع — الارتباط الوظيفي والسياق الصحي:
 - الارتباط بالوظيفة: عام لأي موظف بغض النظر عن دوره.
-- السياق الصحي: ذكر كلمة "مستشفى" فقط دون تفاصيل.
+- السياق الصحي: ذكر كلمة "مستشفى" أو "صحة" فقط دون تفاصيل.
 - المصداقية: منخفضة جداً — سهل الكشف.
 """,
                 "medium": """
@@ -1579,16 +1577,16 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
 - المرسل: قسم أو شخص يبدو معقولاً لكن غير رسمي تماماً.
 
 المحور الثاني — المحتوى والأسلوب:
-- الأخطاء: خطأ واحد فقط وخفيف في جسم الرسالة.
+- الأخطاء: خطأ واحد فقط وخفيف في جسم الرسالة — هذا إلزامي.
 - الإلحاح: مهني ومتوسط، موعد 24-72 ساعة بدون تهديد عدواني.
-- الطلب: غير مباشر — تحديث حساب أو رابط خارجي.
+- الطلب: غير مباشر — تحديث حساب أو النقر على رابط خارجي.
 - الطول: متوسط (6-10 أسطر).
 
 المحور الثالث — العناصر التقنية:
 - الرابط: مختصر أو مموّه جزئياً.
-- QR: ممنوع تماماً في هذا المستوى.
+- QR: محظور تماماً في هذا المستوى — لا تضع أي رمز QR.
 - المرفق: مرفق PDF بسيط وعام مسموح به.
-- الزر: زر بسيط.
+- الزر: زر بسيط مسموح به.
 
 المحور الرابع — الارتباط الوظيفي والسياق الصحي:
 - الارتباط بالوظيفة: مرتبط بالقسم الوظيفي المحدد (سريري/إداري/تقني).
@@ -1601,7 +1599,7 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
 المحور الأول — هوية المرسل:
 - التحية: الاسم الكامل + اللقب الوظيفي الدقيق (مثل "عزيزتي د. نورة العتيبي، استشارية الأمراض الداخلية").
 - نطاق البريد: شبه رسمي بذكاء (مثل moh-staff.net) — ممنوع: secure, update, verify, login, reset.
-- المرسل: شخص واقعي جداً مع توقيع مهني كامل (الاسم + المنصب + القسم + رقم التحويلة).
+- المرسل: شخص واقعي جداً مع توقيع مهني كامل (الاسم + المنصب + القسم + رقم تحويلة حقيقي).
 
 المحور الثاني — المحتوى والأسلوب:
 - الأخطاء: صفر أخطاء — لغة احترافية كاملة.
@@ -1611,22 +1609,22 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
 
 المحور الثالث — العناصر التقنية (كل ما يلي إلزامي):
 - الرابط: مخفي خلف زر رسمي فقط — ممنوع ظهور الرابط الخام في النص.
-- QR: إلزامي — يجب أن يظهر رمز QR. اكتب [QR: نص قصير وصفي] في موضعه المناسب.
+- QR: إلزامي ومطلوب دائماً — يجب أن يظهر رمز QR. اكتب [QR: نص قصير وصفي] في موضعه.
 - المرفق: مستند رسمي مسمّى بتفاصيل واقعية (مثل بروتوكول_الامتثال_2024.pdf).
-- الزر: زر رسمي احترافي.
+- الزر: زر رسمي احترافي بتسمية وصفية.
 
 المحور الرابع — الارتباط الوظيفي والسياق الصحي:
 - الارتباط بالوظيفة: مرتبط بمهمة يومية محددة جداً للدور المختار.
 - السياق الصحي: نظام EMR أو بروتوكول سريري أو رقم تذكرة داخلية.
 - المصداقية: عالية جداً — يصعب كشفه.
-- يجب ذكر اسم زميل أو قسم داخلي محدد وواقعي.
+- يجب ذكر اسم زميل أو قسم داخلي محدد.
 """,
             }
         else:
             rules = {
-                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط (hospital.org أو moh.gov.sa)، لا أخطاء، لا تهديد، تحية واضحة، مرسل رسمي، لا طلب بيانات حساسة، لا روابط خارجية.",
-                "medium": "رسالة شرعية متوسطة: نطاق رسمي فقط، لا أخطاء، موعد أو إجراء طبيعي، تحية شبه مخصصة، مرسل مناسب، لا طلب بيانات حساسة، قد تشير للإنترانت.",
-                "hard": "رسالة شرعية متقدمة: نطاق رسمي فقط، لا أخطاء، قد تكون عاجلة مهنياً بدون تهديد، تحية مخصصة كاملة، مرسل واقعي جداً، تفاصيل دقيقة ومهنية، لا رابط خارجي مشبوه.",
+                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط (hospital.org أو moh.gov.sa)، لا أخطاء، لا تهديد، تحية واضحة، لا روابط خارجية.",
+                "medium": "رسالة شرعية متوسطة: نطاق رسمي فقط، لا أخطاء، موعد طبيعي، تحية شبه مخصصة، لا طلب بيانات حساسة.",
+                "hard": "رسالة شرعية متقدمة: نطاق رسمي فقط، لا أخطاء، قد تكون عاجلة مهنياً بدون تهديد، تحية مخصصة كاملة، تفاصيل دقيقة ومهنية.",
             }
     else:
         if is_phishing:
@@ -1635,21 +1633,21 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
 EASY level — 4-Axis mandatory framework:
 
 AXIS 1 — Sender Identity:
-- Greeting: generic ONLY ("Dear Employee" or "Dear Staff") — NO personal names allowed.
+- Greeting: GENERIC ONLY ("Dear Employee" or "Dear Staff") — using any personal name is FORBIDDEN.
 - Domain: obviously fake and far from official (e.g. hospital-alert.com, medupdate.net).
 - Sender: vague department or suspicious generic sender name.
 
 AXIS 2 — Content & Style:
-- Errors: include exactly TWO obvious spelling or grammar mistakes in the body.
-- Urgency: direct explicit threat ("Act NOW", "within hours", "or your account closes").
-- Request: obvious direct password / credential / account-update request via link.
+- Errors: include EXACTLY TWO obvious spelling/grammar mistakes in the body — this is MANDATORY.
+- Urgency: direct explicit threat ("Act NOW", "within hours", "or your account closes TODAY").
+- Request: obvious direct password/credential/account-update request.
 - Length: short (3-5 lines only).
 
 AXIS 3 — Technical Elements:
-- Link: fully visible obviously fake URL as plain text in the body.
-- QR Code: STRICTLY FORBIDDEN at this level.
+- Link: raw visible URL as plain text in body — do NOT use a button or markdown link format.
+- QR Code: STRICTLY FORBIDDEN — do not include any QR code at this level.
 - Attachment: FORBIDDEN at this level.
-- Button: plain text hyperlink only.
+- Button: FORBIDDEN — plain text URL only.
 
 AXIS 4 — Role & Healthcare Context:
 - Role alignment: generic — suitable for ANY employee regardless of role.
@@ -1660,24 +1658,24 @@ AXIS 4 — Role & Healthcare Context:
 INTERMEDIATE level — 4-Axis mandatory framework:
 
 AXIS 1 — Sender Identity:
-- Greeting: semi-personalized using first name or job title (e.g. "Dear Dr. Ahmed" or "Dear IT Coordinator").
-- Domain: plausible but imperfect — similar to official but detectable (e.g. hospital-it.net, hr-moh.com).
+- Greeting: semi-personalized using first name or job title (e.g. "Dear Dr. Ahmed").
+- Domain: plausible but imperfect — detectable difference (e.g. hospital-it.net, hr-moh.com).
 - Sender: plausible department or person but not perfectly official.
 
 AXIS 2 — Content & Style:
-- Errors: exactly ONE subtle spelling or grammar mistake in the body.
-- Urgency: moderate professional deadline within 24-72 hours — no aggressive threats.
+- Errors: EXACTLY ONE subtle spelling/grammar mistake in the body — this is MANDATORY.
+- Urgency: moderate professional deadline 24-72 hours — no aggressive threats.
 - Request: indirect — account update or click external link.
 - Length: medium (6-10 lines).
 
 AXIS 3 — Technical Elements:
-- Link: shortened or partially hidden URL (e.g. bit.ly or long obfuscated link).
-- QR Code: STRICTLY FORBIDDEN at this level.
-- Attachment: simple generic PDF attachment is allowed.
-- Button: simple button without professional styling.
+- Link: shortened or partially hidden URL.
+- QR Code: STRICTLY FORBIDDEN — do not include any QR code at this level.
+- Attachment: simple generic PDF is allowed.
+- Button: simple button is allowed.
 
 AXIS 4 — Role & Healthcare Context:
-- Role alignment: tied to the specific job department (Clinical / Administrative / IT).
+- Role alignment: tied to the specific job department (Clinical/Administrative/IT).
 - Healthcare context: real department name + system name or internal procedure.
 - Believability: moderate — requires attention to detect.
 """,
@@ -1685,35 +1683,35 @@ AXIS 4 — Role & Healthcare Context:
 ADVANCED level — 4-Axis mandatory framework (ALL elements are mandatory):
 
 AXIS 1 — Sender Identity:
-- Greeting: full name + precise job title (e.g. "Dear Dr. Noura Al-Otaibi, Internal Medicine Consultant").
-- Domain: intelligently near-official but not matching (e.g. moh-staff.net, nhc-portal.org).
-  FORBIDDEN domain words: secure, update, verify, login, reset, password, urgent.
-- Sender: highly realistic person with complete professional signature (name + title + dept + extension).
+- Greeting: FULL NAME + precise job title (e.g. "Dear Dr. Noura Al-Otaibi, Internal Medicine Consultant").
+- Domain: near-official but not matching (e.g. moh-staff.net). FORBIDDEN words: secure, update, verify, login, reset.
+- Sender: realistic person with COMPLETE professional signature (name + title + dept + real extension number).
 
 AXIS 2 — Content & Style:
 - Errors: ZERO errors — completely flawless professional language.
-- Urgency: polite and subtle ONLY ("routine procedure", "at your earliest convenience") — NO threats.
-- Request: do NOT ask for password directly — risky action looks like normal workflow.
+- Urgency: polite and subtle ONLY ("routine procedure") — NO threats of any kind.
+- Request: do NOT ask for password — risky action looks like normal workflow.
 - Length: long and detailed in professional format.
 
 AXIS 3 — Technical Elements (ALL mandatory):
-- Link: hidden behind official button ONLY — raw URL must NOT appear in body text.
-- QR Code: MANDATORY — a QR code MUST appear. Write [QR: short descriptive label] at the appropriate position.
+- Link: hidden behind button ONLY — raw URL MUST NOT appear in body text.
+- QR Code: MANDATORY AND REQUIRED — a QR code MUST appear in every Advanced email.
+  Write [QR: short descriptive label] at the appropriate position in the body.
 - Attachment: officially named document with realistic details (e.g. Compliance_Protocol_2024.pdf).
-- Button: professionally styled official button.
+- Button: professionally styled with a descriptive label (NOT "Open Link" or "Click Here").
 
 AXIS 4 — Role & Healthcare Context:
 - Role alignment: tied to a specific daily task of the selected role.
-- Healthcare context: EMR system / clinical protocol / internal ticket number / real reference.
-- Believability: very high — difficult to detect without careful inspection.
-- Must mention a specific colleague name, unit, or internal department.
+- Healthcare context: EMR system / clinical protocol / internal ticket number.
+- Believability: very high — difficult to detect.
+- Must mention a specific colleague name or internal department.
 """,
             }
         else:
             rules = {
-                "easy": "Legitimate Easy: official hospital.org or moh.gov.sa domain only, no errors, no urgency, clear greeting, official sender, no sensitive data request, no external links.",
-                "medium": "Legitimate Intermediate: official domain only, no errors, normal deadline, semi-personal greeting, plausible sender, no credentials request, realistic workflow detail.",
-                "hard": "Legitimate Advanced: official domain only, no errors, may be professionally urgent but not threatening, personalized greeting, realistic sender, detailed healthcare context, no suspicious external link.",
+                "easy": "Legitimate Easy: official hospital.org or moh.gov.sa domain only, no errors, no urgency, clear greeting, no sensitive data request, no external links.",
+                "medium": "Legitimate Intermediate: official domain only, no errors, normal deadline, semi-personal greeting, no credentials request, realistic workflow detail.",
+                "hard": "Legitimate Advanced: official domain only, no errors, may be professionally urgent but not threatening, personalized greeting, realistic sender, detailed healthcare context.",
             }
     return rules.get(difficulty, rules.get("medium"))
 
@@ -1781,6 +1779,10 @@ def build_prompt(role, index, language):
 - التوقيع: يجب أن ينتهي الإيميل بتوقيع كامل (الاسم + المنصب + القسم) — ممنوع الانتهاء بعنوان بريد إلكتروني مجرد.
 - ممنوع وضع الرابط الخام مرتين — مرة كنص ومرة كزر.
 
+قواعد QR الصارمة:
+- إذا كان المستوى سهلاً أو متوسطاً: ممنوع منعاً باتاً وضع أي رمز QR — لا تكتب [QR:...] إطلاقاً.
+- إذا كان المستوى صعباً: يجب وضع [QR: نص قصير وصفي] في موضع مناسب من الرسالة — هذا إلزامي.
+
 أخرج JSON بهذا الشكل فقط:
 {{
   "email_type": "اسم نوع التصيد الجديد",
@@ -1827,6 +1829,10 @@ Greeting & Sign-off rules:
 - Greeting: must follow the difficulty level rules above precisely.
 - Sign-off: must end with a complete signature (name + title + department) — NEVER end with a bare email address.
 - NEVER repeat the raw URL twice — once as text AND once as a button.
+
+Strict QR rules:
+- If difficulty is EASY or INTERMEDIATE: QR codes are STRICTLY FORBIDDEN — do NOT write [QR:...] anywhere.
+- If difficulty is ADVANCED/HARD: a QR code is MANDATORY — you MUST include [QR: short descriptive label] in the body.
 
 Return only this JSON structure:
 {{
@@ -2449,6 +2455,10 @@ def render_email_window(email, is_arabic, show_badges=False):
 
     body_raw = re.sub(r'suspicious_link\s*:\s*', '', body_raw, flags=re.IGNORECASE)
     body_raw = re.sub(r'suspicious_text\s*:\s*', '', body_raw, flags=re.IGNORECASE)
+    # Remove placeholder phone numbers like +966-XX-XXXXXXX or +1-XXX-XXX-XXXX
+    body_raw = re.sub(r'\+?\d{1,4}[-\s]?(?:XX|\d{2,3})[-\s]?(?:XX+|\d{3,4})(?:[-\s]?(?:XX+|\d{3,4}))*', '', body_raw)
+    body_raw = re.sub(r'Contact:\s*\n', '', body_raw)
+    body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
     # --------------------------------------------------------
     # NEW: detect a "[QR Code: label]" / "[QR: label]" placeholder
@@ -2516,6 +2526,13 @@ def render_email_window(email, is_arabic, show_badges=False):
             body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
 
     has_attachment  = bool((email.get("attachment") or "").strip())
+
+    # Remove duplicate attachment filename that sometimes appears as plain text at end
+    if att_val:
+        att_escaped = re.escape(att_val.strip())
+        body_raw = re.sub(rf'^\s*Attachment\s*:\s*{att_escaped}\s*$', '', body_raw, flags=re.MULTILINE|re.IGNORECASE)
+        body_raw = re.sub(rf'^\s*{att_escaped}\s*$', '', body_raw, flags=re.MULTILINE)
+        body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
     body_html   = html_lib.escape(body_raw)
     badge_count = [4 if has_attachment else 3]
@@ -2591,13 +2608,19 @@ def render_email_window(email, is_arabic, show_badges=False):
     link_block_html = ""
     if has_link_button:
         link_badge = make_badge(next_badge()) if show_badges else ""
-        safe_label = html_lib.escape(link_label)
+        # Replace generic "Open Link" label with descriptive fallback
+        _display_label = link_label
+        if _display_label.strip().lower() in ("open link", "click here", "link", "رابط", "اضغط هنا", "فتح الرابط"):
+            _display_label = t("View Document", "عرض المستند")
+        safe_label = html_lib.escape(_display_label)
         link_block_html = f"""
 <div style="margin:.8rem 0;direction:{bd};">
   <button onclick="window.parent.postMessage({{type:'phishing_click',element:'link',label:'{safe_label}'}},\'*\')"
      style="display:inline-flex;align-items:center;gap:.5rem;border:1px solid #0078D4;
-            border-radius:6px;padding:.5rem 1.1rem;background:#0078D4;color:white;
-            font-size:.92rem;font-weight:700;cursor:pointer;font-family:inherit;">
+            border-radius:6px;padding:.5rem 1.2rem;background:#0078D4;color:white;
+            font-size:.92rem;font-weight:700;cursor:pointer;font-family:inherit;
+            box-shadow:0 2px 6px rgba(0,120,212,.4);"
+     onmouseover="this.style.background='#006CBE'" onmouseout="this.style.background='#0078D4'">
     {link_badge}🔗 {safe_label}
   </button>
 </div>"""
@@ -2648,51 +2671,62 @@ def render_email_window(email, is_arabic, show_badges=False):
     delete_lbl   = "حذف" if is_arabic else "Delete"
     toolbar_dir  = "rtl" if is_arabic else "ltr"
 
+    # Dynamic random email time (realistic variation)
+    _rand_hour   = random.randint(7, 16)
+    _rand_min    = random.choice([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55])
+    _period_en   = "AM" if _rand_hour < 12 else "PM"
+    _hour_12     = _rand_hour if _rand_hour <= 12 else _rand_hour - 12
+    _hour_12     = 12 if _hour_12 == 0 else _hour_12
+    _period_ar   = "ص" if _rand_hour < 12 else "م"
+    _time_en     = f"Today, {_hour_12}:{_rand_min:02d} {_period_en}"
+    _time_ar     = f"اليوم، {_hour_12}:{_rand_min:02d} {_period_ar}"
+    _email_time  = _time_ar if is_arabic else _time_en
+
     st.markdown(f"""
-<div style="background:#1F1F1F;border:1px solid #333;border-radius:12px 12px 0 0;overflow:hidden;font-family:'Segoe UI',Arial,sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);">
+<div style="background:#E5E7EB;border:1px solid #D1D5DB;border-radius:12px 12px 0 0;overflow:hidden;font-family:'Segoe UI',Arial,sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);">
   <!-- Outlook-style title bar -->
-  <div style="background:#2B2B2B;padding:.45rem 1rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #444;">
+  <div style="background:#D4D8DC;padding:.45rem 1rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #B8BCC0;">
     <div style="display:flex;gap:6px;align-items:center;">
       <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57;"></div>
       <div style="width:12px;height:12px;border-radius:50%;background:#FFBD2E;"></div>
       <div style="width:12px;height:12px;border-radius:50%;background:#28C840;"></div>
     </div>
-    <div style="color:#999;font-size:.78rem;letter-spacing:.5px;">📧 {"صندوق الوارد — Microsoft Outlook" if is_arabic else "Inbox — Microsoft Outlook"}</div>
+    <div style="color:#555;font-size:.78rem;letter-spacing:.5px;">📧 {"صندوق الوارد — Microsoft Outlook" if is_arabic else "Inbox — Microsoft Outlook"}</div>
     <div style="width:60px;"></div>
   </div>
   <!-- Outlook-style action toolbar -->
-  <div style="background:#252525;padding:.35rem 1rem;display:flex;gap:.5rem;align-items:center;border-bottom:1px solid #333;direction:{toolbar_dir};">
-    <button style="background:#0078D4;color:white;border:none;border-radius:4px;padding:.28rem .75rem;font-size:.78rem;cursor:pointer;font-family:inherit;">↩ {reply_lbl}</button>
-    <button style="background:#333;color:#ccc;border:1px solid #555;border-radius:4px;padding:.28rem .75rem;font-size:.78rem;cursor:pointer;font-family:inherit;">→ {forward_lbl}</button>
-    <button style="background:#333;color:#ccc;border:1px solid #555;border-radius:4px;padding:.28rem .75rem;font-size:.78rem;cursor:pointer;font-family:inherit;">🗑 {delete_lbl}</button>
+  <div style="background:#E9EAEB;padding:.35rem 1rem;display:flex;gap:.5rem;align-items:center;border-bottom:1px solid #D1D5DB;direction:{toolbar_dir};">
+    <button style="background:#0078D4;color:white;border:none;border-radius:4px;padding:.28rem .85rem;font-size:.78rem;cursor:pointer;font-family:inherit;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:background .15s;" onmouseover="this.style.background='#006CBE'" onmouseout="this.style.background='#0078D4'">↩ {reply_lbl}</button>
+    <button style="background:#F3F4F6;color:#374151;border:1px solid #CBD5E1;border-radius:4px;padding:.28rem .85rem;font-size:.78rem;cursor:pointer;font-family:inherit;font-weight:500;" onmouseover="this.style.background='#E5E7EB'" onmouseout="this.style.background='#F3F4F6'">→ {forward_lbl}</button>
+    <button style="background:#F3F4F6;color:#374151;border:1px solid #CBD5E1;border-radius:4px;padding:.28rem .85rem;font-size:.78rem;cursor:pointer;font-family:inherit;font-weight:500;" onmouseover="this.style.background='#FEE2E2';this.style.color='#DC2626'" onmouseout="this.style.background='#F3F4F6';this.style.color='#374151'">🗑 {delete_lbl}</button>
     <div style="flex:1;"></div>
-    <span style="color:#666;font-size:.75rem;">{"اليوم، 09:42 ص" if is_arabic else "Today, 9:42 AM"}</span>
+    <span style="color:#6B7280;font-size:.75rem;font-style:italic;">{_email_time}</span>
   </div>
   <!-- Email header -->
-  <div style="padding:.9rem 1.6rem .5rem;font-size:.92rem;color:#CBD5E1;direction:{bd};text-align:{ta};background:#1A1A1A;border-bottom:1px solid #2D2D2D;">
+  <div style="padding:.9rem 1.6rem .5rem;font-size:.92rem;color:#CBD5E1;direction:{bd};text-align:{ta};background:#F3F4F6;border-bottom:1px solid #D1D5DB;">
     <table style="width:100%;border-collapse:collapse;direction:{bd};">
       <tr style="vertical-align:top;">
-        <td style="color:#888;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;width:80px;font-size:.85rem;">{fl}</td>
-        <td style="color:#E2E8F0;padding:0 0 6px 0;word-break:break-all;">{b_from}{from_val}</td>
+        <td style="color:#6B7280;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;width:80px;font-size:.85rem;">{fl}</td>
+        <td style="color:#111827;padding:0 0 6px 0;word-break:break-all;">{b_from}{from_val}</td>
       </tr>
       <tr style="vertical-align:middle;">
-        <td style="color:#888;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;font-size:.85rem;">{tl}</td>
+        <td style="color:#6B7280;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;font-size:.85rem;">{tl}</td>
         <td style="color:#60A5FA;padding:0 0 6px 0;direction:ltr;text-align:{('right' if bd=='rtl' else 'left')};overflow:hidden;text-overflow:ellipsis;">{to_val}</td>
       </tr>
       <tr style="vertical-align:top;">
-        <td style="color:#888;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;font-size:.85rem;">{sl}</td>
-        <td style="color:#F1F5F9;padding:0 0 6px 0;word-break:break-word;font-weight:600;">{b_subj}{subj_val}</td>
+        <td style="color:#6B7280;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;font-size:.85rem;">{sl}</td>
+        <td style="color:#111827;padding:0 0 6px 0;word-break:break-word;font-weight:700;">{b_subj}{subj_val}</td>
       </tr>
     </table>
     {att_html}
   </div>
 </div>
-<div style="background:#1A1A1A;border:1px solid #333;border-top:none;
+<div style="background:#FFFFFF;border:1px solid #D1D5DB;border-top:none;
             border-radius:0 0 12px 12px;padding:1.2rem 1.6rem 1.6rem;
             font-family:'Segoe UI',Arial,sans-serif;
-            font-size:.93rem;color:#D1D5DB;
+            font-size:.93rem;color:#1F2937;
             line-height:1.9;direction:{bd};text-align:{ta};
-            box-shadow:0 20px 60px rgba(0,0,0,.5);">
+            box-shadow:0 20px 60px rgba(0,0,0,.3);">
   {body_html}
 </div>""", unsafe_allow_html=True)
 
