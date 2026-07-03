@@ -2528,8 +2528,9 @@ def render_email_window(email, is_arabic, show_badges=False):
     has_attachment  = bool((email.get("attachment") or "").strip())
 
     # Remove duplicate attachment filename that sometimes appears as plain text at end
-    if att_val:
-        att_escaped = re.escape(att_val.strip())
+    _att_name = (email.get("attachment") or "").strip()
+    if _att_name:
+        att_escaped = re.escape(_att_name)
         body_raw = re.sub(rf'^\s*Attachment\s*:\s*{att_escaped}\s*$', '', body_raw, flags=re.MULTILINE|re.IGNORECASE)
         body_raw = re.sub(rf'^\s*{att_escaped}\s*$', '', body_raw, flags=re.MULTILINE)
         body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
