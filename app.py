@@ -1759,9 +1759,11 @@ def build_prompt(role, index, language):
 قواعد إلزامية — الارتباط بالوظيفة والسياق الصحي:
 - يجب أن يكون الإيميل مرتبطًا 100٪ بالدور الوظيفي المحدد: {role_context}
 - كل عنصر في الإيميل (المرسل، الموضوع، المحتوى، الطلب) يجب أن يعكس هذا الدور مباشرةً.
-- ممنوع تمامًا إرسال إيميل إداري عام أو من الموارد البشرية لشخص في دور سريري أو تقني.
-- يجب أن يتضمن الإيميل سياقًا صحيًا واضحًا: نظام طبي أو قسم مستشفى أو إجراء سريري محدد.
-- ممنوع تكرار نوع "تقديم العروض التجارية" إلا إذا كان نادرًا وغير مكرر في هذه الجلسة.
+- إذا كان الدور سريريًا: يجب أن يدور الإيميل حول نظام EMR أو سجلات مرضى أو بروتوكول سريري أو نتائج فحوصات أو أدوية — وليس عن موارد بشرية أو عروض تجارية.
+- إذا كان الدور إداريًا: يجب أن يدور حول العقود أو الفواتير أو الجداول أو سياسات العمل.
+- إذا كان الدور تقنيًا: يجب أن يدور حول الأنظمة أو الشبكات أو الأجهزة أو VPN.
+- ممنوع تمامًا إرسال إيميل عام لا يعكس الدور المحدد.
+- ممنوع تكرار نوع "تقديم العروض التجارية" أو "برامج الرعاية" إلا إذا كان الدور يستدعيه.
 - لا تستخدم أي قالب ثابت أو نطاق مكرر.
 - ممنوع استخدام النص الحرفي: suspicious_link داخل body. ضع رابطًا حقيقي الشكل.
 - أخرج JSON فقط بدون Markdown.
@@ -1810,8 +1812,10 @@ Task: Generate ONE new phishing learning email.
 MANDATORY rules — Role Alignment & Healthcare Context:
 - The email MUST be 100% aligned with the specified job role: {role_context}
 - Every element (sender, subject, body, request) must directly reflect this specific role.
-- FORBIDDEN: sending a generic HR or administrative email to a clinical or IT role.
-- The email MUST contain a clear healthcare context: a medical system, hospital department, or specific clinical procedure.
+- If the role is CLINICAL: the email must revolve around EMR systems, patient records, clinical protocols, lab results, medications, or radiology — NOT HR or commercial offers.
+- If the role is ADMINISTRATIVE: the email must revolve around contracts, invoices, scheduling, or work policies.
+- If the role is IT: the email must revolve around systems, networks, devices, VPN, or software licenses.
+- FORBIDDEN: sending a generic wellness program, prize draw, or commercial offer email to a clinical role.
 - AVOID repeating commercial offer-type phishing — use it only if rarely used in this session.
 - Do NOT use a fixed template or reused domain.
 - Never write the literal placeholder suspicious_link inside body. Use a realistic-looking URL.
@@ -2537,20 +2541,27 @@ def render_email_window(email, is_arabic, show_badges=False):
     # SAFETY NET: some providers still print the raw URL as plain
     # text (e.g. in the signature) EVEN THOUGH it is also being
     # rendered as a real QR image or a real button below. If we
-    # detect a standalone line that is exactly the suspicious_link,
-    # strip it — the model didn't follow the no-repeat instruction,
-    # but the UI shouldn't show the same link twice.
-    # --------------------------------------------------------
-    if (has_qr or has_link_button) and suspicious_link:
+    # Remove duplicate URL — strip any standalone line that is exactly the suspicious_link
+    # This applies ALWAYS (not just when has_qr or has_link_button) to prevent double display
+    if suspicious_link:
         bare_link_pattern = re.escape(suspicious_link)
+        bare_no_scheme    = re.escape(re.sub(r'^https?://', '', suspicious_link))
+        # Remove if it appears as a standalone line (with or without http prefix)
         body_raw = re.sub(rf'^[ \t]*{bare_link_pattern}[ \t]*$\n?', '', body_raw, flags=re.MULTILINE)
+        body_raw = re.sub(rf'^[ \t]*{bare_no_scheme}[ \t]*$\n?', '', body_raw, flags=re.MULTILINE)
         body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
-    # Legacy fallback: if neither a QR nor a link-button placeholder was found,
-    # keep the original behaviour of appending the raw suspicious_link as text.
-    if suspicious_link and suspicious_link not in body_raw and not has_qr and not has_link_button:
+    # For easy level: URL should appear once as plain text in body — add only if missing
+    if _difficulty == "easy" and suspicious_link and not has_qr and not has_link_button:
+        if suspicious_link not in body_raw:
+            link_bare = re.sub(r'^https?://', '', suspicious_link)
+            if link_bare not in body_raw:
+                body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
+
+    # For medium/hard: if no button and no QR and link missing — add as fallback only for medium
+    if _difficulty == "medium" and suspicious_link and not has_qr and not has_link_button:
         link_bare = re.sub(r'^https?://', '', suspicious_link)
-        if link_bare not in body_raw:
+        if suspicious_link not in body_raw and link_bare not in body_raw:
             body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
 
     has_attachment  = bool((email.get("attachment") or "").strip())
@@ -2712,9 +2723,9 @@ def render_email_window(email, is_arabic, show_badges=False):
     _email_time  = _time_ar if is_arabic else _time_en
 
     st.markdown(f"""
-<div style="background:#E5E7EB;border:1px solid #D1D5DB;border-radius:12px 12px 0 0;overflow:hidden;font-family:'Segoe UI',Arial,sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);">
+<div style="background:#D8DCE1;border:1px solid #C5CAD0;border-radius:12px 12px 0 0;overflow:hidden;font-family:'Segoe UI',Arial,sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.5);">
   <!-- Outlook-style title bar -->
-  <div style="background:#D4D8DC;padding:.45rem 1rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #B8BCC0;">
+  <div style="background:#CDD2D8;padding:.45rem 1rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #B5BAC0;">
     <div style="display:flex;gap:6px;align-items:center;">
       <div style="width:12px;height:12px;border-radius:50%;background:#FF5F57;"></div>
       <div style="width:12px;height:12px;border-radius:50%;background:#FFBD2E;"></div>
@@ -2724,7 +2735,7 @@ def render_email_window(email, is_arabic, show_badges=False):
     <div style="width:60px;"></div>
   </div>
   <!-- Outlook-style action toolbar -->
-  <div style="background:#E9EAEB;padding:.35rem 1rem;display:flex;gap:.5rem;align-items:center;border-bottom:1px solid #D1D5DB;direction:{toolbar_dir};">
+  <div style="background:#DDE1E6;padding:.35rem 1rem;display:flex;gap:.5rem;align-items:center;border-bottom:1px solid #C5CAD0;direction:{toolbar_dir};">
     <button style="background:#0078D4;color:white;border:none;border-radius:4px;padding:.28rem .85rem;font-size:.78rem;cursor:pointer;font-family:inherit;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:background .15s;" onmouseover="this.style.background='#006CBE'" onmouseout="this.style.background='#0078D4'">↩ {reply_lbl}</button>
     <button style="background:#F3F4F6;color:#374151;border:1px solid #CBD5E1;border-radius:4px;padding:.28rem .85rem;font-size:.78rem;cursor:pointer;font-family:inherit;font-weight:500;" onmouseover="this.style.background='#E5E7EB'" onmouseout="this.style.background='#F3F4F6'">→ {forward_lbl}</button>
     <button style="background:#F3F4F6;color:#374151;border:1px solid #CBD5E1;border-radius:4px;padding:.28rem .85rem;font-size:.78rem;cursor:pointer;font-family:inherit;font-weight:500;" onmouseover="this.style.background='#FEE2E2';this.style.color='#DC2626'" onmouseout="this.style.background='#F3F4F6';this.style.color='#374151'">🗑 {delete_lbl}</button>
@@ -2732,7 +2743,7 @@ def render_email_window(email, is_arabic, show_badges=False):
     <span style="color:#6B7280;font-size:.75rem;font-style:italic;">{_email_time}</span>
   </div>
   <!-- Email header -->
-  <div style="padding:.9rem 1.6rem .5rem;font-size:.92rem;color:#CBD5E1;direction:{bd};text-align:{ta};background:#E8EAED;border-bottom:1px solid #CDD1D6;">
+  <div style="padding:.9rem 1.6rem .5rem;font-size:.92rem;color:#CBD5E1;direction:{bd};text-align:{ta};background:#DDE1E6;border-bottom:1px solid #C5CAD0;">
     <table style="width:100%;border-collapse:collapse;direction:{bd};">
       <tr style="vertical-align:top;">
         <td style="color:#6B7280;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;width:80px;font-size:.85rem;">{fl}</td>
@@ -2750,10 +2761,10 @@ def render_email_window(email, is_arabic, show_badges=False):
     {att_html}
   </div>
 </div>
-<div style="background:#F0F2F5;border:1px solid #D1D5DB;border-top:none;
+<div style="background:#EEF0F3;border:1px solid #CDD1D6;border-top:none;
             border-radius:0 0 12px 12px;padding:1.2rem 1.6rem 1.6rem;
             font-family:'Segoe UI',Arial,sans-serif;
-            font-size:.93rem;color:#1F2937;background:#F0F2F5;
+            font-size:.93rem;color:#1F2937;background:#EEF0F3;
             line-height:1.9;direction:{bd};text-align:{ta};
             box-shadow:0 20px 60px rgba(0,0,0,.3);">
   {body_html}
