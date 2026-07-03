@@ -2468,11 +2468,25 @@ def render_email_window(email, is_arabic, show_badges=False):
     # bottom after the signature).
     # --------------------------------------------------------
     qr_label, has_qr = "", False
+    _difficulty = st.session_state.get("difficulty", "medium")
+
     qr_match = re.search(r'\[\s*QR(?:\s*Code)?\s*:?\s*([^\]]*)\]', body_raw, re.I)
     if qr_match:
+        if _difficulty in ("easy", "medium"):
+            # QR is FORBIDDEN in easy/medium — remove it completely
+            body_raw = body_raw[:qr_match.start()] + "" + body_raw[qr_match.end():]
+            body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
+        else:
+            # Hard/Advanced — keep QR
+            has_qr = True
+            qr_label = qr_match.group(1).strip()
+            body_raw = body_raw[:qr_match.start()] + "@@QR_TOKEN@@" + body_raw[qr_match.end():]
+    elif _difficulty in ("hard", "advanced") and email.get("suspicious_link"):
+        # QR is mandatory in hard but model forgot — inject it
+        _qr_lbl = "امسح للوصول" if is_arabic else "Scan to Access"
+        body_raw = body_raw.rstrip() + f"\n\n@@QR_TOKEN@@"
         has_qr = True
-        qr_label = qr_match.group(1).strip()
-        body_raw = body_raw[:qr_match.start()] + "@@QR_TOKEN@@" + body_raw[qr_match.end():]
+        qr_label = _qr_lbl
 
     # --------------------------------------------------------
     # NEW: detect a markdown-style "[Button label](https://...)"
@@ -2483,10 +2497,24 @@ def render_email_window(email, is_arabic, show_badges=False):
     link_label, link_url, has_link_button = "", "", False
     link_match = re.search(r'\[([^\]]{1,80})\]\s*\(\s*(https?://[^\)\s]+)\s*\)', body_raw)
     if link_match:
-        has_link_button = True
-        link_label = link_match.group(1).strip()
-        link_url   = link_match.group(2).strip()
-        body_raw   = body_raw[:link_match.start()] + "@@LINK_TOKEN@@" + body_raw[link_match.end():]
+        if _difficulty == "easy":
+            # Easy level: NO button allowed — convert to plain text URL
+            _raw_url = link_match.group(2).strip()
+            body_raw = body_raw[:link_match.start()] + _raw_url + body_raw[link_match.end():]
+            # Also capture for suspicious_link display if not already set
+            if not email.get("suspicious_link"):
+                email["suspicious_link"] = _raw_url
+        else:
+            has_link_button = True
+            link_label = link_match.group(1).strip()
+            link_url   = link_match.group(2).strip()
+            body_raw   = body_raw[:link_match.start()] + "@@LINK_TOKEN@@" + body_raw[link_match.end():]
+
+    # Also for easy: if suspicious_link exists but no visible URL in body, append it
+    if _difficulty == "easy" and (email.get("suspicious_link") or "").strip():
+        _sl = (email.get("suspicious_link") or "").strip()
+        if _sl and _sl not in body_raw and not has_link_button:
+            body_raw = body_raw.rstrip() + f"\n\n{_sl}"
 
     # Tidy up extra blank lines left behind after removing the placeholders above.
     body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
@@ -2704,7 +2732,7 @@ def render_email_window(email, is_arabic, show_badges=False):
     <span style="color:#6B7280;font-size:.75rem;font-style:italic;">{_email_time}</span>
   </div>
   <!-- Email header -->
-  <div style="padding:.9rem 1.6rem .5rem;font-size:.92rem;color:#CBD5E1;direction:{bd};text-align:{ta};background:#F3F4F6;border-bottom:1px solid #D1D5DB;">
+  <div style="padding:.9rem 1.6rem .5rem;font-size:.92rem;color:#CBD5E1;direction:{bd};text-align:{ta};background:#E8EAED;border-bottom:1px solid #CDD1D6;">
     <table style="width:100%;border-collapse:collapse;direction:{bd};">
       <tr style="vertical-align:top;">
         <td style="color:#6B7280;font-weight:600;padding:0 8px 6px 0;white-space:nowrap;width:80px;font-size:.85rem;">{fl}</td>
@@ -2722,10 +2750,10 @@ def render_email_window(email, is_arabic, show_badges=False):
     {att_html}
   </div>
 </div>
-<div style="background:#FFFFFF;border:1px solid #D1D5DB;border-top:none;
+<div style="background:#F0F2F5;border:1px solid #D1D5DB;border-top:none;
             border-radius:0 0 12px 12px;padding:1.2rem 1.6rem 1.6rem;
             font-family:'Segoe UI',Arial,sans-serif;
-            font-size:.93rem;color:#1F2937;
+            font-size:.93rem;color:#1F2937;background:#F0F2F5;
             line-height:1.9;direction:{bd};text-align:{ta};
             box-shadow:0 20px 60px rgba(0,0,0,.3);">
   {body_html}
@@ -5750,6 +5778,107 @@ def build_assess_prompt(role, index, is_phishing, language):
     return base + "\n\nFINAL strict language directive: every text field must be written entirely in English. Do not include any Arabic word or sentence anywhere in the response.\n"
 # =============================================================
 # END UX REALISM PATCH
+# =============================================================
+
+# =============================================================
+# DIFFICULTY ENFORCEMENT PATCH
+# Enforces the 4-axis framework strictly at prompt level:
+# - EASY: generic greeting, plain text URL, NO QR, NO button, 2 spelling errors
+# - MEDIUM: semi-personal greeting, simple button, NO QR, 1 spelling error
+# - HARD: full name+title, QR mandatory, professional button, zero errors
+# Also post-processes the AI output to remove QR from easy/medium
+# =============================================================
+_BASE_BUILD_PROMPT_DIFF = build_prompt
+_BASE_BUILD_ASSESS_PROMPT_DIFF = build_assess_prompt
+
+_DIFF_ADDON_EASY_AR = """
+
+⚠️ تعليمات صارمة جداً لمستوى السهل — يجب الالتزام بها حرفياً:
+1. التحية: "عزيزي الموظف" أو "عزيزي الزميل" فقط — ممنوع منعاً باتاً أي اسم شخصي.
+2. الأخطاء: ضع بالضبط خطأين إملائيين أو نحويين واضحين في جسم الرسالة — هذا إلزامي ومطلوب.
+3. الرابط: ضع الرابط كنص خام مرئي فقط في جسم الرسالة (مثل: http://fake-hospital.com/update) — ممنوع استخدام زر أو markdown.
+4. QR: محظور تماماً — لا تكتب [QR:...] أبداً.
+5. المرفق: محظور تماماً.
+6. الإلحاح: صريح ومباشر ("الآن فوراً" أو "سيُغلق حسابك اليوم").
+"""
+
+_DIFF_ADDON_EASY_EN = """
+
+⚠️ STRICT EASY LEVEL RULES — follow these literally or the output is invalid:
+1. Greeting: MUST be "Dear Employee" or "Dear Staff" — ANY personal name is FORBIDDEN.
+2. Errors: place EXACTLY TWO obvious spelling/grammar mistakes in the body — this is REQUIRED.
+3. Link: place the URL as RAW VISIBLE PLAIN TEXT in the body (e.g. http://fake-hospital.com/update) — NO button, NO markdown link.
+4. QR: COMPLETELY FORBIDDEN — do NOT write [QR:...] anywhere.
+5. Attachment: FORBIDDEN.
+6. Urgency: direct and explicit ("Act NOW", "your account closes TODAY").
+"""
+
+_DIFF_ADDON_MEDIUM_AR = """
+
+⚠️ تعليمات صارمة جداً لمستوى المتوسط — يجب الالتزام بها حرفياً:
+1. التحية: استخدم الاسم الأول أو المسمى الوظيفي فقط (مثل "عزيزي د. أحمد").
+2. الأخطاء: ضع بالضبط خطأً إملائياً واحداً خفيفاً في جسم الرسالة — هذا إلزامي.
+3. الرابط: استخدم زراً بسيطاً [نص](رابط) — مسموح.
+4. QR: محظور تماماً — لا تكتب [QR:...] أبداً.
+"""
+
+_DIFF_ADDON_MEDIUM_EN = """
+
+⚠️ STRICT INTERMEDIATE LEVEL RULES — follow these literally:
+1. Greeting: use first name or job title ONLY (e.g. "Dear Dr. Ahmed").
+2. Errors: place EXACTLY ONE subtle spelling/grammar mistake in the body — this is REQUIRED.
+3. Link: a simple button [label](url) is allowed.
+4. QR: COMPLETELY FORBIDDEN — do NOT write [QR:...] anywhere.
+"""
+
+_DIFF_ADDON_HARD_AR = """
+
+⚠️ تعليمات صارمة جداً لمستوى الصعب — يجب الالتزام بها حرفياً:
+1. التحية: الاسم الكامل + اللقب الوظيفي الدقيق (مثل "عزيزتي د. نورة العتيبي، استشارية الأمراض الداخلية").
+2. QR: إلزامي ومطلوب دائماً — اكتب [QR: نص قصير وصفي] في موضع مناسب من جسم الرسالة.
+3. الزر: استخدم زراً رسمياً باسم وصفي واضح (ليس "Open Link" أو "اضغط هنا").
+4. الأخطاء: صفر أخطاء — لغة احترافية كاملة.
+5. الإلحاح: خفيف ومهذب فقط ("إجراء روتيني") — ممنوع أي تهديد.
+6. التوقيع: اسم كامل + المنصب + القسم + رقم تحويلة داخلية حقيقي (ليس XX).
+"""
+
+_DIFF_ADDON_HARD_EN = """
+
+⚠️ STRICT ADVANCED LEVEL RULES — follow these literally:
+1. Greeting: FULL NAME + precise job title (e.g. "Dear Dr. Noura Al-Otaibi, Internal Medicine Consultant").
+2. QR: MANDATORY AND REQUIRED — write [QR: short descriptive label] in the body — the output is INVALID without it.
+3. Button: use a professionally descriptive label (NOT "Open Link" or "Click Here").
+4. Errors: ZERO spelling or grammar errors.
+5. Urgency: polite and subtle ONLY ("routine procedure") — NO threats.
+6. Signature: full name + title + department + real internal extension (no XX placeholders).
+"""
+
+def build_prompt(role, index, language):
+    base = _BASE_BUILD_PROMPT_DIFF(role, index, language)
+    difficulty = st.session_state.get("difficulty", "medium")
+    is_ar = (language == "Arabic")
+    if difficulty == "easy":
+        base += _DIFF_ADDON_EASY_AR if is_ar else _DIFF_ADDON_EASY_EN
+    elif difficulty == "medium":
+        base += _DIFF_ADDON_MEDIUM_AR if is_ar else _DIFF_ADDON_MEDIUM_EN
+    elif difficulty in ("hard", "advanced"):
+        base += _DIFF_ADDON_HARD_AR if is_ar else _DIFF_ADDON_HARD_EN
+    return base
+
+def build_assess_prompt(role, index, is_phishing, language):
+    base = _BASE_BUILD_ASSESS_PROMPT_DIFF(role, index, is_phishing, language)
+    difficulty = st.session_state.get("difficulty", "medium")
+    is_ar = (language == "Arabic")
+    if difficulty == "easy":
+        base += _DIFF_ADDON_EASY_AR if is_ar else _DIFF_ADDON_EASY_EN
+    elif difficulty == "medium":
+        base += _DIFF_ADDON_MEDIUM_AR if is_ar else _DIFF_ADDON_MEDIUM_EN
+    elif difficulty in ("hard", "advanced"):
+        base += _DIFF_ADDON_HARD_AR if is_ar else _DIFF_ADDON_HARD_EN
+    return base
+
+# =============================================================
+# END DIFFICULTY ENFORCEMENT PATCH
 # =============================================================
 
 _BAD_INDICATOR_TITLES = re.compile(
