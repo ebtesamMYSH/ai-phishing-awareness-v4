@@ -2761,10 +2761,10 @@ def render_email_window(email, is_arabic, show_badges=False):
     {att_html}
   </div>
 </div>
-<div style="background:#EEF0F3;border:1px solid #CDD1D6;border-top:none;
+<div style="background:#E6EAF2;border:1px solid #CDD1D6;border-top:none;
             border-radius:0 0 12px 12px;padding:1.2rem 1.6rem 1.6rem;
             font-family:'Segoe UI',Arial,sans-serif;
-            font-size:.93rem;color:#1F2937;background:#EEF0F3;
+            font-size:.93rem;color:#1F2937;background:#E6EAF2;
             line-height:1.9;direction:{bd};text-align:{ta};
             box-shadow:0 20px 60px rgba(0,0,0,.3);">
   {body_html}
@@ -4490,9 +4490,27 @@ def _choice_no_recent(items, memory_key, label_getter=lambda x: str(x)):
     st.session_state[memory_key] = (recent + [label])[-8:]
     return item
 
-def get_generation_plan(role_type, is_phishing=True, is_ar=False, phase="learn"):
+def get_generation_plan(role_type, is_phishing=True, is_ar=False, phase="learn", difficulty="medium"):
     if is_phishing:
         items = ATTACK_PLAYBOOK.get(role_type, ATTACK_PLAYBOOK["other"])
+        # --------------------------------------------------------
+        # Difficulty-aware vector filtering (Axis 3 — Technical Elements):
+        # Easy: NO attachment, NO QR (both strictly forbidden at this level).
+        # Medium: NO QR (QR is exclusive to Advanced). Attachment (simple
+        # generic PDF) is allowed at Medium, so it stays in the pool.
+        # Hard: no exclusion needed here — QR is handled/injected separately
+        # as mandatory, and attachment is enforced by the strict addon.
+        # This prevents the prompt from telling the model to use a vector
+        # ("attachment"/"QR") that a later instruction then forbids.
+        # --------------------------------------------------------
+        if difficulty == "easy":
+            filtered = [x for x in items if "qr" not in x["vector"].lower() and "attachment" not in x["vector"].lower()]
+            if filtered:
+                items = filtered
+        elif difficulty == "medium":
+            filtered = [x for x in items if "qr" not in x["vector"].lower()]
+            if filtered:
+                items = filtered
         # --------------------------------------------------------
         # NEW: cap QR-vector scenarios to AT MOST 1 within any
         # rolling window of 6 learning picks (the QR vector kept
@@ -4676,7 +4694,7 @@ def build_prompt(role, index, language):
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
     seed = random.randint(100000, 999999)
-    plan = get_generation_plan(role_type, is_phishing=True, is_ar=is_ar, phase="learn")
+    plan = get_generation_plan(role_type, is_phishing=True, is_ar=is_ar, phase="learn", difficulty=difficulty)
     st.session_state["_last_learn_vector"] = plan.get("vector", "")
     recipient_email = get_recipient(role, index, language, phase="learn") if role_type != "other" else f"staff.{seed}@hospital.org"
     avoid_topics = get_avoid_list_text(role_type, "learn", is_ar)
@@ -4793,7 +4811,7 @@ def build_assess_prompt(role, index, is_phishing, language):
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     _, _, role_type = role_info
     seed = random.randint(100000, 999999)
-    plan = get_generation_plan(role_type, is_phishing=is_phishing, is_ar=is_ar, phase="assess")
+    plan = get_generation_plan(role_type, is_phishing=is_phishing, is_ar=is_ar, phase="assess", difficulty=difficulty)
     st.session_state["_last_assess_vector"] = plan.get("vector", "")
     recipient_email = get_recipient(role, index, language, phase="assess") if role_type != "other" else f"staff.{seed}@hospital.org"
     suffix = f"assess_{is_phishing}"
@@ -5329,9 +5347,9 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
     if is_ar:
         if is_phishing:
             return {
-                "easy": "مبتدئ: تصيد واضح جدًا. تحية عامة، نطاق مزيف مكشوف، طلب بيانات حساس مباشر، رابط واضح أو مرفق مشبوه، تهديد مباشر، ويمكن وجود خطأين فقط.",
-                "medium": "متوسط: تصيد مقنع جزئيًا. تفاصيل عمل واقعية، تحية شبه شخصية، إلحاح مهني خفيف 24-72 ساعة، مؤشران واضحان فقط، ولا تستخدم تهديدًا مبالغًا أو كلمات إنجليزية كثيرة.",
-                "hard": "متقدم: تصيد قريب من الشرعي. تحية شخصية، لا أخطاء إملائية، لا تهديد مباشر، لا طلب كلمة مرور صريح، استخدم سياقًا داخليًا واقعيًا وناقلًا غير واضح مثل مرفق/QR/MFA/رد/مستند مشترك/مكالمة."
+                "easy": "مبتدئ: تصيد واضح جدًا جدًا. تحية عامة فقط بدون أي اسم شخصي، مرسل عام (فريق/قسم) بدون اسم أو لقب وظيفي لشخص محدد، نطاق مزيف واضح تمامًا لا يشبه أي جهة رسمية حقيقية (ممنوع أي تشابه مع moh.gov.sa أو hospital.org)، طلب مباشر وصريح لكلمة المرور أو بيانات الدخول، رابط نصي مكشوف فقط، ممنوع أي مرفق نهائيًا، تهديد مباشر وصريح، وخطأان إملائيان واضحان إلزاميًا.",
+                "medium": "متوسط: تصيد مقنع جزئيًا. تفاصيل عمل واقعية، تحية شبه شخصية بالاسم الأول أو المسمى الوظيفي فقط (ليست عامة وليست كاملة)، نطاق شبه رسمي يشبه الرسمي بفارق بسيط، إلحاح مهني خفيف 24-72 ساعة، مؤشران واضحان فقط، ولا تستخدم تهديدًا مبالغًا أو كلمات إنجليزية كثيرة.",
+                "hard": "متقدم: تصيد قريب من الشرعي. تحية بالاسم الكامل + اللقب الوظيفي الدقيق، مرسل بتوقيع مهني كامل، نطاق شبه رسمي بذكاء، لا أخطاء إملائية، لا تهديد مباشر، لا طلب كلمة مرور صريح، يجب أن يتضمن مرفقًا رسميًا مسمّى بالإضافة لرمز QR إلزامي — كلاهما مطلوب معًا، واستخدم سياقًا داخليًا واقعيًا (EMR/بروتوكول/رقم تذكرة) واسم زميل أو قسم محدد."
             }.get(difficulty, "متوسط")
         return {
             "easy": "شرعي مبتدئ: رسمي وواضح من hospital.org أو moh.gov.sa، لا رابط خارجي، لا بيانات حساسة، لا تهديد.",
@@ -5340,9 +5358,9 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
         }.get(difficulty, "شرعي متوسط")
     if is_phishing:
         return {
-            "easy": "Beginner: obvious phishing. Generic greeting, obvious fake domain, direct sensitive request, clear link or risky attachment, direct threat, and at most two spelling mistakes.",
-            "medium": "Intermediate: partly convincing phishing. Realistic workplace detail, semi-personal greeting, mild professional urgency of 24-72 hours, only two clear red flags, no extreme threat or heavy all-caps.",
-            "hard": "Advanced: near-legitimate phishing. Personalized greeting, no spelling mistakes, no direct password request, no blunt threat, and a subtle vector such as attachment, QR, MFA, reply, shared document, phone callback, or contextual portal."
+            "easy": "Beginner: extremely obvious phishing. Generic greeting only, no personal name anywhere; generic sender (a team/department, NOT a named person with a title); domain must be completely and obviously fake, unrelated to any real organization (must NOT resemble moh.gov.sa or hospital.org); direct explicit password/credential request; a plain visible link only; NO attachment of any kind; direct explicit threat; and EXACTLY two obvious spelling/grammar mistakes.",
+            "medium": "Intermediate: partly convincing phishing. Realistic workplace detail, semi-personal greeting using first name or job title only (not generic, not full name+title), look-alike domain resembling the real one with a small detectable difference, mild professional urgency of 24-72 hours, only two clear red flags, no extreme threat or heavy all-caps.",
+            "hard": "Advanced: near-legitimate phishing. Personalized greeting with full name and precise job title, sender with a complete professional signature, near-official domain, no spelling mistakes, no direct password request, no blunt threat. MUST include BOTH an officially named attachment AND a mandatory QR code together, plus a realistic internal context (EMR/clinical protocol/ticket number) and a specific colleague or department name."
         }.get(difficulty, "Intermediate")
     return {
         "easy": "Legitimate Beginner: official hospital.org or moh.gov.sa only, simple safe purpose, no external link, no sensitive request, no threat.",
@@ -5806,62 +5824,76 @@ _DIFF_ADDON_EASY_AR = """
 
 ⚠️ تعليمات صارمة جداً لمستوى السهل — يجب الالتزام بها حرفياً:
 1. التحية: "عزيزي الموظف" أو "عزيزي الزميل" فقط — ممنوع منعاً باتاً أي اسم شخصي.
-2. الأخطاء: ضع بالضبط خطأين إملائيين أو نحويين واضحين في جسم الرسالة — هذا إلزامي ومطلوب.
-3. الرابط: ضع الرابط كنص خام مرئي فقط في جسم الرسالة (مثل: http://fake-hospital.com/update) — ممنوع استخدام زر أو markdown.
-4. QR: محظور تماماً — لا تكتب [QR:...] أبداً.
-5. المرفق: محظور تماماً.
-6. الإلحاح: صريح ومباشر ("الآن فوراً" أو "سيُغلق حسابك اليوم").
+2. هوية المرسل (from): يجب أن تكون جهة عامة أو اسم قسم فقط (مثل "فريق الدعم الفني" أو "قسم الموارد البشرية") — ممنوع تماماً أن يكون المرسل شخصاً باسمه الشخصي أو بلقب وظيفي (ممنوع كتابة "د." أو "Dr." أو اسم كامل + منصب) حتى في التوقيع بنهاية الرسالة.
+3. النطاق: يجب أن يكون واضح التزوير تماماً ولا يشبه أي جهة حقيقية إطلاقاً — ممنوع استخدام كلمات مثل gov أو moh أو board أو ministry أو أي تركيبة تحاكي moh.gov.sa أو hospital.org.
+4. الأخطاء: ضع بالضبط خطأين إملائيين أو نحويين واضحين في جسم الرسالة — هذا إلزامي ومطلوب.
+5. الرابط: ضع الرابط كنص خام مرئي فقط في جسم الرسالة (مثل: http://fake-hospital.com/update) — ممنوع استخدام زر أو markdown.
+6. QR: محظور تماماً — لا تكتب [QR:...] أبداً.
+7. المرفق: محظور تماماً — الحقل attachment يجب أن يبقى فارغاً تماماً.
+8. الإلحاح: صريح ومباشر ("الآن فوراً" أو "سيُغلق حسابك اليوم").
 """
 
 _DIFF_ADDON_EASY_EN = """
 
 ⚠️ STRICT EASY LEVEL RULES — follow these literally or the output is invalid:
 1. Greeting: MUST be "Dear Employee" or "Dear Staff" — ANY personal name is FORBIDDEN.
-2. Errors: place EXACTLY TWO obvious spelling/grammar mistakes in the body — this is REQUIRED.
-3. Link: place the URL as RAW VISIBLE PLAIN TEXT in the body (e.g. http://fake-hospital.com/update) — NO button, NO markdown link.
-4. QR: COMPLETELY FORBIDDEN — do NOT write [QR:...] anywhere.
-5. Attachment: FORBIDDEN.
-6. Urgency: direct and explicit ("Act NOW", "your account closes TODAY").
+2. Sender identity (from): MUST be a generic team or department only (e.g. "IT Support Team" or "HR Department") — a named individual with a personal title (e.g. "Dr.", a full first+last name, a job title in the signature) is STRICTLY FORBIDDEN, including in the closing signature.
+3. Domain: must be completely and obviously fake, with NO resemblance to any real organization — do NOT use words like gov, moh, board, ministry, or any pattern that mimics moh.gov.sa or hospital.org.
+4. Errors: place EXACTLY TWO obvious spelling/grammar mistakes in the body — this is REQUIRED.
+5. Link: place the URL as RAW VISIBLE PLAIN TEXT in the body (e.g. http://fake-hospital.com/update) — NO button, NO markdown link.
+6. QR: COMPLETELY FORBIDDEN — do NOT write [QR:...] anywhere.
+7. Attachment: FORBIDDEN — the "attachment" field MUST be left completely empty.
+8. Urgency: direct and explicit ("Act NOW", "your account closes TODAY").
 """
 
 _DIFF_ADDON_MEDIUM_AR = """
 
 ⚠️ تعليمات صارمة جداً لمستوى المتوسط — يجب الالتزام بها حرفياً:
-1. التحية: استخدم الاسم الأول أو المسمى الوظيفي فقط (مثل "عزيزي د. أحمد").
-2. الأخطاء: ضع بالضبط خطأً إملائياً واحداً خفيفاً في جسم الرسالة — هذا إلزامي.
-3. الرابط: استخدم زراً بسيطاً [نص](رابط) — مسموح.
-4. QR: محظور تماماً — لا تكتب [QR:...] أبداً.
+1. التحية: استخدم الاسم الأول أو المسمى الوظيفي فقط (مثل "عزيزي د. أحمد") — ممنوع التحية العامة الكاملة وممنوع الاسم الكامل + اللقب الدقيق.
+2. النطاق: مشابه للرسمي مع فرق بسيط يمكن ملاحظته عند التدقيق (مثل hospital-it.net) — ليس واضح التزوير تماماً كمستوى السهل، وليس شبه رسمي بذكاء كمستوى الصعب.
+3. الأخطاء: ضع بالضبط خطأً إملائياً واحداً خفيفاً في جسم الرسالة — هذا إلزامي.
+4. الرابط: استخدم زراً بسيطاً [نص](رابط) — مسموح. مرفق PDF بسيط وعام مسموح أيضاً (اختياري).
+5. QR: محظور تماماً — لا تكتب [QR:...] أبداً.
+6. الارتباط الوظيفي: يجب ذكر اسم القسم الحقيقي (سريري/إداري/تقني) داخل الرسالة.
 """
 
 _DIFF_ADDON_MEDIUM_EN = """
 
 ⚠️ STRICT INTERMEDIATE LEVEL RULES — follow these literally:
-1. Greeting: use first name or job title ONLY (e.g. "Dear Dr. Ahmed").
-2. Errors: place EXACTLY ONE subtle spelling/grammar mistake in the body — this is REQUIRED.
-3. Link: a simple button [label](url) is allowed.
-4. QR: COMPLETELY FORBIDDEN — do NOT write [QR:...] anywhere.
+1. Greeting: use first name or job title ONLY (e.g. "Dear Dr. Ahmed") — no fully generic greeting and no full name + precise title.
+2. Domain: look-alike to the real one with a small detectable difference (e.g. hospital-it.net) — not obviously fake like Easy, and not near-official like Advanced.
+3. Errors: place EXACTLY ONE subtle spelling/grammar mistake in the body — this is REQUIRED.
+4. Link: a simple button [label](url) is allowed. A simple generic PDF attachment is also allowed (optional).
+5. QR: COMPLETELY FORBIDDEN — do NOT write [QR:...] anywhere.
+6. Role alignment: mention the real department name (Clinical/Administrative/IT) inside the email.
 """
 
 _DIFF_ADDON_HARD_AR = """
 
-⚠️ تعليمات صارمة جداً لمستوى الصعب — يجب الالتزام بها حرفياً:
+⚠️ تعليمات صارمة جداً لمستوى الصعب — يجب الالتزام بها حرفياً (الكل إلزامي معاً):
 1. التحية: الاسم الكامل + اللقب الوظيفي الدقيق (مثل "عزيزتي د. نورة العتيبي، استشارية الأمراض الداخلية").
-2. QR: إلزامي ومطلوب دائماً — اكتب [QR: نص قصير وصفي] في موضع مناسب من جسم الرسالة.
-3. الزر: استخدم زراً رسمياً باسم وصفي واضح (ليس "Open Link" أو "اضغط هنا").
-4. الأخطاء: صفر أخطاء — لغة احترافية كاملة.
-5. الإلحاح: خفيف ومهذب فقط ("إجراء روتيني") — ممنوع أي تهديد.
-6. التوقيع: اسم كامل + المنصب + القسم + رقم تحويلة داخلية حقيقي (ليس XX).
+2. النطاق: شبه رسمي بذكاء (مثل moh-staff.net) — ممنوع كلمات: secure, update, verify, login, reset.
+3. المرفق: إلزامي ومطلوب دائماً — يجب أن يحتوي الحقل attachment على اسم مستند رسمي واقعي (مثل Compliance_Protocol_2024.pdf). هذا مطلوب معاً مع رمز QR، وليس بديلاً عنه.
+4. QR: إلزامي ومطلوب دائماً بالإضافة إلى المرفق — اكتب [QR: نص قصير وصفي] في موضع مناسب من جسم الرسالة.
+5. الزر: استخدم زراً رسمياً باسم وصفي واضح (ليس "Open Link" أو "اضغط هنا").
+6. الأخطاء: صفر أخطاء — لغة احترافية كاملة.
+7. الإلحاح: خفيف ومهذب فقط ("إجراء روتيني") — ممنوع أي تهديد.
+8. التوقيع: اسم كامل + المنصب + القسم + رقم تحويلة داخلية حقيقي (ليس XX).
+9. الارتباط الوظيفي: يجب ربط الرسالة بمهمة يومية محددة جداً للدور المختار، وذكر اسم زميل أو قسم داخلي محدد (وليس عاماً).
 """
 
 _DIFF_ADDON_HARD_EN = """
 
-⚠️ STRICT ADVANCED LEVEL RULES — follow these literally:
+⚠️ STRICT ADVANCED LEVEL RULES — follow these literally (ALL are mandatory together):
 1. Greeting: FULL NAME + precise job title (e.g. "Dear Dr. Noura Al-Otaibi, Internal Medicine Consultant").
-2. QR: MANDATORY AND REQUIRED — write [QR: short descriptive label] in the body — the output is INVALID without it.
-3. Button: use a professionally descriptive label (NOT "Open Link" or "Click Here").
-4. Errors: ZERO spelling or grammar errors.
-5. Urgency: polite and subtle ONLY ("routine procedure") — NO threats.
-6. Signature: full name + title + department + real internal extension (no XX placeholders).
+2. Domain: near-official but not matching (e.g. moh-staff.net) — FORBIDDEN words: secure, update, verify, login, reset.
+3. Attachment: MANDATORY AND REQUIRED — the "attachment" field MUST contain a realistic, officially named document (e.g. Compliance_Protocol_2024.pdf). This is required TOGETHER WITH the QR code, not as an alternative to it.
+4. QR: MANDATORY AND REQUIRED in addition to the attachment — write [QR: short descriptive label] in the body — the output is INVALID without it.
+5. Button: use a professionally descriptive label (NOT "Open Link" or "Click Here").
+6. Errors: ZERO spelling or grammar errors.
+7. Urgency: polite and subtle ONLY ("routine procedure") — NO threats.
+8. Signature: full name + title + department + real internal extension (no XX placeholders).
+9. Role alignment: tie the email to a very specific daily task of the selected role, and name a specific colleague or internal department (not generic).
 """
 
 def build_prompt(role, index, language):
@@ -6085,6 +6117,90 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
         if attack_type and attack_type not in analysis_text:
             issues.append("analysis must connect to attack_type")
     return issues
+
+# =============================================================
+# FRAMEWORK COMPLIANCE PATCH — Difficulty_Framework.docx enforcement
+# Adds deterministic (non-LLM) gating on top of every previous prompt
+# layer, for the 3 points requested:
+#   1) Sender identity per Axis 1 (no personal name/title at Easy,
+#      personal name+title required at Hard) and domain sophistication
+#      per Axis 1 (Easy must be obviously fake, not government-like).
+#   2) Axis 3 technical elements: NO attachment at Easy, MANDATORY
+#      attachment + QR together at Hard, generic greeting forbidden
+#      at Medium.
+#   3) Axis 4 role alignment: email content must contain at least one
+#      keyword that matches the selected role (Clinical/Admin/IT).
+# This wraps the same shared function used by build_prompt's retry
+# loop, so it automatically applies across all 4 AI providers and
+# both languages (Arabic/English) without touching each provider path.
+# =============================================================
+_BASE_GENERATION_ISSUES_FRAMEWORK = get_generation_quality_issues
+
+_PERSONAL_TITLE_RE = re.compile(
+    r'\b(Dr\.?|Prof\.?|Professor|Doctor)\s+[A-Z][a-zA-Z\-]+(\s+[A-Z][a-zA-Z\-]+)?'
+    r'|(د\.|دكتور|دكتورة|الدكتور|الدكتورة|أ\.د)\s*[\u0600-\u06FF]{2,}',
+    re.I,
+)
+_LOOKALIKE_GOV_DOMAIN_RE = re.compile(r'\b(gov|moh|ministry|board)\b', re.I)
+_QR_MARKER_RE = re.compile(r'\[\s*QR', re.I)
+
+_ROLE_KEYWORDS = {
+    "clinical": ["patient", "emr", "clinical", "lab result", "medication", "ward",
+                 "nurse", "physician", "diagnosis", "radiology", "icu", "clinic",
+                 "مريض", "سريري", "عيادة", "مختبر", "دواء", "تمريض", "تشخيص", "أشعة", "طوارئ", "عناية مركزة"],
+    "admin": ["invoice", "contract", "billing", "insurance", "procurement", "hr",
+              "schedule", "vendor", "accreditation",
+              "فاتورة", "عقد", "تأمين", "مشتريات", "موارد بشرية", "جدولة", "مورد", "اعتماد"],
+    "it": ["network", "vpn", "server", "firewall", "backup", "active directory",
+           "certificate", "license", "helpdesk", "cybersecurity",
+           "شبكة", "خادم", "جدار ناري", "نسخ احتياطي", "شهادة", "ترخيص", "الدعم الفني"],
+}
+
+def get_generation_quality_issues(result, difficulty, is_phishing=True):
+    issues = _BASE_GENERATION_ISSUES_FRAMEWORK(result, difficulty, is_phishing)
+    if not isinstance(result, dict) or not is_phishing:
+        return issues
+
+    body = str(result.get("body") or "")
+    subject = str(result.get("subject") or "")
+    sender = str(result.get("from") or "")
+    attachment = str(result.get("attachment") or "").strip()
+    combined_lower = f"{subject} {body}".lower()
+
+    domain_match = re.search(r"@([\w.-]+)>?", sender)
+    domain = (domain_match.group(1) if domain_match else "")
+
+    # --- Axis 1 (Sender Identity) + Axis 3 (Technical Elements) ---
+    if difficulty == "easy":
+        if attachment:
+            issues.append("Easy must have NO attachment (attachment field must be empty)")
+        if _PERSONAL_TITLE_RE.search(sender):
+            issues.append("Easy sender must be generic (team/department) — no personal name or title in 'from'")
+        if _LOOKALIKE_GOV_DOMAIN_RE.search(domain):
+            issues.append("Easy domain must not resemble a real government/hospital domain (avoid gov/moh/board/ministry)")
+    elif difficulty == "medium":
+        if _has_generic_greeting(body):
+            issues.append("Intermediate greeting must be semi-personal (first name or title), not fully generic")
+    elif difficulty == "hard":
+        if not attachment:
+            issues.append("Advanced must include a mandatory named attachment (attachment field cannot be empty)")
+        if not _QR_MARKER_RE.search(body):
+            issues.append("Advanced must include a mandatory [QR: ...] marker in the body")
+        if not _PERSONAL_TITLE_RE.search(sender) and not _PERSONAL_TITLE_RE.search(body[:200]):
+            issues.append("Advanced sender must use a full personal name and job title")
+
+    # --- Axis 4 (Role & Healthcare Context alignment) ---
+    role = st.session_state.get("role", "Clinical")
+    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+    role_type = role_info[2] if role_info else "clinical"
+    keywords = _ROLE_KEYWORDS.get(role_type)
+    if keywords and not any(kw in combined_lower for kw in keywords):
+        issues.append(f"email content must clearly reflect the '{role_type}' role context (missing role-specific keywords)")
+
+    return issues
+# =============================================================
+# END FRAMEWORK COMPLIANCE PATCH
+# =============================================================
 
 # Regeneration helper: when Try Again is clicked, also clear the used topic/domain
 # memory for the current phase enough to allow a truly fresh attempt.
