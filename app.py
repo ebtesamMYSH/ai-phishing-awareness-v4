@@ -1464,6 +1464,71 @@ def _domain_has_obvious_advanced_word(domain):
     d = (domain or "").lower()
     return any(w in d for w in _OBVIOUS_ADVANCED_DOMAIN_WORDS)
 
+
+
+# =============================================================
+# STRICT ROLE + DIFFICULTY GUARDRAILS (patched)
+# -------------------------------------------------------------
+# These checks reject AI outputs that drift away from the selected
+# job role (clinical/admin/IT) or violate the documented difficulty
+# framework before the email is shown to the trainee.
+# =============================================================
+_ROLE_KEYWORDS = {
+    "clinical": re.compile(r"\b(patient|clinical|emr|ehr|doctor|nurse|pharmac|medication|lab|radiology|pacs|icu|er|ward|handover|vitals|diagnostic|prescription|blood bank)\b|مريض|سريري|طبيب|ممرض|صيدل|دواء|مختبر|أشعة|مناوبة|قسم|بنك الدم|سجل طبي", re.I),
+    "admin": re.compile(r"\b(invoice|procurement|vendor|supplier|payroll|insurance|billing|appointment|contract|leave|hr|administrative|records office)\b|فاتورة|مورد|مشتريات|رواتب|تأمين|فوترة|مواعيد|عقد|إجازات|إداري", re.I),
+    "it": re.compile(r"\b(vpn|server|network|firewall|ssl|certificate|helpdesk|active directory|backup|database|endpoint|software|license|mfa|otp|cyber|it support)\b|شبكة|خادم|جدار ناري|شهادة|دعم تقني|نسخ احتياطي|قاعدة بيانات|ترخيص|تقنية|أمن سيبراني", re.I),
+}
+_ROLE_FORBIDDEN = {
+    "clinical": re.compile(r"\b(payroll|invoice|vendor|procurement|leave balance|hr portal|vpn|ssl certificate|server|helpdesk|software license|records management team|document collaboration team|security team)\b|رواتب|فاتورة|مورد|مشتريات|إجازات|بوابة الموارد|دعم تقني|شبكة|خادم|فريق الأمن|فريق إدارة السجلات", re.I),
+    "admin": re.compile(r"\b(emr|lab results|clinical handover|patient vitals|medication order|radiology image|vpn|ssl certificate|server|firewall)\b|تسليم سريري|نتائج مختبر|علامات حيوية|أمر دوائي|أشعة|شبكة|خادم", re.I),
+    "it": re.compile(r"\b(lab results|clinical handover|patient vitals|payroll bank|supplier invoice|appointment booking)\b|نتائج مختبر|تسليم سريري|علامات حيوية|فاتورة مورد|رواتب|حجز مواعيد", re.I),
+}
+
+def _current_role_type_for_guardrail():
+    try:
+        role = st.session_state.get("role", "Clinical")
+        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
+    except Exception:
+        return "clinical"
+
+def _role_alignment_issues(result):
+    role_type = _current_role_type_for_guardrail()
+    if role_type == "other":
+        return []
+    text = " ".join(str(result.get(k, "")) for k in ["email_type", "from", "subject", "body", "attachment", "suspicious_text", "suspicious_link"])
+    issues = []
+    if not _ROLE_KEYWORDS[role_type].search(text):
+        issues.append(f"email content is not clearly aligned with the selected {role_type} role")
+    if _ROLE_FORBIDDEN[role_type].search(text):
+        issues.append(f"email drifts into a different role instead of the selected {role_type} role")
+    return issues
+
+def _difficulty_structure_issues(result, difficulty, is_phishing=True):
+    if not is_phishing or not isinstance(result, dict):
+        return []
+    body = str(result.get("body", ""))
+    combined = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
+    issues = []
+    has_qr = bool(re.search(r"\[\s*QR", body, re.I))
+    has_attachment = bool(str(result.get("attachment", "")).strip())
+    link = str(result.get("suspicious_link", "")).strip()
+    if difficulty == "easy":
+        if has_qr: issues.append("Beginner/Easy must not contain QR code")
+        if has_attachment: issues.append("Beginner/Easy must not contain attachment")
+        if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
+        if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
+    elif difficulty == "medium":
+        if has_qr: issues.append("Intermediate must not contain QR code")
+        if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
+            issues.append("Intermediate urgency is too aggressive")
+    elif difficulty == "hard":
+        if not has_qr: issues.append("Advanced/Hard must include a QR code marker [QR: ...]")
+        if re.search(r"https?://", body): issues.append("Advanced/Hard must not expose raw URL in body")
+        if not has_attachment: issues.append("Advanced/Hard must include an official named attachment")
+        if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
+            issues.append("Advanced/Hard must avoid direct credential requests")
+    return issues
+
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     """
     Lightweight guardrail used before showing generated content.
@@ -1482,6 +1547,8 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
     non_official = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
 
     issues = []
+    issues.extend(_role_alignment_issues(result))
+    issues.extend(_difficulty_structure_issues(result, difficulty, is_phishing))
     if is_phishing:
         if not non_official and not result.get("attachment"):
             issues.append("phishing item needs a non-official fake domain/link or a suspicious attachment")
@@ -1763,7 +1830,7 @@ def build_prompt(role, index, language):
 قواعد إلزامية — الارتباط بالوظيفة والسياق الصحي:
 - يجب أن يكون الإيميل مرتبطًا 100٪ بالدور الوظيفي المحدد: {role_context}
 - كل عنصر في الإيميل (المرسل، الموضوع، المحتوى، الطلب) يجب أن يعكس هذا الدور مباشرةً.
-- إذا كان الدور سريريًا: يجب أن يدور الإيميل حول نظام EMR أو سجلات مرضى أو بروتوكول سريري أو نتائج فحوصات أو أدوية — وليس عن موارد بشرية أو عروض تجارية.
+- إذا كان الدور سريريًا: يجب أن يكون المرسل والموضوع والطلب والمحتوى سريريًا فقط: EMR، سجلات مرضى، تسليم سريري، نتائج مختبر، أدوية، صيدلية، أشعة، قسم/ICU/ER. ممنوع مرسل تقني/أمني/إداري/إدارة مستندات/إدارة سجلات.
 - إذا كان الدور إداريًا: يجب أن يدور حول العقود أو الفواتير أو الجداول أو سياسات العمل.
 - إذا كان الدور تقنيًا: يجب أن يدور حول الأنظمة أو الشبكات أو الأجهزة أو VPN.
 - ممنوع تمامًا إرسال إيميل عام لا يعكس الدور المحدد.
@@ -1816,7 +1883,7 @@ Task: Generate ONE new phishing learning email.
 MANDATORY rules — Role Alignment & Healthcare Context:
 - The email MUST be 100% aligned with the specified job role: {role_context}
 - Every element (sender, subject, body, request) must directly reflect this specific role.
-- If the role is CLINICAL: the email must revolve around EMR systems, patient records, clinical protocols, lab results, medications, or radiology — NOT HR or commercial offers.
+- If the role is CLINICAL: sender, subject, request, and body must be clinical only: EMR, patient records, clinical handover, lab results, medications, pharmacy, radiology, ward/ICU/ER. Do NOT use IT/security/admin/document-collaboration/records-management senders.
 - If the role is ADMINISTRATIVE: the email must revolve around contracts, invoices, scheduling, or work policies.
 - If the role is IT: the email must revolve around systems, networks, devices, VPN, or software licenses.
 - FORBIDDEN: sending a generic wellness program, prize draw, or commercial offer email to a clinical role.
@@ -5020,6 +5087,71 @@ Return only this JSON structure:
 }}
 """
 
+
+
+# =============================================================
+# STRICT ROLE + DIFFICULTY GUARDRAILS (patched)
+# -------------------------------------------------------------
+# These checks reject AI outputs that drift away from the selected
+# job role (clinical/admin/IT) or violate the documented difficulty
+# framework before the email is shown to the trainee.
+# =============================================================
+_ROLE_KEYWORDS = {
+    "clinical": re.compile(r"\b(patient|clinical|emr|ehr|doctor|nurse|pharmac|medication|lab|radiology|pacs|icu|er|ward|handover|vitals|diagnostic|prescription|blood bank)\b|مريض|سريري|طبيب|ممرض|صيدل|دواء|مختبر|أشعة|مناوبة|قسم|بنك الدم|سجل طبي", re.I),
+    "admin": re.compile(r"\b(invoice|procurement|vendor|supplier|payroll|insurance|billing|appointment|contract|leave|hr|administrative|records office)\b|فاتورة|مورد|مشتريات|رواتب|تأمين|فوترة|مواعيد|عقد|إجازات|إداري", re.I),
+    "it": re.compile(r"\b(vpn|server|network|firewall|ssl|certificate|helpdesk|active directory|backup|database|endpoint|software|license|mfa|otp|cyber|it support)\b|شبكة|خادم|جدار ناري|شهادة|دعم تقني|نسخ احتياطي|قاعدة بيانات|ترخيص|تقنية|أمن سيبراني", re.I),
+}
+_ROLE_FORBIDDEN = {
+    "clinical": re.compile(r"\b(payroll|invoice|vendor|procurement|leave balance|hr portal|vpn|ssl certificate|server|helpdesk|software license|records management team|document collaboration team|security team)\b|رواتب|فاتورة|مورد|مشتريات|إجازات|بوابة الموارد|دعم تقني|شبكة|خادم|فريق الأمن|فريق إدارة السجلات", re.I),
+    "admin": re.compile(r"\b(emr|lab results|clinical handover|patient vitals|medication order|radiology image|vpn|ssl certificate|server|firewall)\b|تسليم سريري|نتائج مختبر|علامات حيوية|أمر دوائي|أشعة|شبكة|خادم", re.I),
+    "it": re.compile(r"\b(lab results|clinical handover|patient vitals|payroll bank|supplier invoice|appointment booking)\b|نتائج مختبر|تسليم سريري|علامات حيوية|فاتورة مورد|رواتب|حجز مواعيد", re.I),
+}
+
+def _current_role_type_for_guardrail():
+    try:
+        role = st.session_state.get("role", "Clinical")
+        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
+    except Exception:
+        return "clinical"
+
+def _role_alignment_issues(result):
+    role_type = _current_role_type_for_guardrail()
+    if role_type == "other":
+        return []
+    text = " ".join(str(result.get(k, "")) for k in ["email_type", "from", "subject", "body", "attachment", "suspicious_text", "suspicious_link"])
+    issues = []
+    if not _ROLE_KEYWORDS[role_type].search(text):
+        issues.append(f"email content is not clearly aligned with the selected {role_type} role")
+    if _ROLE_FORBIDDEN[role_type].search(text):
+        issues.append(f"email drifts into a different role instead of the selected {role_type} role")
+    return issues
+
+def _difficulty_structure_issues(result, difficulty, is_phishing=True):
+    if not is_phishing or not isinstance(result, dict):
+        return []
+    body = str(result.get("body", ""))
+    combined = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
+    issues = []
+    has_qr = bool(re.search(r"\[\s*QR", body, re.I))
+    has_attachment = bool(str(result.get("attachment", "")).strip())
+    link = str(result.get("suspicious_link", "")).strip()
+    if difficulty == "easy":
+        if has_qr: issues.append("Beginner/Easy must not contain QR code")
+        if has_attachment: issues.append("Beginner/Easy must not contain attachment")
+        if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
+        if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
+    elif difficulty == "medium":
+        if has_qr: issues.append("Intermediate must not contain QR code")
+        if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
+            issues.append("Intermediate urgency is too aggressive")
+    elif difficulty == "hard":
+        if not has_qr: issues.append("Advanced/Hard must include a QR code marker [QR: ...]")
+        if re.search(r"https?://", body): issues.append("Advanced/Hard must not expose raw URL in body")
+        if not has_attachment: issues.append("Advanced/Hard must include an official named attachment")
+        if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
+            issues.append("Advanced/Hard must avoid direct credential requests")
+    return issues
+
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     if not isinstance(result, dict):
         return ["result is not a JSON object"]
@@ -5148,14 +5280,28 @@ def infer_attack_type_from_content(result, is_ar=False):
     return existing or ("تصيد موجه" if is_ar else "Spear Phishing")
 
 def _insert_before_signature(body, marker):
-    """Insert a [QR:...]/[Label](url) marker paragraph just before the
-    final paragraph of the body (assumed to be the closing signature:
-    'Best regards, Name, Title...') instead of appending it after the
-    whole body — prevents the marker from floating disconnected below
-    the signature."""
+    """Place a link/QR/button where users expect it: immediately after the
+    sentence that refers to accessing/clicking/scanning, otherwise before
+    the closing signature. This prevents links appearing after Best regards."""
     body = (body or "").rstrip()
+    marker = (marker or "").strip()
     if not body:
         return marker
+    if marker and marker in body:
+        return _reposition_trailing_lone_link(body, marker)
+
+    lines = body.split("\n")
+    cue_re = re.compile(r"(link below|following link|access it|open it|view it|click|scan|الرابط|اضغط|افتح|امسح|الوصول|للمراجعة)", re.I)
+    for i in range(len(lines) - 1, -1, -1):
+        if cue_re.search(lines[i]):
+            new_lines = lines[:i+1] + [marker] + lines[i+1:]
+            return "\n".join(new_lines).strip()
+
+    for i in range(len(lines) - 1, -1, -1):
+        if _SALUTATION_LINE_RE.match(lines[i].strip()):
+            new_lines = lines[:i] + [marker, ""] + lines[i:]
+            return "\n".join(new_lines).strip()
+
     paragraphs = re.split(r'\n\s*\n', body)
     if len(paragraphs) >= 2:
         paragraphs.insert(len(paragraphs) - 1, marker)
@@ -6284,6 +6430,71 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
 
 _BASE_GENERATION_ISSUES_FINAL = get_generation_quality_issues
 
+
+
+# =============================================================
+# STRICT ROLE + DIFFICULTY GUARDRAILS (patched)
+# -------------------------------------------------------------
+# These checks reject AI outputs that drift away from the selected
+# job role (clinical/admin/IT) or violate the documented difficulty
+# framework before the email is shown to the trainee.
+# =============================================================
+_ROLE_KEYWORDS = {
+    "clinical": re.compile(r"\b(patient|clinical|emr|ehr|doctor|nurse|pharmac|medication|lab|radiology|pacs|icu|er|ward|handover|vitals|diagnostic|prescription|blood bank)\b|مريض|سريري|طبيب|ممرض|صيدل|دواء|مختبر|أشعة|مناوبة|قسم|بنك الدم|سجل طبي", re.I),
+    "admin": re.compile(r"\b(invoice|procurement|vendor|supplier|payroll|insurance|billing|appointment|contract|leave|hr|administrative|records office)\b|فاتورة|مورد|مشتريات|رواتب|تأمين|فوترة|مواعيد|عقد|إجازات|إداري", re.I),
+    "it": re.compile(r"\b(vpn|server|network|firewall|ssl|certificate|helpdesk|active directory|backup|database|endpoint|software|license|mfa|otp|cyber|it support)\b|شبكة|خادم|جدار ناري|شهادة|دعم تقني|نسخ احتياطي|قاعدة بيانات|ترخيص|تقنية|أمن سيبراني", re.I),
+}
+_ROLE_FORBIDDEN = {
+    "clinical": re.compile(r"\b(payroll|invoice|vendor|procurement|leave balance|hr portal|vpn|ssl certificate|server|helpdesk|software license|records management team|document collaboration team|security team)\b|رواتب|فاتورة|مورد|مشتريات|إجازات|بوابة الموارد|دعم تقني|شبكة|خادم|فريق الأمن|فريق إدارة السجلات", re.I),
+    "admin": re.compile(r"\b(emr|lab results|clinical handover|patient vitals|medication order|radiology image|vpn|ssl certificate|server|firewall)\b|تسليم سريري|نتائج مختبر|علامات حيوية|أمر دوائي|أشعة|شبكة|خادم", re.I),
+    "it": re.compile(r"\b(lab results|clinical handover|patient vitals|payroll bank|supplier invoice|appointment booking)\b|نتائج مختبر|تسليم سريري|علامات حيوية|فاتورة مورد|رواتب|حجز مواعيد", re.I),
+}
+
+def _current_role_type_for_guardrail():
+    try:
+        role = st.session_state.get("role", "Clinical")
+        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
+    except Exception:
+        return "clinical"
+
+def _role_alignment_issues(result):
+    role_type = _current_role_type_for_guardrail()
+    if role_type == "other":
+        return []
+    text = " ".join(str(result.get(k, "")) for k in ["email_type", "from", "subject", "body", "attachment", "suspicious_text", "suspicious_link"])
+    issues = []
+    if not _ROLE_KEYWORDS[role_type].search(text):
+        issues.append(f"email content is not clearly aligned with the selected {role_type} role")
+    if _ROLE_FORBIDDEN[role_type].search(text):
+        issues.append(f"email drifts into a different role instead of the selected {role_type} role")
+    return issues
+
+def _difficulty_structure_issues(result, difficulty, is_phishing=True):
+    if not is_phishing or not isinstance(result, dict):
+        return []
+    body = str(result.get("body", ""))
+    combined = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
+    issues = []
+    has_qr = bool(re.search(r"\[\s*QR", body, re.I))
+    has_attachment = bool(str(result.get("attachment", "")).strip())
+    link = str(result.get("suspicious_link", "")).strip()
+    if difficulty == "easy":
+        if has_qr: issues.append("Beginner/Easy must not contain QR code")
+        if has_attachment: issues.append("Beginner/Easy must not contain attachment")
+        if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
+        if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
+    elif difficulty == "medium":
+        if has_qr: issues.append("Intermediate must not contain QR code")
+        if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
+            issues.append("Intermediate urgency is too aggressive")
+    elif difficulty == "hard":
+        if not has_qr: issues.append("Advanced/Hard must include a QR code marker [QR: ...]")
+        if re.search(r"https?://", body): issues.append("Advanced/Hard must not expose raw URL in body")
+        if not has_attachment: issues.append("Advanced/Hard must include an official named attachment")
+        if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
+            issues.append("Advanced/Hard must avoid direct credential requests")
+    return issues
+
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     issues = _BASE_GENERATION_ISSUES_FINAL(result, difficulty, is_phishing)
     if not isinstance(result, dict):
@@ -6400,6 +6611,71 @@ def _extract_name_tokens_from_email(addr):
     local = (addr or "").split("@")[0]
     parts = re.split(r'[.\-_]', local)
     return [p for p in parts if len(p) >= 3 and not p.isdigit()]
+
+
+
+# =============================================================
+# STRICT ROLE + DIFFICULTY GUARDRAILS (patched)
+# -------------------------------------------------------------
+# These checks reject AI outputs that drift away from the selected
+# job role (clinical/admin/IT) or violate the documented difficulty
+# framework before the email is shown to the trainee.
+# =============================================================
+_ROLE_KEYWORDS = {
+    "clinical": re.compile(r"\b(patient|clinical|emr|ehr|doctor|nurse|pharmac|medication|lab|radiology|pacs|icu|er|ward|handover|vitals|diagnostic|prescription|blood bank)\b|مريض|سريري|طبيب|ممرض|صيدل|دواء|مختبر|أشعة|مناوبة|قسم|بنك الدم|سجل طبي", re.I),
+    "admin": re.compile(r"\b(invoice|procurement|vendor|supplier|payroll|insurance|billing|appointment|contract|leave|hr|administrative|records office)\b|فاتورة|مورد|مشتريات|رواتب|تأمين|فوترة|مواعيد|عقد|إجازات|إداري", re.I),
+    "it": re.compile(r"\b(vpn|server|network|firewall|ssl|certificate|helpdesk|active directory|backup|database|endpoint|software|license|mfa|otp|cyber|it support)\b|شبكة|خادم|جدار ناري|شهادة|دعم تقني|نسخ احتياطي|قاعدة بيانات|ترخيص|تقنية|أمن سيبراني", re.I),
+}
+_ROLE_FORBIDDEN = {
+    "clinical": re.compile(r"\b(payroll|invoice|vendor|procurement|leave balance|hr portal|vpn|ssl certificate|server|helpdesk|software license|records management team|document collaboration team|security team)\b|رواتب|فاتورة|مورد|مشتريات|إجازات|بوابة الموارد|دعم تقني|شبكة|خادم|فريق الأمن|فريق إدارة السجلات", re.I),
+    "admin": re.compile(r"\b(emr|lab results|clinical handover|patient vitals|medication order|radiology image|vpn|ssl certificate|server|firewall)\b|تسليم سريري|نتائج مختبر|علامات حيوية|أمر دوائي|أشعة|شبكة|خادم", re.I),
+    "it": re.compile(r"\b(lab results|clinical handover|patient vitals|payroll bank|supplier invoice|appointment booking)\b|نتائج مختبر|تسليم سريري|علامات حيوية|فاتورة مورد|رواتب|حجز مواعيد", re.I),
+}
+
+def _current_role_type_for_guardrail():
+    try:
+        role = st.session_state.get("role", "Clinical")
+        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
+    except Exception:
+        return "clinical"
+
+def _role_alignment_issues(result):
+    role_type = _current_role_type_for_guardrail()
+    if role_type == "other":
+        return []
+    text = " ".join(str(result.get(k, "")) for k in ["email_type", "from", "subject", "body", "attachment", "suspicious_text", "suspicious_link"])
+    issues = []
+    if not _ROLE_KEYWORDS[role_type].search(text):
+        issues.append(f"email content is not clearly aligned with the selected {role_type} role")
+    if _ROLE_FORBIDDEN[role_type].search(text):
+        issues.append(f"email drifts into a different role instead of the selected {role_type} role")
+    return issues
+
+def _difficulty_structure_issues(result, difficulty, is_phishing=True):
+    if not is_phishing or not isinstance(result, dict):
+        return []
+    body = str(result.get("body", ""))
+    combined = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
+    issues = []
+    has_qr = bool(re.search(r"\[\s*QR", body, re.I))
+    has_attachment = bool(str(result.get("attachment", "")).strip())
+    link = str(result.get("suspicious_link", "")).strip()
+    if difficulty == "easy":
+        if has_qr: issues.append("Beginner/Easy must not contain QR code")
+        if has_attachment: issues.append("Beginner/Easy must not contain attachment")
+        if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
+        if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
+    elif difficulty == "medium":
+        if has_qr: issues.append("Intermediate must not contain QR code")
+        if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
+            issues.append("Intermediate urgency is too aggressive")
+    elif difficulty == "hard":
+        if not has_qr: issues.append("Advanced/Hard must include a QR code marker [QR: ...]")
+        if re.search(r"https?://", body): issues.append("Advanced/Hard must not expose raw URL in body")
+        if not has_attachment: issues.append("Advanced/Hard must include an official named attachment")
+        if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
+            issues.append("Advanced/Hard must avoid direct credential requests")
+    return issues
 
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     issues = _BASE_GENERATION_ISSUES_FRAMEWORK(result, difficulty, is_phishing)
