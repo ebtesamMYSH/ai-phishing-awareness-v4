@@ -2325,6 +2325,7 @@ def generate_other_email(index, language, difficulty):
             result = clean_result(result, is_ar)
             if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in (result.get("body") or ""):
                 result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
+            result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
             if not last_issues or attempt == 2:
@@ -2351,6 +2352,7 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
             result["is_phishing"] = bool(is_phishing)
             if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in (result.get("body") or ""):
                 result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
+            result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
             if not last_issues or attempt == 2:
@@ -2384,6 +2386,7 @@ def generate_email(role, index, language, difficulty="medium"):
             if (result.get("suspicious_link") or "").strip():
                 if result["suspicious_link"] not in (result.get("body") or ""):
                     result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
+            result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
             if not last_issues or attempt == 2:
@@ -2419,6 +2422,7 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
             if (result.get("suspicious_link") or "").strip():
                 if result["suspicious_link"] not in (result.get("body") or ""):
                     result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
+            result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
             if not last_issues or attempt == 2:
@@ -5055,6 +5059,30 @@ def _insert_before_signature(body, marker):
         paragraphs.insert(len(paragraphs) - 1, marker)
         return "\n\n".join(p.strip() for p in paragraphs if p.strip())
     return body + "\n\n" + marker
+
+def _reposition_trailing_lone_link(body, link):
+    """Some providers write the referring sentence ('click the link
+    below...') correctly in-flow, but then place the actual bare URL as
+    its own paragraph AFTER the closing signature instead of right after
+    that sentence. This is independent of our own code (which only
+    appends a link if one is completely missing) — this catches the
+    model's OWN misplacement. If the very last paragraph is just the
+    bare link and there's a signature-like paragraph before it, move the
+    link to sit right before that signature instead."""
+    link = (link or "").strip()
+    body = (body or "").rstrip()
+    if not link or not body:
+        return body
+    paragraphs = re.split(r'\n\s*\n', body)
+    if len(paragraphs) < 2:
+        return body
+    last = paragraphs[-1].strip()
+    if last == link or (link in last and len(last) <= len(link) + 6):
+        remaining = paragraphs[:-1]
+        if len(remaining) >= 1:
+            new_paragraphs = remaining[:-1] + [last] + [remaining[-1]]
+            return "\n\n".join(p.strip() for p in new_paragraphs if p.strip())
+    return body
 
 def _enforce_attack_vector(result, vector):
     """Many providers (Groq/Llama especially) acknowledge the requested
