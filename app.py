@@ -2393,7 +2393,23 @@ def generate_email(role, index, language, difficulty="medium"):
             result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
-            if not last_issues or attempt == 2:
+            if not last_issues:
+                remember_generated_artifacts(role_type, "learn", result)
+                return result
+            if attempt == 2:
+                # Normal retries exhausted. If the failure is specifically a
+                # severe role-mismatch (generic/commercial content unrelated
+                # to the role — the drift we kept seeing in testing), do ONE
+                # guaranteed final attempt with an explicitly PINNED scenario
+                # from the Attack Playbook instead of leaving it open-ended,
+                # so the model has no room left to drift into an unrelated
+                # "prize/bank offer" template.
+                severe = any(("role context" in i) or ("commercial" in i) for i in last_issues)
+                if severe:
+                    forced = _forced_role_aligned_attempt(role, role_type, index, language, is_ar)
+                    if forced is not None:
+                        remember_generated_artifacts(role_type, "learn", forced)
+                        return forced
                 remember_generated_artifacts(role_type, "learn", result)
                 return result
         except json.JSONDecodeError as e:
@@ -2403,6 +2419,74 @@ def generate_email(role, index, language, difficulty="medium"):
         except Exception as e:
             return {"error": str(e)}
     return {"error": "Generation failed quality checks."}
+
+
+def _forced_role_aligned_attempt(role, role_type, index, language, is_ar):
+    """Last-resort guaranteed attempt: pin ONE specific, pre-approved Attack
+    Playbook scenario for this role (instead of the open-ended 'invent your
+    own idea' instruction) so there is no room left for the model to drift
+    into a generic/commercial theme unrelated to the role. Returns None on
+    any failure so the caller falls back to the previous (possibly
+    imperfect) result rather than crashing."""
+    try:
+        pool = ATTACK_PLAYBOOK.get(role_type)
+        if not pool:
+            return None
+        item = random.choice(pool)
+        difficulty = st.session_state.get("difficulty", "medium")
+        recipient_email = get_recipient(role, index, language, phase="learn")
+        role_context = get_role_unbounded_context(role_type, is_ar)
+        diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
+        seed = random.randint(100000, 999999)
+        scenario = item["ar"] if is_ar else item["en"]
+        if is_ar:
+            prompt = f"""
+أنت مولّد أمثلة تصيد تدريبية لمستشفى سعودي.
+يجب أن يكون الإيميل حصراً عن هذا السيناريو المحدد سلفاً، بدون أي انحراف عنه:
+نوع الهجوم: {item['attack']}
+السيناريو الإلزامي: {scenario}
+ناقل الهجوم: {item['vector']}
+السياق الوظيفي: {role_context}
+المستلم: {recipient_email}
+رقم عشوائي: {seed}
+قواعد مستوى الصعوبة:
+{diff_rule}
+ممنوع منعاً باتاً أي محتوى عن جوائز أو عروض بنكية أو عروض تجارية أو مكافآت مالية — يجب أن يدور المحتوى فعلياً حول السيناريو أعلاه فقط.
+أخرج JSON فقط بهذا الشكل:
+{{"email_type": "{item['attack']}", "from": "اسم مرسل واقعي <email@invented-domain>", "to": "{recipient_email}", "subject": "عنوان الرسالة", "attachment": "", "body": "نص البريد الكامل", "suspicious_text": "أخطر عبارة", "suspicious_link": "الرابط المشبوه", "injected_errors": [], "indicators": [{{"number":1,"title":"مؤشر 1","description":"شرح"}},{{"number":2,"title":"مؤشر 2","description":"شرح"}},{{"number":3,"title":"مؤشر 3","description":"شرح"}}], "why_risky": "شرح الخطورة", "learning_tip": "نصيحة قصيرة"}}
+"""
+        else:
+            prompt = f"""
+You generate phishing training examples for a Saudi hospital.
+The email MUST be exclusively about this pre-approved scenario, with NO deviation:
+Attack type: {item['attack']}
+Mandatory scenario: {scenario}
+Attack vector: {item['vector']}
+Role context: {role_context}
+Recipient: {recipient_email}
+Anti-repeat seed: {seed}
+Difficulty rules:
+{diff_rule}
+STRICTLY FORBIDDEN: any content about prizes, bank offers, commercial promotions, or salary bonuses — the content must genuinely revolve around the scenario above only.
+Return ONLY this JSON structure:
+{{"email_type": "{item['attack']}", "from": "realistic sender name <email@invented-domain>", "to": "{recipient_email}", "subject": "email subject", "attachment": "", "body": "full email body", "suspicious_text": "most suspicious phrase", "suspicious_link": "suspicious URL", "injected_errors": [], "indicators": [{{"number":1,"title":"Indicator 1","description":"explanation"}},{{"number":2,"title":"Indicator 2","description":"explanation"}},{{"number":3,"title":"Indicator 3","description":"explanation"}}], "why_risky": "why this is risky", "learning_tip": "short tip"}}
+"""
+        data = call_groq(prompt, max_tokens=2000)
+        if "error" in data or "choices" not in data:
+            return None
+        raw = data["choices"][0]["message"]["content"].strip()
+        result = parse_json_response(raw)
+        if not isinstance(result, dict) or "error" in result:
+            return None
+        result = clean_result(result, is_ar)
+        result["to"] = recipient_email
+        if (result.get("suspicious_link") or "").strip():
+            if result["suspicious_link"] not in (result.get("body") or ""):
+                result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
+        result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
+        return result
+    except Exception:
+        return None
 
 
 def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
@@ -6276,26 +6360,36 @@ _COMMERCIAL_THEME_RE = re.compile(
     re.I,
 )
 
-_ROLE_KEYWORDS = {
-    "clinical": ["patient", "emr", "lab result", "medication", "ward",
-                 "nurse", "physician", "diagnosis", "radiology", "icu", "clinic",
-                 "مريض", "عيادة", "مختبر", "دواء", "تمريض", "تشخيص", "أشعة", "طوارئ", "عناية مركزة"],
-    "admin": ["invoice", "contract", "billing", "insurance", "procurement", "hr",
-              "schedule", "vendor", "accreditation",
-              "فاتورة", "عقد", "تأمين", "مشتريات", "موارد بشرية", "جدولة", "مورد", "اعتماد"],
-    "it": ["network", "vpn", "server", "firewall", "backup", "active directory",
-           "certificate", "license", "helpdesk", "cybersecurity",
-           "شبكة", "خادم", "جدار ناري", "نسخ احتياطي", "شهادة", "ترخيص", "الدعم الفني"],
+_ROLE_KEYWORD_RE = {
+    "clinical": re.compile(
+        r'\b(patient|emr|lab result|medication|ward round|nurse|physician|diagnosis|radiology|icu)\w*'
+        r'|مريض|عيادة|مختبر|دواء|تمريض|تشخيص|أشعة|طوارئ|عناية\s*مركزة',
+        re.I,
+    ),
+    "admin": re.compile(
+        r'\b(invoice|contract|billing|insurance|procurement|hr|schedule|vendor|accreditation)\w*'
+        r'|فاتورة|عقد|تأمين|مشتريات|موارد\s*بشرية|جدولة|مورد|اعتماد',
+        re.I,
+    ),
+    "it": re.compile(
+        r'\b(network|vpn|server|firewall|backup|active directory|certificate|license|helpdesk|cybersecurity)\w*'
+        r'|شبكة|خادم|جدار\s*ناري|نسخ\s*احتياطي|شهادة|ترخيص|الدعم\s*الفني',
+        re.I,
+    ),
 }
 
-# Generic IT/HR/account-security themes (MFA, OTP, login credentials, document
-# sharing/portal access) that are NOT specific to any one role and must not,
-# by themselves, count as "clinical-role-aligned" just because the words
-# "clinical systems/operations/handover" are name-dropped without any real
-# clinical task substance (patient care, EMR, medication, diagnosis, etc.)
+# Generic commercial/prize themes are never role-specific regardless of any
+# incidental keyword match (handled separately via _COMMERCIAL_THEME_RE).
+# NOTE: MFA/OTP is intentionally NOT treated as an automatic violation here
+# anymore — "MFA / OTP Abuse" tied to clinical-system access is one of the
+# legitimately pre-approved Attack Playbook vectors for the clinical role
+# (see ATTACK_PLAYBOOK["clinical"]), so rejecting it outright just caused
+# repeated failed retries on a perfectly valid scenario. We only flag a
+# login/credential theme as a role-mismatch when it is otherwise completely
+# generic (no role keyword at all) — which the primary keyword-missing
+# check below already covers.
 _GENERIC_IT_HR_THEME_RE = re.compile(
-    r'\bMFA\b|\bOTP\b|multi-factor authentication|login credentials|update your (password|credentials)|'
-    r'document sharing|log in now|reset your password|account (suspension|disabled)',
+    r'document sharing|log in now',
     re.I,
 )
 
@@ -6359,9 +6453,9 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
     role = st.session_state.get("role", "Clinical")
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     role_type = role_info[2] if role_info else "clinical"
-    keywords = _ROLE_KEYWORDS.get(role_type)
-    if keywords:
-        has_role_keyword = any(kw in combined_lower for kw in keywords)
+    role_kw_re = _ROLE_KEYWORD_RE.get(role_type)
+    if role_kw_re:
+        has_role_keyword = bool(role_kw_re.search(combined_lower))
         if not has_role_keyword:
             issues.append(f"email content must clearly reflect the '{role_type}' role context (missing role-specific keywords)")
         elif _COMMERCIAL_THEME_RE.search(combined_lower):
