@@ -2399,17 +2399,23 @@ def generate_email(role, index, language, difficulty="medium"):
             if attempt == 2:
                 # Normal retries exhausted. If the failure is specifically a
                 # severe role-mismatch (generic/commercial content unrelated
-                # to the role — the drift we kept seeing in testing), do ONE
-                # guaranteed final attempt with an explicitly PINNED scenario
-                # from the Attack Playbook instead of leaving it open-ended,
-                # so the model has no room left to drift into an unrelated
-                # "prize/bank offer" template.
+                # to the role — the drift we kept seeing in testing), try a
+                # guaranteed final AI attempt with an explicitly PINNED
+                # scenario. If even THAT still comes back mismatched (or the
+                # call itself fails), fall back to a fully hardcoded,
+                # zero-AI-dependency template that CANNOT drift, as the
+                # absolute last resort — this guarantees role-relevant
+                # content 100% of the time, no matter what the model does.
                 severe = any(("role context" in i) or ("commercial" in i) for i in last_issues)
                 if severe:
                     forced = _forced_role_aligned_attempt(role, role_type, index, language, is_ar)
-                    if forced is not None:
+                    forced_issues = get_generation_quality_issues(forced, st.session_state.get("difficulty", "medium"), True) if forced else ["forced attempt failed"]
+                    if forced is not None and not any(("role context" in i) or ("commercial" in i) for i in forced_issues):
                         remember_generated_artifacts(role_type, "learn", forced)
                         return forced
+                    hardcoded = _hardcoded_role_fallback_email(role, role_type, index, language, is_ar, difficulty)
+                    remember_generated_artifacts(role_type, "learn", hardcoded)
+                    return hardcoded
                 remember_generated_artifacts(role_type, "learn", result)
                 return result
         except json.JSONDecodeError as e:
@@ -2419,6 +2425,92 @@ def generate_email(role, index, language, difficulty="medium"):
         except Exception as e:
             return {"error": str(e)}
     return {"error": "Generation failed quality checks."}
+
+
+_ROLE_FALLBACK_TEMPLATES = {
+    "clinical": {
+        "en": {"team": "Patient Records Team", "domain": "patient-records-alert.com",
+               "subject": "Immediate Action Required: Patient Chart Access Review",
+               "body": "Our system detected an issue with your access to patient charts and lab reslts. Please confirm your account to avoid interuption to clinical record access.",
+               "link_text": "confirm your account now"},
+        "ar": {"team": "فريق السجلات الطبية", "domain": "patient-records-alert.com",
+               "subject": "إجراء عاجل مطلوب: مراجعة الوصول لملفات المرضى",
+               "body": "رصد نظامنا مشكلة بوصولك لملفات المرضى ونتائج المختبر. يرجى تأكيد حسابك لتفادي انقطاع الوصول للسجلات الطبية.",
+               "link_text": "أكد حسابك الآن"},
+    },
+    "admin": {
+        "en": {"team": "Billing Operations Team", "domain": "billing-alert-portal.com",
+               "subject": "Immediate Action Required: Invoice and Insurance Records Update",
+               "body": "Our system detected an issue with your access to patient billing records and insurance claims. Please confirm your account to avoid interuption to invoice processing acess.",
+               "link_text": "confirm your account now"},
+        "ar": {"team": "فريق العمليات المالية", "domain": "billing-alert-portal.com",
+               "subject": "إجراء عاجل مطلوب: تحديث سجلات الفواتير والتأمين",
+               "body": "رصد نظامنا مشكلة بوصولك لسجلات فوترة المرضى ومطالبات التأمين. يرجى تأكيد حسابك لتفادي انقطاع الوصول لمعالجة الفواتير.",
+               "link_text": "أكد حسابك الآن"},
+    },
+    "it": {
+        "en": {"team": "Network Operations Team", "domain": "network-alert-portal.com",
+               "subject": "Immediate Action Required: VPN and Server Access Review",
+               "body": "Our system detected an issue with your VPN and server access credentials. Please confirm your account to avoid interuption to network acess.",
+               "link_text": "confirm your account now"},
+        "ar": {"team": "فريق عمليات الشبكة", "domain": "network-alert-portal.com",
+               "subject": "إجراء عاجل مطلوب: مراجعة الوصول للشبكة والخوادم",
+               "body": "رصد نظامنا مشكلة ببيانات وصولك للشبكة الافتراضية والخوادم. يرجى تأكيد حسابك لتفادي انقطاع الوصول للشبكة.",
+               "link_text": "أكد حسابك الآن"},
+    },
+}
+
+def _hardcoded_role_fallback_email(role, role_type, index, language, is_ar, difficulty):
+    """Absolute last-resort, zero-AI-dependency template. Guaranteed to pass
+    our own role-alignment and Easy/technical-element checks every single
+    time, since it's hand-written rather than model-generated. Only reached
+    if BOTH the normal 3 attempts AND the forced pinned-scenario attempt
+    still produced role-mismatched content — an intentionally rare path."""
+    tpl = _ROLE_FALLBACK_TEMPLATES.get(role_type, _ROLE_FALLBACK_TEMPLATES["clinical"])
+    t = tpl["ar"] if is_ar else tpl["en"]
+    recipient_email = get_recipient(role, index, language, phase="learn")
+    domain = t["domain"]
+    link = f"http://{domain}/verify"
+    body_text = t["body"]
+    if difficulty == "medium":
+        # Keep only one of the two built-in typos, semi-personal-ish greeting.
+        body_text = body_text.replace("interuption", "interruption") if is_ar is False else body_text
+        greeting = ("عزيزي الموظف،" if is_ar else "Dear Team Member,")
+    elif difficulty == "hard":
+        # Flawless language, no built-in typos at all.
+        body_text = (body_text.replace("reslts", "results").replace("interuption", "interruption")
+                     .replace("acess", "access"))
+        greeting = ("عزيزي الفريق الطبي،" if is_ar else "Dear Colleague,")
+    else:
+        greeting = ("عزيزي الموظف،" if is_ar else "Dear Employee,")
+    urgency = ("تصرف الآن لتفادي تعليق حسابك اليوم." if is_ar else "Act NOW to avoid your account being suspended today.")
+    closing = (f"مع التحية،\n{t['team']}" if is_ar else f"Regards,\n{t['team']}")
+    body = f"{greeting}\n\n{body_text} {urgency}\n\n{link}\n\n{closing}"
+    from_field = f"{t['team']} <alert@{domain}>"
+    if is_ar:
+        indicators = [
+            {"number": 1, "title": "نطاق غير رسمي", "description": "النطاق غير مرتبط بأي جهة رسمية بالمستشفى."},
+            {"number": 2, "title": "إلحاح مصطنع", "description": "تهديد بتعليق الحساب لدفع اتخاذ إجراء سريع."},
+            {"number": 3, "title": "طلب تأكيد الحساب", "description": "طلب تأكيد بيانات دخول عبر رابط خارجي."},
+        ]
+        why_risky = "هذا إيميل تصيد يستغل الإلحاح لدفع الموظف لتأكيد بياناته عبر رابط غير موثوق."
+        tip = "تحققي دائماً من نطاق المرسل قبل أي إجراء يطلب بيانات دخولك."
+    else:
+        indicators = [
+            {"number": 1, "title": "Unofficial domain", "description": "The domain is not linked to any official hospital system."},
+            {"number": 2, "title": "Artificial urgency", "description": "Threatens account suspension to force a quick reaction."},
+            {"number": 3, "title": "Account confirmation request", "description": "Asks to confirm login details via an external link."},
+        ]
+        why_risky = "This is a phishing email that exploits urgency to push the employee into confirming credentials through an untrusted link."
+        tip = "Always verify the sender's domain before acting on any request for your login details."
+    return {
+        "email_type": "Credential Harvesting", "from": from_field, "to": recipient_email,
+        "subject": t["subject"], "attachment": "", "body": body,
+        "suspicious_text": t["link_text"], "suspicious_link": link,
+        "injected_errors": [], "indicators": indicators, "why_risky": why_risky, "learning_tip": tip,
+        "is_phishing": True,
+    }
+
 
 
 def _forced_role_aligned_attempt(role, role_type, index, language, is_ar):
