@@ -2315,7 +2315,7 @@ def generate_other_email(index, language, difficulty):
     role = "Other" if language != "Arabic" else "أخرى"
     is_ar = (language == "Arabic")
     last_issues = []
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             prompt = build_prompt(role, index, language) + build_retry_guidance(last_issues, is_ar)
             data = call_groq(prompt, max_tokens=2400)
@@ -2327,7 +2327,7 @@ def generate_other_email(index, language, difficulty):
                 result["body"] = (result.get("body") or "") + "\n" + result["suspicious_link"]
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
-            if not last_issues or attempt == 1:
+            if not last_issues or attempt == 2:
                 remember_generated_artifacts("other", "learn", result)
                 return result
         except Exception as e:
@@ -2340,7 +2340,7 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
     role = "Other" if language != "Arabic" else "أخرى"
     is_ar = (language == "Arabic")
     last_issues = []
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             prompt = build_assess_prompt(role, index, is_phishing, language) + build_retry_guidance(last_issues, is_ar)
             data = call_groq(prompt, max_tokens=2400)
@@ -2353,7 +2353,7 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
                 result["body"] = (result.get("body") or "") + "\n" + result["suspicious_link"]
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
-            if not last_issues or attempt == 1:
+            if not last_issues or attempt == 2:
                 remember_generated_artifacts("other", f"assess_{is_phishing}", result)
                 return result
         except Exception as e:
@@ -2369,7 +2369,7 @@ def generate_email(role, index, language, difficulty="medium"):
 
     is_ar = (language == "Arabic")
     last_issues = []
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             prompt = build_prompt(role, index, language) + build_retry_guidance(last_issues, is_ar)
             data = call_groq(prompt, max_tokens=2400)
@@ -2386,11 +2386,11 @@ def generate_email(role, index, language, difficulty="medium"):
                     result["body"] = (result.get("body") or "") + f'\n{result["suspicious_link"]}'
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
-            if not last_issues or attempt == 1:
+            if not last_issues or attempt == 2:
                 remember_generated_artifacts(role_type, "learn", result)
                 return result
         except json.JSONDecodeError as e:
-            if attempt == 1:
+            if attempt == 2:
                 return {"error": f"JSON parse error: {e}"}
             last_issues = [f"invalid JSON: {e}"]
         except Exception as e:
@@ -2406,7 +2406,7 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
 
     is_ar = (language == "Arabic")
     last_issues = []
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             prompt = build_assess_prompt(role, index, is_phishing, language) + build_retry_guidance(last_issues, is_ar)
             data = call_groq(prompt, max_tokens=2400)
@@ -2421,11 +2421,11 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
                     result["body"] = (result.get("body") or "") + f'\n{result["suspicious_link"]}'
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
-            if not last_issues or attempt == 1:
+            if not last_issues or attempt == 2:
                 remember_generated_artifacts(role_type, f"assess_{is_phishing}", result)
                 return result
         except json.JSONDecodeError:
-            if attempt == 1:
+            if attempt == 2:
                 return {"error": "Failed to parse. Please try again."}
             last_issues = ["invalid JSON"]
         except Exception as e:
@@ -2481,16 +2481,16 @@ def render_email_window(email, is_arabic, show_badges=False):
             body_raw = body_raw[:qr_match.start()] + "" + body_raw[qr_match.end():]
             body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
         else:
-            # Hard/Advanced — keep QR
+            # Hard/Advanced — QR is now OPTIONAL (varies per example, not
+            # mandatory in every single one) — keep it only if the model
+            # actually wrote a [QR:...] marker naturally in the body.
             has_qr = True
             qr_label = qr_match.group(1).strip()
             body_raw = body_raw[:qr_match.start()] + "@@QR_TOKEN@@" + body_raw[qr_match.end():]
-    elif _difficulty in ("hard", "advanced") and email.get("suspicious_link"):
-        # QR is mandatory in hard but model forgot — inject it
-        _qr_lbl = "امسح للوصول" if is_arabic else "Scan to Access"
-        body_raw = body_raw.rstrip() + f"\n\n@@QR_TOKEN@@"
-        has_qr = True
-        qr_label = _qr_lbl
+    # NOTE: no forced/auto-injected QR anymore for hard/advanced — if the
+    # model didn't naturally include one, this example simply has no QR,
+    # which is the intended variation (some Advanced emails have QR,
+    # some don't, per the updated requirement).
 
     # --------------------------------------------------------
     # NEW: detect a markdown-style "[Button label](https://...)"
@@ -4722,6 +4722,7 @@ def build_prompt(role, index, language):
 - لا تستخدم النص الحرفي suspicious_link داخل body.
 - يجب أن يكون التحليل عميقًا ومتنوعًا، وليس Domain/Urgency/Spelling دائمًا.
 - أخرج JSON فقط.
+- في حقل injected_errors: اكتب قائمة بالكلمات المكتوبة بها خطأ إملائي/نحوي متعمد داخل body فقط (اكتب الكلمة الخاطئة كما وردت بالنص). العدد يجب أن يطابق مستوى الصعوبة بالضبط: سهل=كلمتان، متوسط=كلمة واحدة، صعب=قائمة فاضية.
 
 السياق:
 {role_context}
@@ -4745,6 +4746,7 @@ def build_prompt(role, index, language):
   "body": "نص البريد الكامل",
   "suspicious_text": "أخطر عبارة في الرسالة",
   "suspicious_link": "الرابط المشبوه أو فراغ",
+  "injected_errors": ["الكلمة الخاطئة 1", "الكلمة الخاطئة 2"],
   "indicators": [
     {{"number": 1, "title": "نوع الهجوم / الطلب الخطر", "description": "شرح مرتبط بالسياق الوظيفي"}},
     {{"number": 2, "title": "مؤشر سلوكي أو تقني مختلف", "description": "شرح قصير"}},
@@ -4772,6 +4774,7 @@ Mandatory rules:
 - Never write the literal placeholder suspicious_link inside body.
 - The analysis must be varied and deep, not always Domain/Urgency/Spelling.
 - Return JSON only.
+- In the injected_errors field: list the exact misspelled words you deliberately placed inside body (the word as it appears, misspelled). The count MUST match the difficulty level exactly: Easy=two words, Intermediate=one word, Advanced=empty list.
 
 Context:
 {role_context}
@@ -4795,6 +4798,7 @@ Return only this JSON structure:
   "body": "full email body",
   "suspicious_text": "most suspicious phrase",
   "suspicious_link": "suspicious URL or empty string",
+  "injected_errors": ["misspelled word 1", "misspelled word 2"],
   "indicators": [
     {{"number": 1, "title": "Attack type / risky request", "description": "role-context explanation"}},
     {{"number": 2, "title": "different behavioral or technical clue", "description": "short explanation"}},
@@ -5035,6 +5039,21 @@ def infer_attack_type_from_content(result, is_ar=False):
     existing = result.get("attack_type") or result.get("email_type")
     return existing or ("تصيد موجه" if is_ar else "Spear Phishing")
 
+def _insert_before_signature(body, marker):
+    """Insert a [QR:...]/[Label](url) marker paragraph just before the
+    final paragraph of the body (assumed to be the closing signature:
+    'Best regards, Name, Title...') instead of appending it after the
+    whole body — prevents the marker from floating disconnected below
+    the signature."""
+    body = (body or "").rstrip()
+    if not body:
+        return marker
+    paragraphs = re.split(r'\n\s*\n', body)
+    if len(paragraphs) >= 2:
+        paragraphs.insert(len(paragraphs) - 1, marker)
+        return "\n\n".join(p.strip() for p in paragraphs if p.strip())
+    return body + "\n\n" + marker
+
 def _enforce_attack_vector(result, vector):
     """Many providers (Groq/Llama especially) acknowledge the requested
     attack vector in their reasoning but then default to inventing an
@@ -5093,14 +5112,12 @@ def _enforce_attack_vector(result, vector):
     elif wants_qr and not has_qr_marker:
         link = _as_str(result.get("suspicious_link")).strip() or "https://example-training-only.invalid/verify"
         result["suspicious_link"] = link
-        sep = "\n\n" if body.strip() else ""
-        result["body"] = (body.rstrip() + sep + "[QR: Scan to continue]").strip()
+        result["body"] = _insert_before_signature(body, "[QR: Scan to continue]")
 
     elif wants_link and not has_qr_marker and not has_btn_marker:
         link = _as_str(result.get("suspicious_link")).strip() or "https://example-training-only.invalid/verify"
         result["suspicious_link"] = link
-        sep = "\n\n" if body.strip() else ""
-        result["body"] = (body.rstrip() + sep + "[Open Link](" + link + ")").strip()
+        result["body"] = _insert_before_signature(body, "[Open Link](" + link + ")")
 
     return result
 
@@ -5349,7 +5366,7 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
             return {
                 "easy": "مبتدئ: تصيد واضح جدًا جدًا. تحية عامة فقط بدون أي اسم شخصي، مرسل عام (فريق/قسم) بدون اسم أو لقب وظيفي لشخص محدد، نطاق مزيف واضح تمامًا لا يشبه أي جهة رسمية حقيقية (ممنوع أي تشابه مع moh.gov.sa أو hospital.org)، طلب مباشر وصريح لكلمة المرور أو بيانات الدخول، رابط نصي مكشوف فقط، ممنوع أي مرفق نهائيًا، تهديد مباشر وصريح، وخطأان إملائيان واضحان إلزاميًا.",
                 "medium": "متوسط: تصيد مقنع جزئيًا. تفاصيل عمل واقعية، تحية شبه شخصية بالاسم الأول أو المسمى الوظيفي فقط (ليست عامة وليست كاملة)، نطاق شبه رسمي يشبه الرسمي بفارق بسيط، إلحاح مهني خفيف 24-72 ساعة، مؤشران واضحان فقط، ولا تستخدم تهديدًا مبالغًا أو كلمات إنجليزية كثيرة.",
-                "hard": "متقدم: تصيد قريب من الشرعي. تحية بالاسم الكامل + اللقب الوظيفي الدقيق، مرسل بتوقيع مهني كامل، نطاق شبه رسمي بذكاء، لا أخطاء إملائية، لا تهديد مباشر، لا طلب كلمة مرور صريح، يجب أن يتضمن مرفقًا رسميًا مسمّى بالإضافة لرمز QR إلزامي — كلاهما مطلوب معًا، واستخدم سياقًا داخليًا واقعيًا (EMR/بروتوكول/رقم تذكرة) واسم زميل أو قسم محدد."
+                "hard": "متقدم: تصيد قريب من الشرعي. تحية بالاسم الكامل + اللقب الوظيفي الدقيق، مرسل بتوقيع مهني كامل، نطاق شبه رسمي بذكاء، لا أخطاء إملائية، لا تهديد مباشر، لا طلب كلمة مرور صريح، يجب أن يتضمن مرفقًا رسميًا مسمّى دائماً. رمز QR اختياري ومتنوّع بين الأمثلة (ضعه فقط إذا يخدم السيناريو، وليس بكل مرة)، واستخدم سياقًا داخليًا واقعيًا (EMR/بروتوكول/رقم تذكرة) واسم زميل أو قسم محدد."
             }.get(difficulty, "متوسط")
         return {
             "easy": "شرعي مبتدئ: رسمي وواضح من hospital.org أو moh.gov.sa، لا رابط خارجي، لا بيانات حساسة، لا تهديد.",
@@ -5360,7 +5377,7 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
         return {
             "easy": "Beginner: extremely obvious phishing. Generic greeting only, no personal name anywhere; generic sender (a team/department, NOT a named person with a title); domain must be completely and obviously fake, unrelated to any real organization (must NOT resemble moh.gov.sa or hospital.org); direct explicit password/credential request; a plain visible link only; NO attachment of any kind; direct explicit threat; and EXACTLY two obvious spelling/grammar mistakes.",
             "medium": "Intermediate: partly convincing phishing. Realistic workplace detail, semi-personal greeting using first name or job title only (not generic, not full name+title), look-alike domain resembling the real one with a small detectable difference, mild professional urgency of 24-72 hours, only two clear red flags, no extreme threat or heavy all-caps.",
-            "hard": "Advanced: near-legitimate phishing. Personalized greeting with full name and precise job title, sender with a complete professional signature, near-official domain, no spelling mistakes, no direct password request, no blunt threat. MUST include BOTH an officially named attachment AND a mandatory QR code together, plus a realistic internal context (EMR/clinical protocol/ticket number) and a specific colleague or department name."
+            "hard": "Advanced: near-legitimate phishing. Personalized greeting with full name and precise job title, sender with a complete professional signature, near-official domain, no spelling mistakes, no direct password request, no blunt threat. MUST include an officially named attachment. A QR code is OPTIONAL and should vary across examples (include it only when it fits the scenario, not in every single one), plus a realistic internal context (EMR/clinical protocol/ticket number) and a specific colleague or department name."
         }.get(difficulty, "Intermediate")
     return {
         "easy": "Legitimate Beginner: official hospital.org or moh.gov.sa only, simple safe purpose, no external link, no sensitive request, no threat.",
@@ -5873,8 +5890,8 @@ _DIFF_ADDON_HARD_AR = """
 ⚠️ تعليمات صارمة جداً لمستوى الصعب — يجب الالتزام بها حرفياً (الكل إلزامي معاً):
 1. التحية: الاسم الكامل + اللقب الوظيفي الدقيق (مثل "عزيزتي د. نورة العتيبي، استشارية الأمراض الداخلية").
 2. النطاق: شبه رسمي بذكاء (مثل moh-staff.net) — ممنوع كلمات: secure, update, verify, login, reset.
-3. المرفق: إلزامي ومطلوب دائماً — يجب أن يحتوي الحقل attachment على اسم مستند رسمي واقعي (مثل Compliance_Protocol_2024.pdf). هذا مطلوب معاً مع رمز QR، وليس بديلاً عنه.
-4. QR: إلزامي ومطلوب دائماً بالإضافة إلى المرفق — اكتب [QR: نص قصير وصفي] في موضع مناسب من جسم الرسالة.
+3. المرفق: إلزامي ومطلوب دائماً — يجب أن يحتوي الحقل attachment على اسم مستند رسمي واقعي (مثل Compliance_Protocol_2024.pdf).
+4. QR: اختياري ومتنوّع — لا تضعه في كل إيميل. ضعه فقط إذا كان يخدم السيناريو فعلاً (مثل تحقق عبر جهاز موبايل أو تسجيل جهاز)، واكتبه [QR: نص قصير وصفي]. إذا لم يكن مناسباً للسيناريو، لا تكتب أي رمز QR إطلاقاً واعتمد على الزر أو الرابط فقط.
 5. الزر: استخدم زراً رسمياً باسم وصفي واضح (ليس "Open Link" أو "اضغط هنا").
 6. الأخطاء: صفر أخطاء — لغة احترافية كاملة.
 7. الإلحاح: خفيف ومهذب فقط ("إجراء روتيني") — ممنوع أي تهديد.
@@ -5887,8 +5904,8 @@ _DIFF_ADDON_HARD_EN = """
 ⚠️ STRICT ADVANCED LEVEL RULES — follow these literally (ALL are mandatory together):
 1. Greeting: FULL NAME + precise job title (e.g. "Dear Dr. Noura Al-Otaibi, Internal Medicine Consultant").
 2. Domain: near-official but not matching (e.g. moh-staff.net) — FORBIDDEN words: secure, update, verify, login, reset.
-3. Attachment: MANDATORY AND REQUIRED — the "attachment" field MUST contain a realistic, officially named document (e.g. Compliance_Protocol_2024.pdf). This is required TOGETHER WITH the QR code, not as an alternative to it.
-4. QR: MANDATORY AND REQUIRED in addition to the attachment — write [QR: short descriptive label] in the body — the output is INVALID without it.
+3. Attachment: MANDATORY AND REQUIRED — the "attachment" field MUST contain a realistic, officially named document (e.g. Compliance_Protocol_2024.pdf).
+4. QR: OPTIONAL and VARIED — do NOT include it in every email. Only include [QR: short descriptive label] when it genuinely fits the scenario (e.g. mobile device check-in, device enrollment). If it doesn't fit naturally, omit it completely and rely on the button/link instead.
 5. Button: use a professionally descriptive label (NOT "Open Link" or "Click Here").
 6. Errors: ZERO spelling or grammar errors.
 7. Urgency: polite and subtle ONLY ("routine procedure") — NO threats.
@@ -6121,15 +6138,24 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
 # =============================================================
 # FRAMEWORK COMPLIANCE PATCH — Difficulty_Framework.docx enforcement
 # Adds deterministic (non-LLM) gating on top of every previous prompt
-# layer, for the 3 points requested:
-#   1) Sender identity per Axis 1 (no personal name/title at Easy,
-#      personal name+title required at Hard) and domain sophistication
-#      per Axis 1 (Easy must be obviously fake, not government-like).
-#   2) Axis 3 technical elements: NO attachment at Easy, MANDATORY
-#      attachment + QR together at Hard, generic greeting forbidden
-#      at Medium.
-#   3) Axis 4 role alignment: email content must contain at least one
-#      keyword that matches the selected role (Clinical/Admin/IT).
+# layer. Covers, per the accumulated findings across Easy/Medium/Hard
+# testing rounds:
+#   1) Verifiable spelling-error count (Easy=2, Medium=1, Hard=0) using
+#      the model-reported injected_errors field, with a regex fallback
+#      list of common misspellings when that field is missing.
+#   2) Sender identity per Axis 1: no personal name/title at Easy,
+#      no FULL name+title (Advanced-style) leaking into Medium, and a
+#      required personal name+title at Hard. Domain sophistication:
+#      Easy must be obviously fake, not government-like.
+#   3) Axis 4 role alignment, deepened: reject generic commercial/
+#      prize/marketing-themed phishing for role-specific roles even if
+#      a role keyword is superficially mentioned once.
+#   4) Axis 3: NO attachment at Easy; MANDATORY named attachment at
+#      Hard (QR is now OPTIONAL/varied at Hard, not mandatory); and a
+#      consistency check so the body never claims an attachment exists
+#      when the attachment field is actually empty.
+#   5) Recipient/greeting name consistency: the greeting must not name
+#      someone entirely unrelated to the "to" address.
 # This wraps the same shared function used by build_prompt's retry
 # loop, so it automatically applies across all 4 AI providers and
 # both languages (Arabic/English) without touching each provider path.
@@ -6141,8 +6167,33 @@ _PERSONAL_TITLE_RE = re.compile(
     r'|(د\.|دكتور|دكتورة|الدكتور|الدكتورة|أ\.د)\s*[\u0600-\u06FF]{2,}',
     re.I,
 )
+# Stricter: title + TWO capitalized name words (full first+last name) —
+# this is the Advanced-level sender signature and must not leak into
+# Easy or Medium (Medium may only use a single first name/title).
+_FULL_NAME_TITLE_RE = re.compile(
+    r'\b(Dr\.?|Prof\.?|Professor|Doctor)\s+[A-Z][a-zA-Z\-]+\s+[A-Z][a-zA-Z\-]+'
+    r'|(د\.|دكتور|دكتورة|الدكتور|الدكتورة|أ\.د)\s*[\u0600-\u06FF]{2,}\s+[\u0600-\u06FF]{2,}',
+    re.I,
+)
 _LOOKALIKE_GOV_DOMAIN_RE = re.compile(r'\b(gov|moh|ministry|board)\b', re.I)
-_QR_MARKER_RE = re.compile(r'\[\s*QR', re.I)
+
+_COMMON_MISSPELLINGS = [
+    "acess", "informatin", "comunity", "recieve", "seperate", "occured", "untill",
+    "goverment", "priviledge", "enviroment", "maintainance", "noticable",
+    "reccommend", "adress", "begining", "calender", "definately", "embarass",
+    "harrass", "independant", "occassion", "reccomend", "succesful", "tommorow",
+    "wich", "teh", "hte", "loosing", "patint", "guidlines", "aknowledge",
+    "acknowlegde", "requiered", "immediatly", "urgant", "pleaes", "thier",
+]
+_MISSPELLING_RE = re.compile(r'\b(' + '|'.join(_COMMON_MISSPELLINGS) + r')\b', re.I)
+
+_COMMERCIAL_THEME_RE = re.compile(
+    r'\bprize\b|\breward\b|\bcash\s*back\b|\bdiscount\b|\bpromotion\b|\banniversary\b|'
+    r'\bwellness program\b|\btelecom\b|\bbank offer\b|\bloan\b|\bvoucher\b|\bgift\b|'
+    r'\bwin(?:ner|ning)?\b|\braffle\b|\blucky draw\b|'
+    r'جائزة|خصم|عرض تجاري|كاش باك|مكافأة|قرض|هدية|رابح|سحب',
+    re.I,
+)
 
 _ROLE_KEYWORDS = {
     "clinical": ["patient", "emr", "clinical", "lab result", "medication", "ward",
@@ -6156,6 +6207,13 @@ _ROLE_KEYWORDS = {
            "شبكة", "خادم", "جدار ناري", "نسخ احتياطي", "شهادة", "ترخيص", "الدعم الفني"],
 }
 
+_ATTACHMENT_MENTION_RE = re.compile(r'\battach(?:ed|ment)?\b|مرفق|مرفقة|المرفق', re.I)
+
+def _extract_name_tokens_from_email(addr):
+    local = (addr or "").split("@")[0]
+    parts = re.split(r'[.\-_]', local)
+    return [p for p in parts if len(p) >= 3 and not p.isdigit()]
+
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     issues = _BASE_GENERATION_ISSUES_FRAMEWORK(result, difficulty, is_phishing)
     if not isinstance(result, dict) or not is_phishing:
@@ -6164,11 +6222,22 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
     body = str(result.get("body") or "")
     subject = str(result.get("subject") or "")
     sender = str(result.get("from") or "")
+    to_addr = str(result.get("to") or "")
     attachment = str(result.get("attachment") or "").strip()
     combined_lower = f"{subject} {body}".lower()
 
     domain_match = re.search(r"@([\w.-]+)>?", sender)
     domain = (domain_match.group(1) if domain_match else "")
+
+    # --- Axis 2 (verifiable spelling-error count) ---
+    injected = result.get("injected_errors")
+    if isinstance(injected, list):
+        err_count = len([e for e in injected if str(e).strip()])
+    else:
+        err_count = len(_MISSPELLING_RE.findall(body))
+    expected = {"easy": 2, "medium": 1, "hard": 0}.get(difficulty)
+    if expected is not None and err_count != expected:
+        issues.append(f"{difficulty} must contain exactly {expected} spelling/grammar mistake(s) in body (found {err_count})")
 
     # --- Axis 1 (Sender Identity) + Axis 3 (Technical Elements) ---
     if difficulty == "easy":
@@ -6181,21 +6250,39 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
     elif difficulty == "medium":
         if _has_generic_greeting(body):
             issues.append("Intermediate greeting must be semi-personal (first name or title), not fully generic")
+        if _FULL_NAME_TITLE_RE.search(sender) or _FULL_NAME_TITLE_RE.search(body[:200]):
+            issues.append("Intermediate sender must NOT use a full name + job title (that is an Advanced-level signature) — first name/title only")
     elif difficulty == "hard":
         if not attachment:
             issues.append("Advanced must include a mandatory named attachment (attachment field cannot be empty)")
-        if not _QR_MARKER_RE.search(body):
-            issues.append("Advanced must include a mandatory [QR: ...] marker in the body")
         if not _PERSONAL_TITLE_RE.search(sender) and not _PERSONAL_TITLE_RE.search(body[:200]):
             issues.append("Advanced sender must use a full personal name and job title")
+        # QR is intentionally OPTIONAL/varied at Hard now — no check here.
 
-    # --- Axis 4 (Role & Healthcare Context alignment) ---
+    # --- Axis 3 consistency: body must not claim an attachment that doesn't exist ---
+    if _ATTACHMENT_MENTION_RE.search(body) and not attachment:
+        issues.append("body mentions an attachment but the attachment field is empty — keep them consistent")
+
+    # --- Axis 4 (Role & Healthcare Context alignment), deepened ---
     role = st.session_state.get("role", "Clinical")
     role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
     role_type = role_info[2] if role_info else "clinical"
     keywords = _ROLE_KEYWORDS.get(role_type)
-    if keywords and not any(kw in combined_lower for kw in keywords):
-        issues.append(f"email content must clearly reflect the '{role_type}' role context (missing role-specific keywords)")
+    if keywords:
+        if not any(kw in combined_lower for kw in keywords):
+            issues.append(f"email content must clearly reflect the '{role_type}' role context (missing role-specific keywords)")
+        elif _COMMERCIAL_THEME_RE.search(combined_lower):
+            issues.append(f"generic commercial/prize/marketing-themed phishing is not allowed for the '{role_type}' role — the scenario must revolve around an actual {role_type} work task, not a superficial keyword mention")
+
+    # --- Recipient/greeting name consistency (English only — Arabic
+    # transliteration vs Latin email-derived tokens can't be reliably
+    # matched, and skip for intentionally generic Easy greetings) ---
+    if not _has_generic_greeting(body) and not re.search(r'[\u0600-\u06FF]', body[:120]):
+        name_tokens = _extract_name_tokens_from_email(to_addr)
+        if name_tokens:
+            greeting_zone = body[:120].lower()
+            if not any(tok.lower() in greeting_zone for tok in name_tokens):
+                issues.append("greeting name does not match the 'to' recipient address — keep them consistent")
 
     return issues
 # =============================================================
