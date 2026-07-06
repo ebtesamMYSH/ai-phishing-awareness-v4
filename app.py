@@ -2522,11 +2522,24 @@ def render_email_window(email, is_arabic, show_badges=False):
             link_url   = link_match.group(2).strip()
             body_raw   = body_raw[:link_match.start()] + "@@LINK_TOKEN@@" + body_raw[link_match.end():]
 
+    # Safety net: if the MODEL itself wrote the [QR:...] or [Label](url)
+    # marker as the very last line (after the closing signature) instead
+    # of inline where it's referenced, reposition it before the
+    # signature — same fix as for a bare suspicious_link, generalized to
+    # the token placeholders used here.
+    for _marker_token in ("@@QR_TOKEN@@", "@@LINK_TOKEN@@"):
+        if _marker_token in body_raw:
+            body_raw = _reposition_trailing_lone_link(body_raw, _marker_token)
+
     # Also for easy: if suspicious_link exists but no visible URL in body, append it
     if _difficulty == "easy" and (email.get("suspicious_link") or "").strip():
         _sl = (email.get("suspicious_link") or "").strip()
         if _sl and _sl not in body_raw and not has_link_button:
-            body_raw = body_raw.rstrip() + f"\n\n{_sl}"
+            body_raw = _insert_before_signature(body_raw, _sl)
+        elif _sl and _sl in body_raw:
+            # Link already present somewhere — make sure it isn't sitting
+            # detached after the signature (model's own placement).
+            body_raw = _reposition_trailing_lone_link(body_raw, _sl)
 
     # Tidy up extra blank lines left behind after removing the placeholders above.
     body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
