@@ -2324,7 +2324,7 @@ def generate_other_email(index, language, difficulty):
             result = parse_json_response(data["choices"][0]["message"]["content"].strip())
             result = clean_result(result, is_ar)
             if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in (result.get("body") or ""):
-                result["body"] = (result.get("body") or "") + "\n" + result["suspicious_link"]
+                result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
             if not last_issues or attempt == 2:
@@ -2350,7 +2350,7 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
             result = clean_result(result, is_ar)
             result["is_phishing"] = bool(is_phishing)
             if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in (result.get("body") or ""):
-                result["body"] = (result.get("body") or "") + "\n" + result["suspicious_link"]
+                result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
             if not last_issues or attempt == 2:
@@ -2383,7 +2383,7 @@ def generate_email(role, index, language, difficulty="medium"):
             result["to"] = get_recipient(role, index, language, phase="learn")
             if (result.get("suspicious_link") or "").strip():
                 if result["suspicious_link"] not in (result.get("body") or ""):
-                    result["body"] = (result.get("body") or "") + f'\n{result["suspicious_link"]}'
+                    result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
             if not last_issues or attempt == 2:
@@ -2418,7 +2418,7 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
             result["is_phishing"] = bool(is_phishing)
             if (result.get("suspicious_link") or "").strip():
                 if result["suspicious_link"] not in (result.get("body") or ""):
-                    result["body"] = (result.get("body") or "") + f'\n{result["suspicious_link"]}'
+                    result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
 
             last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
             if not last_issues or attempt == 2:
@@ -4718,6 +4718,7 @@ def build_prompt(role, index, language):
 قواعد إلزامية:
 - لا تستخدم قالبًا ثابتًا ولا تعيد صياغة مثال سابق.
 - لا تجعل كل شيء رابطًا؛ التزم بناقل الهجوم المطلوب إن كان مرفقًا/QR/ردًا/MFA/مكالمة.
+- إذا كان الدور سريري أو إداري، لا تستخدم سيناريو عام لـMFA/OTP/تحديث كلمة المرور/مشاركة مستندات بشكل افتراضي — هذي سيناريوهات خاصة بقسم تقنية المعلومات. ابنِ السيناريو حول مهمة سريرية أو إدارية فعلية (رعاية مرضى، سجلات، فوترة، جدولة...) حتى لو كان ناقل الهجوم لا يزال رابطاً أو طلب بيانات دخول.
 - اختر نطاقًا جديدًا واقعي الشكل. في المتقدم لا تستخدم كلمات مكشوفة في النطاق.
 - لا تستخدم النص الحرفي suspicious_link داخل body.
 - يجب أن يكون التحليل عميقًا ومتنوعًا، وليس Domain/Urgency/Spelling دائمًا.
@@ -4770,6 +4771,7 @@ Diversity plan for this attempt:
 Mandatory rules:
 - Do not use a fixed template or paraphrase a previous example.
 - Do not make every example a link; follow the required vector if it is attachment/QR/reply/MFA/phone/shared document.
+- If the role is Clinical or Administrative, do NOT default to a generic MFA/OTP/login-credential-reset/document-sharing-portal scenario merely because it's an easy template — those are IT-department scenarios. Build the scenario around an actual clinical or administrative task instead (patient care workflow, records, billing, scheduling, etc.), even if the attack vector still happens to involve a link or credential request.
 - Invent a new realistic-looking domain. For Advanced, avoid obvious domain words.
 - Never write the literal placeholder suspicious_link inside body.
 - The analysis must be varied and deep, not always Domain/Urgency/Spelling.
@@ -6196,9 +6198,9 @@ _COMMERCIAL_THEME_RE = re.compile(
 )
 
 _ROLE_KEYWORDS = {
-    "clinical": ["patient", "emr", "clinical", "lab result", "medication", "ward",
+    "clinical": ["patient", "emr", "lab result", "medication", "ward",
                  "nurse", "physician", "diagnosis", "radiology", "icu", "clinic",
-                 "مريض", "سريري", "عيادة", "مختبر", "دواء", "تمريض", "تشخيص", "أشعة", "طوارئ", "عناية مركزة"],
+                 "مريض", "عيادة", "مختبر", "دواء", "تمريض", "تشخيص", "أشعة", "طوارئ", "عناية مركزة"],
     "admin": ["invoice", "contract", "billing", "insurance", "procurement", "hr",
               "schedule", "vendor", "accreditation",
               "فاتورة", "عقد", "تأمين", "مشتريات", "موارد بشرية", "جدولة", "مورد", "اعتماد"],
@@ -6206,6 +6208,17 @@ _ROLE_KEYWORDS = {
            "certificate", "license", "helpdesk", "cybersecurity",
            "شبكة", "خادم", "جدار ناري", "نسخ احتياطي", "شهادة", "ترخيص", "الدعم الفني"],
 }
+
+# Generic IT/HR/account-security themes (MFA, OTP, login credentials, document
+# sharing/portal access) that are NOT specific to any one role and must not,
+# by themselves, count as "clinical-role-aligned" just because the words
+# "clinical systems/operations/handover" are name-dropped without any real
+# clinical task substance (patient care, EMR, medication, diagnosis, etc.)
+_GENERIC_IT_HR_THEME_RE = re.compile(
+    r'\bMFA\b|\bOTP\b|multi-factor authentication|login credentials|update your (password|credentials)|'
+    r'document sharing|log in now|reset your password|account (suspension|disabled)',
+    re.I,
+)
 
 _ATTACHMENT_MENTION_RE = re.compile(r'\battach(?:ed|ment)?\b|مرفق|مرفقة|المرفق', re.I)
 
@@ -6269,10 +6282,13 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
     role_type = role_info[2] if role_info else "clinical"
     keywords = _ROLE_KEYWORDS.get(role_type)
     if keywords:
-        if not any(kw in combined_lower for kw in keywords):
+        has_role_keyword = any(kw in combined_lower for kw in keywords)
+        if not has_role_keyword:
             issues.append(f"email content must clearly reflect the '{role_type}' role context (missing role-specific keywords)")
         elif _COMMERCIAL_THEME_RE.search(combined_lower):
             issues.append(f"generic commercial/prize/marketing-themed phishing is not allowed for the '{role_type}' role — the scenario must revolve around an actual {role_type} work task, not a superficial keyword mention")
+        elif role_type in ("clinical", "admin") and _GENERIC_IT_HR_THEME_RE.search(combined_lower):
+            issues.append(f"generic MFA/login/document-sharing phishing is not allowed for the '{role_type}' role — that is an IT-themed scenario; the email must revolve around an actual {role_type} task instead")
 
     # --- Recipient/greeting name consistency (English only — Arabic
     # transliteration vs Latin email-derived tokens can't be reliably
