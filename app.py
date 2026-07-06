@@ -6793,6 +6793,342 @@ Arabic and English must have equal depth and quality.
 # END FINAL PATCH
 # =============================================================
 
+
+# =============================================================
+# ROOT-CONTROLLED GENERATION ENGINE — deterministic guardrail layer
+# -------------------------------------------------------------
+# Purpose: stop role drift, difficulty drift, QR misuse, commercial
+# themes, and links appearing after the signature. The AI providers
+# can still be used elsewhere, but emails shown to trainees are now
+# built from a strict scenario blueprint that matches the selected
+# role + difficulty before rendering.
+# =============================================================
+
+_SIGNATURE_RE_ROOT = re.compile(r"\n\s*(Best regards|Regards|Sincerely|Thank you|Thank You|مع التحية|تحياتي|مع الشكر|شكرًا|وتفضلوا)\b", re.I)
+
+_ROOT_RECIPIENTS = {
+    "clinical": [
+        ("Dr. Yousef Alghamdi", "dr.yousef.alghamdi@hospital.org"),
+        ("Dr. Ahmed Alotaibi", "dr.ahmed.alotaibi@hospital.org"),
+        ("Nurse Reem Alzahrani", "n.reem.alzahrani@hospital.org"),
+        ("Pharmacist Ziad Alharbi", "ph.ziad.alharbi@hospital.org"),
+        ("Dr. Omar Alharthy", "dr.omar.alharthy@hospital.org"),
+        ("Nurse Maha Alsubaie", "n.maha.alsubaie@hospital.org"),
+    ],
+    "admin": [
+        ("Reem Alzahrani", "m.reem.alzahrani@hospital.org"),
+        ("Abdullah Alqahtani", "m.abdullah.alqahtani@hospital.org"),
+        ("Hind Alrashidi", "m.hind.alrashidi@hospital.org"),
+        ("Sultan Alghamdi", "m.sultan.alghamdi@hospital.org"),
+        ("Dalal Alzahrani", "m.dalal.alzahrani@hospital.org"),
+        ("Omar Albaqami", "m.omar.albaqami@hospital.org"),
+    ],
+    "it": [
+        ("Mohammed Alshahri", "t.mohammed.alshahri@hospital.org"),
+        ("Rania Almalki", "t.rania.almalki@hospital.org"),
+        ("Yusuf Aljuhani", "t.yusuf.aljuhani@hospital.org"),
+        ("Lama Alumari", "t.lama.alumari@hospital.org"),
+        ("Bandar Althubaiti", "t.bandar.althubaiti@hospital.org"),
+        ("Nadia Alsalmi", "t.nadia.alsalmi@hospital.org"),
+    ],
+    "other": [
+        ("Sara Alqahtani", "s.sara.alqahtani@hospital.org"),
+        ("Khalid Alharbi", "s.khalid.alharbi@hospital.org"),
+        ("Faisal Alzahrani", "s.faisal.alzahrani@hospital.org"),
+        ("Nora Alotaibi", "s.nora.alotaibi@hospital.org"),
+        ("Ahmed Alshamri", "s.ahmed.alshamri@hospital.org"),
+        ("Hessa Aldosari", "s.hessa.aldosari@hospital.org"),
+    ],
+}
+
+_ROOT_BLUEPRINTS = {
+    "clinical": {
+        "easy": [
+            ("Patient Records Team", "patient-alert-review.com", "Urgent Patient Access Review Required", "patient access", "http://patient-alert-review.com/update", "verify your password immediatly", ["immediatly", "requiered"]),
+            ("Clinical Reports Team", "fakehospitaldata.com", "Urgent Patient Data Action Required", "latest patient report", "http://fakehospitaldata.com/login", "provide your password immediatly", ["immediatly", "acess"]),
+            ("Blood Bank Alert Team", "bloodbank-alerts-fake.com", "Blood Bank System Access Warning", "blood bank records", "http://bloodbank-alerts-fake.com/verify", "confirm your login details now", ["recieve", "urgant"]),
+        ],
+        "medium": [
+            ("Clinical Systems Support", "hospital-clinical.net", "EMR Medication Review Notice", "medication review queue", "http://hospital-clinical.net/review", "confirm your clinical-system access within 48 hours", ["recieve"]),
+            ("Lab Coordination Center", "hospital-lab.net", "Pending Lab Result Review", "pending lab result queue", "http://hospital-lab.net/result-check", "update your access before tomorrow's shift", ["attachement"]),
+            ("Radiology Workflow Desk", "hospital-radiology.net", "PACS Image Review Request", "radiology image queue", "http://hospital-radiology.net/pacs-review", "confirm access within 48 hours", ["acess"]),
+        ],
+        "hard": [
+            ("Dr. Mohammed Al-Ghamdi, Clinical Informatics Consultant", "hospital-clinical.org.sa", "Routine EMR Protocol Confirmation", "EMR protocol confirmation", "https://hospital-clinical.org.sa/secure-review", "confirm the new handover protocol", []),
+            ("Dr. Noura Al-Qahtani, Medication Safety Lead", "hospital-pharmacy.org.sa", "Medication Reconciliation Workflow Update", "medication reconciliation workflow", "https://hospital-pharmacy.org.sa/workflow", "acknowledge the updated medication reconciliation procedure", []),
+            ("Dr. Fahad Al-Harbi, Radiology Governance Lead", "hospital-radiology.org.sa", "Routine PACS Access Validation", "PACS access validation", "https://hospital-radiology.org.sa/validation", "complete the routine PACS validation", []),
+        ],
+    },
+    "admin": {
+        "easy": [
+            ("Billing Team", "fake-billing-alert.com", "Urgent Billing Portal Password Check", "billing portal", "http://fake-billing-alert.com/update", "send your password immediatly", ["immediatly", "requiered"]),
+            ("Insurance Office", "insurance-hospital-fake.com", "Insurance File Access Warning", "insurance files", "http://insurance-hospital-fake.com/login", "verify your login NOW", ["recieve", "acess"]),
+            ("Records Office", "patient-records-fake.com", "Patient Records Account Closure", "patient records office", "http://patient-records-fake.com/verify", "provide your password today", ["urgant", "acess"]),
+        ],
+        "medium": [
+            ("Revenue Cycle Support", "hospital-billing.net", "Billing Queue Update Needed", "billing queue", "http://hospital-billing.net/queue", "confirm your billing portal access within 48 hours", ["recieve"]),
+            ("Procurement Support Center", "hospital-procurement.net", "Supplier Contract Review", "supplier contract review", "http://hospital-procurement.net/review", "update your procurement access before the review window closes", ["seperate"]),
+            ("Insurance Claims Desk", "hospital-claims.net", "Claims Batch Confirmation", "insurance claims batch", "http://hospital-claims.net/confirm", "confirm claim-batch access within 48 hours", ["acess"]),
+        ],
+        "hard": [
+            ("Ms. Reem Al-Mutairi, Revenue Cycle Manager", "hospital-billing.org.sa", "Routine Claims Reconciliation Confirmation", "claims reconciliation", "https://hospital-billing.org.sa/reconcile", "confirm the reconciliation worksheet", []),
+            ("Mr. Abdullah Al-Dossari, Procurement Director", "hospital-procurement.org.sa", "Vendor Contract Renewal Validation", "vendor contract renewal", "https://hospital-procurement.org.sa/contracts", "validate the supplier renewal packet", []),
+            ("Ms. Huda Al-Salem, Patient Access Manager", "hospital-access.org.sa", "Appointment Template Governance Review", "appointment template review", "https://hospital-access.org.sa/templates", "confirm the clinic template changes", []),
+        ],
+    },
+    "it": {
+        "easy": [
+            ("Security Team", "fakealertsys.com", "Immediate MFA Verification Required", "MFA portal", "http://secure-update.fakealertsys.com", "provide your password immediatly", ["immediatly", "requiered"]),
+            ("Server Admin", "server-alert-fake.com", "VPN Account Closure Today", "VPN account", "http://server-alert-fake.com/vpn", "send your login details NOW", ["acess", "urgant"]),
+            ("Helpdesk Team", "helpdesk-fake-hospital.com", "Firewall Console Access Warning", "firewall console", "http://helpdesk-fake-hospital.com/firewall", "verify your password today", ["recieve", "immediatly"]),
+        ],
+        "medium": [
+            ("IT Support Center", "hospital-it.net", "VPN Profile Update Required", "VPN profile", "http://hospital-it.net/vpn-update", "confirm your VPN profile within 48 hours", ["acess"]),
+            ("Infrastructure Support", "hospital-server.net", "Server Backup Verification", "server backup console", "http://hospital-server.net/backup", "update your backup-console access before tonight", ["recieve"]),
+            ("Certificate Services", "hospital-cert.net", "SSL Certificate Renewal Check", "SSL certificate console", "http://hospital-cert.net/renew", "confirm certificate access within 48 hours", ["requiered"]),
+        ],
+        "hard": [
+            ("Eng. Yasser Al-Qahtani, Infrastructure Operations Lead", "hospital-it.org.sa", "Routine Privileged Access Review", "privileged access review", "https://hospital-it.org.sa/access-review", "validate the privileged-access review", []),
+            ("Eng. Sara Al-Harbi, Cybersecurity Governance Lead", "hospital-security.org.sa", "Endpoint Exception Register Confirmation", "endpoint exception register", "https://hospital-security.org.sa/exceptions", "confirm endpoint exception records", []),
+            ("Eng. Mohammed Al-Salem, Network Services Manager", "hospital-network.org.sa", "Network Change Ticket Confirmation", "network change ticket", "https://hospital-network.org.sa/change", "acknowledge the network change ticket", []),
+        ],
+    },
+}
+
+_ROOT_ATTACK_LABELS = {
+    "easy": ("Credential Harvesting", "سرقة بيانات الدخول"),
+    "medium": ("Look-alike Domain Phishing", "تصيد بنطاق مشابه"),
+    "hard": ("Advanced QR and Attachment Phishing", "تصيد متقدم برمز QR ومرفق"),
+}
+
+_ROOT_ATTACHMENTS = {
+    "clinical": ["EMR_Protocol_Update_2026.pdf", "Medication_Reconciliation_Workflow.pdf", "PACS_Access_Validation.pdf"],
+    "admin": ["Claims_Reconciliation_Worksheet.pdf", "Vendor_Renewal_Packet.pdf", "Clinic_Template_Governance.pdf"],
+    "it": ["Privileged_Access_Review.pdf", "Endpoint_Exception_Register.pdf", "Network_Change_Ticket.pdf"],
+    "other": ["Department_Procedure_Review.pdf", "Internal_Service_Update.pdf", "Staff_Acknowledgement_Form.pdf"],
+}
+
+_ROOT_LEGIT_BLUEPRINTS = {
+    "clinical": ("Clinical Education Office <education@hospital.org>", "Updated Clinical Training Schedule", "Dear {name},\n\nThe clinical education schedule for next week has been published on the internal hospital portal. Please review your assigned session when convenient. No login details are required by email.\n\nRegards,\nClinical Education Office", ""),
+    "admin": ("Patient Access Office <access.office@hospital.org>", "Appointment Template Update", "Dear {name},\n\nThe appointment template for next week has been updated in the internal scheduling system. Please review it through the official hospital portal during working hours.\n\nRegards,\nPatient Access Office", ""),
+    "it": ("IT Change Management <change.management@hospital.org>", "Approved Maintenance Window", "Dear {name},\n\nThe approved maintenance window is scheduled for Friday evening. Details are available in the internal change calendar. This notice does not require password or MFA verification.\n\nRegards,\nIT Change Management", ""),
+    "other": ("Staff Services <staff.services@hospital.org>", "Internal Staff Notice", "Dear {name},\n\nA staff notice has been posted on the official hospital intranet. Please review it through normal internal access when convenient.\n\nRegards,\nStaff Services", ""),
+}
+
+def _root_role_type(role):
+    try:
+        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
+    except Exception:
+        return "clinical"
+
+def _root_normalize_difficulty(difficulty):
+    d = (difficulty or "medium").lower()
+    if d in ("beginner", "easy", "سهل"):
+        return "easy"
+    if d in ("advanced", "hard", "صعب"):
+        return "hard"
+    return "medium"
+
+def _root_recipient(role_type, index):
+    pool = _ROOT_RECIPIENTS.get(role_type) or _ROOT_RECIPIENTS["other"]
+    return pool[index % len(pool)]
+
+def _root_apply_errors(body, errors):
+    # The errors are already embedded by replacing selected clean words.
+    return body
+
+def _root_link_before_signature(body, link):
+    if not link:
+        return body.strip()
+    body = re.sub(r"\n\s*https?://\S+\s*$", "", body.strip())
+    if link in body:
+        return body.strip()
+    m = _SIGNATURE_RE_ROOT.search("\n" + body)
+    if m:
+        pos = m.start() - 1
+        return body[:pos].rstrip() + f"\n\nReview link: {link}\n" + body[pos:].lstrip()
+    return body.rstrip() + f"\n\nReview link: {link}"
+
+def _root_build_body_en(role_type, diff, name, task, action, link, errors, idx):
+    first = name.split()[1] if name.startswith(("Dr.", "Nurse", "Pharmacist")) and len(name.split()) > 1 else name.split()[0]
+    if diff == "easy":
+        body = (f"Dear Staff,\n\nYour {task} account is at risk. You must {action} or your access will be suspended TODAY. "
+                f"This action is requiered for all hospital staff.\n\nUpdate here: {link}\n\nThank You,\nSupport Team")
+        if "immediatly" in errors and "immediately" not in body:
+            body = body.replace("TODAY", "TODAY immediatly")
+        if "acess" in errors:
+            body = body.replace("access", "acess", 1)
+        if "recieve" in errors:
+            body = body.replace("review", "recieve", 1)
+        if "urgant" in errors:
+            body = body.replace("Urgent", "Urgant")
+        return body
+    if diff == "medium":
+        body = (f"Dear {first},\n\nThe {task} requires a profile update for your department. Please {action}. "
+                f"This helps maintain current hospital workflow records.\n\nOpen the secure review page: {link}\n\nRegards,\nDepartment Support Center")
+        if errors:
+            body = body.replace("access", errors[0], 1) if "access" in body else body.replace("requires", errors[0], 1)
+        return body
+    # hard
+    attach = (_ROOT_ATTACHMENTS.get(role_type) or _ROOT_ATTACHMENTS["other"])[idx % 3]
+    body = (f"Dear {name},\n\nAs part of the routine quarterly review for {task}, please review the attached file "
+            f"({attach}) and confirm the item assigned to your unit at your earliest convenience.\n\n"
+            f"Use the internal review button or scan this code from a hospital-managed device only: [QR: {task} review]\n\n"
+            f"Reference: CHG-{20260 + idx}\n\nSincerely,\nClinical Governance Office")
+    return body
+
+def _root_build_body_ar(role_type, diff, name, task, action, link, errors, idx):
+    if diff == "easy":
+        return (f"عزيزي الموظف،\n\nحساب {task} معرض للإيقاف. يجب عليك {action} فورًا وإلا سيتم تعليق الوصول اليوم. "
+                f"هذا الإجراء مطلووب لجميع موظفي المستشفى.\n\nرابط التحديث: {link}\n\nمع الشكر،\nفريق الدعم")
+    if diff == "medium":
+        return (f"عزيزي/عزيزتي {name.split()[0]}،\n\nيتطلب {task} تحديث ملف الوصول الخاص بالقسم. يرجى {action} خلال 48 ساعة. "
+                f"هذا يساعد على استمرار سير العمل في المستشفى بشكل منظم.\n\nرابط المراجعة: {link}\n\nمع التحية،\nمركز دعم القسم")
+    attach = (_ROOT_ATTACHMENTS.get(role_type) or _ROOT_ATTACHMENTS["other"])[idx % 3]
+    return (f"عزيزي/عزيزتي {name}،\n\nضمن المراجعة الدورية المتعلقة بـ {task}، يرجى الاطلاع على المرفق الرسمي "
+            f"({attach}) وتأكيد البند المخصص لوحدتكم عند التفرغ.\n\n"
+            f"يرجى استخدام زر المراجعة الداخلي أو مسح الرمز من جهاز تابع للمستشفى فقط: [QR: مراجعة {task}]\n\n"
+            f"المرجع: CHG-{20260 + idx}\n\nمع التحية،\nمكتب الحوكمة السريرية")
+
+def _root_indicators(diff, link, is_ar=False):
+    if is_ar:
+        if diff == "easy":
+            return [
+                {"number": 1, "title": "تحية عامة", "description": "الرسالة تخاطب الموظفين بشكل عام دون اسم محدد."},
+                {"number": 2, "title": "نطاق واضح التزوير", "description": f"الرابط يستخدم نطاقًا غير رسمي: {link}."},
+                {"number": 3, "title": "طلب بيانات دخول مباشر", "description": "الرسالة تطلب كلمة المرور أو بيانات الدخول بشكل مباشر."},
+                {"number": 4, "title": "إلحاح مبالغ فيه", "description": "التهديد بالإيقاف اليوم يضغط على المستخدم للتصرف بسرعة."},
+            ]
+        if diff == "medium":
+            return [
+                {"number": 1, "title": "نطاق مشابه", "description": "النطاق قريب من اسم المستشفى لكنه ليس نطاقًا رسميًا."},
+                {"number": 2, "title": "طلب غير مباشر", "description": "الرسالة تطلب تحديث الوصول بدل طلب كلمة المرور صراحة."},
+                {"number": 3, "title": "إلحاح متوسط", "description": "مهلة 48 ساعة أقل وضوحًا من التهديد الفوري."},
+            ]
+        return [
+            {"number": 1, "title": "نطاق شبه رسمي", "description": "النطاق يبدو قريبًا من الرسمي ويحتاج تدقيقًا."},
+            {"number": 2, "title": "رمز QR", "description": "رمز QR قد يخفي وجهة الرابط الحقيقية."},
+            {"number": 3, "title": "مرفق رسمي مسمى", "description": "المرفق يعطي الرسالة مظهرًا مهنيًا مقنعًا."},
+        ]
+    if diff == "easy":
+        return [
+            {"number": 1, "title": "Generic greeting", "description": "The message uses a broad greeting instead of a named recipient."},
+            {"number": 2, "title": "Obviously fake domain", "description": f"The URL uses a non-official domain: {link}."},
+            {"number": 3, "title": "Direct credential request", "description": "The email directly asks for password or login details."},
+            {"number": 4, "title": "Extreme urgency", "description": "Threatening same-day suspension pressures the user to act quickly."},
+        ]
+    if diff == "medium":
+        return [
+            {"number": 1, "title": "Look-alike domain", "description": "The domain looks related to the hospital but is not official."},
+            {"number": 2, "title": "Indirect access request", "description": "The email asks for an update or confirmation rather than openly asking for a password."},
+            {"number": 3, "title": "Moderate urgency", "description": "The 48-hour window creates pressure without an obvious threat."},
+        ]
+    return [
+        {"number": 1, "title": "Near-official domain", "description": "The domain is polished and close to a legitimate hospital domain."},
+        {"number": 2, "title": "QR code", "description": "The QR code can hide the true destination from the user."},
+        {"number": 3, "title": "Named official attachment", "description": "The attachment makes the request appear part of a routine workflow."},
+    ]
+
+def _root_make_email(role, index, language, difficulty, is_phishing=True):
+    role_type = _root_role_type(role)
+    if role_type == "other":
+        role_type = ["clinical", "admin", "it"][index % 3]
+    diff = _root_normalize_difficulty(difficulty)
+    is_ar = (language == "Arabic")
+    name, to_email = _root_recipient(role_type, index)
+    if not is_phishing:
+        frm, subject, body_tpl, att = _ROOT_LEGIT_BLUEPRINTS.get(role_type, _ROOT_LEGIT_BLUEPRINTS["other"])
+        body = body_tpl.format(name=name)
+        return {"email_type": "Legitimate Email" if not is_ar else "رسالة شرعية", "attack_type": "None", "risk_level": "Safe", "from": frm, "to": to_email, "subject": subject, "attachment": att, "body": body, "suspicious_text": "", "suspicious_link": "", "is_phishing": False, "indicators": [], "why_risky": "This is a legitimate internal notice and does not request credentials." if not is_ar else "هذه رسالة داخلية شرعية ولا تطلب بيانات الدخول.", "learning_tip": "Use official portals for routine notices." if not is_ar else "استخدمي البوابات الرسمية للإشعارات الروتينية."}
+    bp = (_ROOT_BLUEPRINTS.get(role_type) or _ROOT_BLUEPRINTS["clinical"])[diff][index % 3]
+    sender_name, domain, subject, task, link, action, errors = bp
+    frm = f"{sender_name} <updates@{domain}>"
+    if is_ar:
+        body = _root_build_body_ar(role_type, diff, name, task, action, link, errors, index)
+        subject = {"easy": "إجراء عاجل مطلوب لحساب المستشفى", "medium": "تأكيد تحديث القسم خلال 48 ساعة", "hard": "إجراء روتيني لمراجعة الوصول"}[diff]
+    else:
+        body = _root_build_body_en(role_type, diff, name, task, action, link, errors, index)
+    body = _root_link_before_signature(body, link if diff in ("easy", "medium") else "")
+    attachment = "" if diff in ("easy", "medium") else (_ROOT_ATTACHMENTS.get(role_type) or _ROOT_ATTACHMENTS["other"])[index % 3]
+    suspicious_text = action if not is_ar else ("طلب تأكيد/تحديث الوصول" if diff != "hard" else "رمز QR مع مرفق رسمي")
+    attack_en, attack_ar = _ROOT_ATTACK_LABELS[diff]
+    result = {
+        "email_type": attack_ar if is_ar else attack_en,
+        "attack_type": attack_ar if is_ar else attack_en,
+        "risk_level": "High" if diff != "hard" else "Critical",
+        "from": frm,
+        "to": to_email,
+        "subject": subject,
+        "attachment": attachment,
+        "body": body,
+        "suspicious_text": suspicious_text,
+        "suspicious_link": link if diff in ("easy", "medium") else "",
+        "injected_errors": errors if not is_ar else (["مطلووب"] if diff == "easy" else ([] if diff == "hard" else ["تحديث"])),
+        "is_phishing": True,
+        "indicators": _root_indicators(diff, link, is_ar),
+        "why_risky": ("This email is risky because it matches the selected healthcare role but uses phishing indicators calibrated to the chosen difficulty level." if not is_ar else "هذه الرسالة خطرة لأنها مرتبطة بالدور الصحي المختار لكنها تستخدم مؤشرات تصيد مناسبة لمستوى الصعوبة المحدد."),
+        "learning_tip": ("Verify requests through official hospital systems, not links or QR codes inside email." if not is_ar else "تحققي من الطلبات عبر أنظمة المستشفى الرسمية وليس من روابط أو رموز QR داخل البريد."),
+    }
+    return result
+
+def _root_guardrail_passes(result, role, difficulty, is_phishing=True):
+    # Final deterministic sanity checks. If any check fails, regenerate from blueprint.
+    if not isinstance(result, dict):
+        return False
+    role_type = _root_role_type(role)
+    if role_type != "other":
+        txt = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link", "email_type"])
+        if not _ROLE_KEYWORDS.get(role_type, re.compile("." )).search(txt):
+            return False
+        if _ROLE_FORBIDDEN.get(role_type, re.compile(r"a^" )).search(txt):
+            return False
+    diff = _root_normalize_difficulty(difficulty)
+    body = str(result.get("body", ""))
+    if _COMMERCIAL_THEME_RE.search(" ".join(str(result.get(k, "")) for k in ["from", "subject", "body"])):
+        return False
+    if diff in ("easy", "medium") and re.search(r"\[\s*QR", body, re.I):
+        return False
+    if diff == "easy" and str(result.get("attachment", "")).strip():
+        return False
+    if diff == "hard" and (not str(result.get("attachment", "")).strip() or not re.search(r"\[\s*QR", body, re.I)):
+        return False
+    link = str(result.get("suspicious_link", "")).strip()
+    if link and _SIGNATURE_RE_ROOT.search(body):
+        sig_pos = _SIGNATURE_RE_ROOT.search(body).start()
+        if body.find(link) > sig_pos:
+            return False
+    return True
+
+# Preserve AI generators for admin comparison/debug, but do not trust them as final trainee content.
+_AI_GENERATE_EMAIL_BEFORE_ROOT = generate_email
+_AI_GENERATE_ASSESS_EMAIL_BEFORE_ROOT = generate_assess_email
+_AI_GENERATE_OTHER_EMAIL_BEFORE_ROOT = generate_other_email
+_AI_GENERATE_OTHER_ASSESS_EMAIL_BEFORE_ROOT = generate_other_assess_email
+
+def generate_email(role, index, language, difficulty="medium"):
+    result = _root_make_email(role, index, language, difficulty, True)
+    evaluate_and_log_auto_scores(result, _root_normalize_difficulty(difficulty), language, is_phishing=True)
+    return result
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    result = _root_make_email(role, index, language, difficulty, bool(is_phishing))
+    evaluate_and_log_auto_scores(result, _root_normalize_difficulty(difficulty), language, is_phishing=bool(is_phishing))
+    return result
+
+def generate_other_email(index, language, difficulty):
+    # Other intentionally rotates through clinical/admin/IT to produce mixed but controlled hospital examples.
+    pseudo_role = ["Clinical", "Admin / Management", "IT / Informatics"][index % 3]
+    return generate_email(pseudo_role, index, language, difficulty)
+
+def generate_other_assess_email(index, is_phishing, language, difficulty):
+    pseudo_role = ["Clinical", "Admin / Management", "IT / Informatics"][index % 3]
+    return generate_assess_email(pseudo_role, index, is_phishing, language, difficulty)
+
+# =============================================================
+# END ROOT-CONTROLLED GENERATION ENGINE
+# =============================================================
+
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
