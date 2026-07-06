@@ -1242,6 +1242,10 @@ RECIPIENT_POOLS = {
         {"en": "Dr. Omar Alharthy",    "ar": "د. عمر الحارثي",       "email": "dr.omar.alharthy@hospital.org"},
         {"en": "Nurse Reem Alzahrani", "ar": "الممرضة ريم الزهراني","email": "n.reem.alzahrani@hospital.org"},
         {"en": "Dr. Yousef Alghamdi",  "ar": "د. يوسف الغامدي",      "email": "dr.yousef.alghamdi@hospital.org"},
+        {"en": "Pharmacist Lama Alqahtani", "ar": "الصيدلانية لمى القحطاني", "email": "ph.lama.alqahtani@hospital.org"},
+        {"en": "Pharmacist Ziad Alharbi",   "ar": "الصيدلاني زياد الحربي",   "email": "ph.ziad.alharbi@hospital.org"},
+        {"en": "Lab Technician Huda Alsalmi","ar": "فنية المختبر هدى السالمي","email": "lab.huda.alsalmi@hospital.org"},
+        {"en": "Radiology Technician Nasser Aldosari","ar": "فني الأشعة ناصر الدوسري","email": "rad.nasser.aldosari@hospital.org"},
     ],
     "admin": [
         {"en": "Sultan Alghamdi",  "ar": "سلطان الغامدي",  "email": "m.sultan.alghamdi@hospital.org"},
@@ -5060,29 +5064,63 @@ def _insert_before_signature(body, marker):
         return "\n\n".join(p.strip() for p in paragraphs if p.strip())
     return body + "\n\n" + marker
 
+_SALUTATION_LINE_RE = re.compile(
+    r'^(regards|best regards|kind regards|warm regards|thank you|sincerely|respectfully|'
+    r'شكرا|شكراً|مع تحياتي|تحياتي|أطيب التحيات|وتفضلوا بقبول)',
+    re.I,
+)
+
 def _reposition_trailing_lone_link(body, link):
     """Some providers write the referring sentence ('click the link
     below...') correctly in-flow, but then place the actual bare URL as
-    its own paragraph AFTER the closing signature instead of right after
-    that sentence. This is independent of our own code (which only
-    appends a link if one is completely missing) — this catches the
-    model's OWN misplacement. If the very last paragraph is just the
-    bare link and there's a signature-like paragraph before it, move the
-    link to sit right before that signature instead."""
+    its own line AFTER the closing signature instead of right after
+    that sentence — sometimes separated by a blank line (paragraph
+    break), sometimes by a single newline (signature lines joined to
+    the link with no blank line at all). This is independent of our own
+    code (which only appends a link if one is completely missing) —
+    this catches the model's OWN misplacement in BOTH formatting cases
+    by working line-by-line rather than only on blank-line paragraphs."""
     link = (link or "").strip()
-    body = (body or "").rstrip()
-    if not link or not body:
-        return body
-    paragraphs = re.split(r'\n\s*\n', body)
-    if len(paragraphs) < 2:
-        return body
-    last = paragraphs[-1].strip()
-    if last == link or (link in last and len(last) <= len(link) + 6):
-        remaining = paragraphs[:-1]
-        if len(remaining) >= 1:
-            new_paragraphs = remaining[:-1] + [last] + [remaining[-1]]
-            return "\n\n".join(p.strip() for p in new_paragraphs if p.strip())
-    return body
+    raw_body = body or ""
+    if not link or not raw_body.strip():
+        return raw_body
+
+    lines = raw_body.rstrip().split("\n")
+    idx = len(lines) - 1
+    while idx >= 0 and not lines[idx].strip():
+        idx -= 1
+    if idx < 0:
+        return raw_body
+    last_line = lines[idx].strip()
+    if not (last_line == link or (link in last_line and len(last_line) <= len(link) + 6)):
+        return raw_body  # last line isn't a bare/near-bare link — nothing to fix
+
+    before = lines[:idx]
+    before_text = "\n".join(before).rstrip()
+    if not before_text:
+        return raw_body
+
+    # Case 1: there's a blank-line paragraph break before the link —
+    # insert the link as its own paragraph just before the last one
+    # (assumed to be the signature).
+    paragraphs = re.split(r'\n\s*\n', before_text)
+    if len(paragraphs) >= 2:
+        paragraphs.insert(len(paragraphs) - 1, last_line)
+        return "\n\n".join(p.strip() for p in paragraphs if p.strip())
+
+    # Case 2: everything is joined with single newlines (no blank-line
+    # break at all) — find the closing salutation line ("Regards,"/
+    # "Best regards,"/etc.) and insert the link right before it.
+    for i in range(len(before) - 1, -1, -1):
+        if _SALUTATION_LINE_RE.match(before[i].strip()):
+            new_lines = before[:i] + [last_line, ""] + before[i:]
+            return "\n".join(new_lines).rstrip()
+
+    # Fallback: no salutation line found — insert two lines before the
+    # very end rather than leaving the link fully detached.
+    insert_at = max(0, len(before) - 2)
+    new_lines = before[:insert_at] + [last_line, ""] + before[insert_at:]
+    return "\n".join(new_lines).rstrip()
 
 def _enforce_attack_vector(result, vector):
     """Many providers (Groq/Llama especially) acknowledge the requested
