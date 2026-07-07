@@ -3037,9 +3037,9 @@ def page_home():
 .stButton>button:hover,.stButton>button:focus{{background:linear-gradient(90deg,#0B4FA8,#0284C7);color:white;border-color:#1EA7FF !important;}}
 .start-btn>button{{min-height:56px !important;background:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.65) !important;font-size:1.05rem !important;font-weight:900 !important;border-radius:14px !important;}}
 .start-btn>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border-color:#1EA7FF !important;}}
-div[data-baseweb="select"] *{color:#EAF4FF!important;}
-div[data-baseweb="select"] > div{background:rgba(15,23,42,.82)!important;border:1px solid rgba(37,99,235,.65)!important;border-radius:12px!important;}
-div[data-baseweb="popover"] *{color:#EAF4FF!important;}
+div[data-baseweb="select"] *{{color:#EAF4FF!important;}}
+div[data-baseweb="select"] > div{{background:rgba(15,23,42,.82)!important;border:1px solid rgba(37,99,235,.65)!important;border-radius:12px!important;}}
+div[data-baseweb="popover"] *{{color:#EAF4FF!important;}}
 .stSelectbox>div>div,.stTextInput>div>div>input{{background-color:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.55) !important;border-radius:12px !important;min-height:48px;direction:{dir_attr};text-align:{text_align};}}
 div[data-baseweb="select"] span{{color:white !important;}}
 div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:{dir_attr} !important;}}
