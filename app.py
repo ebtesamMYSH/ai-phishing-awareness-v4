@@ -7786,6 +7786,300 @@ except Exception:
 # END SCENARIO ENGINE v3
 # =============================================================
 
+
+# =============================================================
+# SCENARIO ENGINE v4 — Strict Framework Contract Fix
+# -------------------------------------------------------------
+# Fixes observed v3 issues:
+# 1) Beginner/Easy can no longer display Intermediate indicators.
+# 2) Link is generated ONCE and reused in body + suspicious_link, so
+#    it cannot appear twice or drift to the signature area.
+# 3) Button channel renders as a real markdown button for the renderer.
+# 4) Analysis is generated from the exact email properties.
+# =============================================================
+
+def _stable_domain_v4(diff, sc, channel="link", legit=False):
+    if legit:
+        return "hospital.org"
+    slug = re.sub(r"[^a-z0-9]", "", sc.get("path", "hospital").lower())[:18] or "portal"
+    if diff == "easy":
+        # Clearly fake, obvious, and not near-official.
+        variants = [f"fake-{slug}-login.com", f"hospital-alert-{slug}.com", f"secure-{slug}-verify.info"]
+    elif diff == "medium":
+        # Look-alike, plausible but not official.
+        variants = [f"hospital-{slug}-support.org", f"hospital-{slug}.net", f"{slug}-hospital-review.net"]
+    else:
+        # Near-official; used only behind QR/button, not shown as plain URL.
+        variants = [f"hospital-{slug}.org.sa", f"hosp-{slug}.org.sa", f"hospital-services-{slug}.org.sa"]
+    # Deterministic selection for a given scenario/channel to avoid body/link mismatch.
+    return variants[(len(slug) + len(channel)) % len(variants)]
+
+def _link_v4(diff, sc, channel, legit=False):
+    if legit or diff == "hard":
+        return ""
+    return f"http://{_stable_domain_v4(diff, sc, channel, False)}/{sc['path']}"
+
+def _display_name_v4(name, diff):
+    if diff == "easy":
+        return ""
+    if diff == "hard":
+        return name
+    return _medium_display_name_v3(name)
+
+def _subject_v4(diff, sc, channel, lang, legit=False):
+    is_ar = lang == "Arabic"
+    if legit:
+        return (f"إشعار داخلي: {sc['dept']}" if is_ar else random.choice([
+            f"Internal Notice: {sc['topic'].title()}",
+            f"Scheduled Update: {sc['dept']}",
+            f"Routine {sc['dept']} Notice",
+        ]))
+    if is_ar:
+        if diff == "easy":
+            return random.choice(["إجراء فوري مطلوب لحساب المستشفى", "تحذير: سيتم إغلاق الحساب اليوم", "تأكيد كلمة المرور فورًا"])
+        if diff == "medium":
+            return random.choice([f"مراجعة {sc['dept']} خلال 48 ساعة", f"تحديث مطلوب: {sc['topic']}", f"متابعة {sc['dept']} مطلوبة"])
+        return random.choice([f"إجراء روتيني: {sc['topic']}", f"مراجعة رسمية لقسم {sc['dept']}", f"تأكيد مستند داخلي: {sc['dept']}"])
+    if diff == "easy":
+        return random.choice(["URGENT: Staff Account Will Close Today", "Immediate Password Verification Required", "Final Warning: Hospital Login Access"])
+    if diff == "medium":
+        return random.choice([f"{sc['topic'].title()} Review", f"{sc['dept']} Follow-Up Required", f"Pending {sc['topic'].title()} Confirmation"])
+    return random.choice([f"Routine {sc['topic'].title()} Confirmation", f"Official {sc['dept']} Workflow Review", f"Quarterly {sc['dept']} Document Check"])
+
+def _channel_v4(diff, sc, index, legit=False):
+    if diff == "easy":
+        return "link"
+    if diff == "hard":
+        return "qr_official"
+    channels = sc.get("channels") or ["link", "pdf", "button", "calendar"]
+    # Keep exactly one vector for Intermediate.
+    return channels[index % len(channels)]
+
+def _attachment_v4(diff, sc, channel, legit=False):
+    if diff == "easy":
+        return ""
+    if legit:
+        return sc.get("attach", "Internal_Notice.pdf") if channel in ("pdf", "calendar") else ""
+    if diff == "medium":
+        return sc.get("attach", "Summary.pdf") if channel == "pdf" else ""
+    return "Official_" + sc.get("attach", "Protocol_Update_2026.pdf").replace(" ", "_")
+
+def _body_v4(role_type, sc, sub, person, diff, channel, lang, legit=False, index=0, link="", attach=""):
+    is_ar = lang == "Arabic"
+    name, _ = person
+    sig = sc.get("sender") or _SIGNATURE_BY_SCENARIO_V3[role_type][index % len(_SIGNATURE_BY_SCENARIO_V3[role_type])]
+    medium_name = _medium_display_name_v3(name)
+    full_name = name
+    ref = f"HSP-{202600 + index * 19}"
+
+    if legit:
+        if is_ar:
+            return f"عزيزي/عزيزتي {medium_name}،\n\nهذا إشعار داخلي مجدول من {sc['dept']} بخصوص {sc['topic']}. لا يطلب كلمة مرور، ولا يتضمن تهديدًا بإغلاق الحساب، ويمكن التحقق منه عبر أنظمة المستشفى الرسمية.\n\nمع التحية،\n{sig}"
+        return f"Dear {medium_name},\n\nThis is a scheduled internal notice from {sc['dept']} about {sc['topic']}. It does not ask for a password, does not threaten account closure, and can be verified through official hospital systems.\n\nRegards,\n{sig}"
+
+    if diff == "easy":
+        greet = random.choice(_GENERIC_GREETINGS_V3[lang])
+        if is_ar:
+            return f"{greet}،\n\nسيتم إغلاق حساب المستشفى اليوم. أدخل اسم المستخدم وكلمة المرور الآن حتى لا يتوقف الوصول. هذا الإجراء مطلووب فورًا بسبب خطأ في نظام المستشفى.\n\nرابط الدخول: {link}\n\nشكراً،\nفريق الدعم"
+        # Easy must stay generic, obvious, short, link-only, and contain visible errors.
+        templates = [
+            f"{greet},\n\nYour hospital account will be closed TODAY. Enter your username and password now to keep access. This is requiered immediatly for staff access.\n\nLogin page: {link}\n\nThank You,\nSupport Team",
+            f"{greet},\n\nFinal warning: your hospital login is not confirmed. Verfy your password NOW or your access will stop today.\n\nUpdate link: {link}\n\nRegards,\nHospital Alert Team",
+            f"{greet},\n\nWe found a problm with your staff account. Send your credential update through this page today or the account will close.\n\nSecure page: {link}\n\nSupport Desk",
+        ]
+        return templates[index % len(templates)]
+
+    if diff == "medium":
+        if is_ar:
+            if channel == "pdf":
+                return f"عزيزي/عزيزتي {medium_name}،\n\nيرجى مراجعة المرفق البسيط الخاص بـ {sc['topic']} من قسم {sc['dept']}. نحتاج تأكيد الإجراء خلال 48 ساعة حتى لا يتأخر سير العمل.\n\nمع التحية،\n{sig}"
+            if channel == "button":
+                return f"عزيزي/عزيزتي {medium_name}،\n\nيوجد تحديث مرتبط بـ {sc['topic']} في قسم {sc['dept']}. يرجى استخدام زر المراجعة لتأكيد الطلب خلال 48 ساعة.\n\n[مراجعة الطلب]({link})\n\nمع التحية،\n{sig}"
+            if channel == "calendar":
+                return f"عزيزي/عزيزتي {medium_name}،\n\nتمت إضافة متابعة مجدولة بخصوص {sc['topic']} لقسم {sc['dept']}. يرجى تأكيد الحالة خلال 48 ساعة.\n\nرابط المتابعة: {link}\n\nمع التحية،\n{sig}"
+            return f"عزيزي/عزيزتي {medium_name}،\n\nيرجى تحديث أو تأكيد البيانات المرتبطة بـ {sc['topic']} لقسم {sc['dept']} خلال 48 ساعة. هذا الإجراء يساعد على استمرار سير العمل.\n\nرابط المراجعة: {link}\n\nمع التحية،\n{sig}"
+        if channel == "pdf":
+            return f"Dear {medium_name},\n\nPlease review the attached summary for {sc['topic']} from {sc['dept']}. Confirmation is requested within 48 hours so the department workflow is not delayed.\n\nRegards,\n{sig}"
+        if channel == "button":
+            return f"Dear {medium_name},\n\nA department-level update is pending for {sc['topic']} in {sc['dept']}. Please use the review button to confirm the item within 48 hours.\n\n[Review Request]({link})\n\nRegards,\n{sig}"
+        if channel == "calendar":
+            return f"Dear {medium_name},\n\nA scheduled follow-up has been added for {sc['topic']} in {sc['dept']}. Please confirm or update your status within 48 hours so planning can continue.\n\nFollow-up page: {link}\n\nRegards,\n{sig}"
+        return f"Dear {medium_name},\n\nPlease confirm the pending update related to {sc['topic']} for {sc['dept']} within 48 hours. This helps the team keep the workflow current without delaying patient services.\n\nReview page: {link}\n\nRegards,\n{sig}"
+
+    # Advanced: all mandatory indicators from the framework.
+    if is_ar:
+        return f"عزيزي/عزيزتي {full_name}،\n\nضمن المراجعة التشغيلية الروتينية لقسم {sc['dept']}، يرجى الاطلاع على المستند الرسمي ({attach}) المتعلق بـ {sc['topic']}. يرتبط هذا الإجراء بمهمة يومية في وحدتكم ولا يتطلب إجراءً عاجلًا.\n\nيرجى استخدام زر المراجعة الداخلي من جهاز تابع للمستشفى، أو مسح رمز QR داخل شبكة المستشفى فقط: [QR: {sc['path']}]\n\nالمرجع: {ref}\nجهة الاتصال: {sig}\n\nمع التحية،\n{sig}"
+    return f"Dear {full_name},\n\nAs part of the routine operational review for {sc['dept']}, please review the official document ({attach}) related to {sc['topic']}. This item is linked to your daily role workflow and does not require urgent action.\n\nUse the internal review button from a hospital-managed device, or scan the QR code inside the hospital network only: [QR: {sc['path']}]\n\nReference: {ref}\nContact unit: {sig}\n\nSincerely,\n{sig}"
+
+def _analysis_v4(diff, sc, channel, link, attach, lang, body=""):
+    is_ar = lang == "Arabic"
+    # Analysis is tied to what was actually rendered: link/pdf/button/QR + scenario + difficulty.
+    has_pdf = bool(attach)
+    has_button = "[" in body and "](" in body
+    has_qr = "[QR" in body
+    has_link = bool(link) and link in body
+    if is_ar:
+        if diff == "easy":
+            return [
+                {"number":1,"title":"تحية عامة","description":"الرسالة تخاطب مجموعة عامة من الموظفين ولا تستخدم اسمًا أو لقبًا مهنيًا، وهذا يطابق المستوى السهل."},
+                {"number":2,"title":"رابط مكشوف وواضح التزوير","description":f"الرابط ظاهر داخل النص ويستخدم نطاقًا غير موثوق: {link}."},
+                {"number":3,"title":"طلب مباشر لكلمة المرور","description":"النص يطلب إدخال اسم المستخدم وكلمة المرور مباشرة، وهذا مؤشر تصيد واضح."},
+                {"number":4,"title":"إلحاح شديد","description":"التهديد بإغلاق الحساب اليوم يضغط على المستخدم للتصرف بسرعة."},
+                {"number":5,"title":"لا يوجد مرفق أو QR","description":"هذا مناسب للمستوى السهل؛ الخطر هنا ظاهر من الرابط والطلب المباشر وليس من عناصر متقدمة."},
+            ]
+        if diff == "medium":
+            tech_title = "مرفق PDF بسيط" if has_pdf else "زر مراجعة بسيط" if has_button else "رابط مشابه للرسمي" if has_link else "عنصر متابعة بسيط"
+            tech_desc = f"العنصر المستخدم هو {tech_title}، ولا يوجد QR لأن QR محصور بالمستوى الصعب."
+            return [
+                {"number":1,"title":"تخصيص مهني جزئي","description":"التحية تستخدم لقبًا صحيًا أو وظيفيًا مع الاسم الأول فقط، فتبدو واقعية دون أن تصل لتفصيل المستوى الصعب."},
+                {"number":2,"title":"سياق قسم محدد","description":f"الموضوع مرتبط بـ {sc['topic']} داخل {sc['dept']}، وهذا يجعله مناسبًا للدور الصحي."},
+                {"number":3,"title":"طلب غير مباشر","description":"الرسالة تطلب مراجعة أو تأكيدًا خلال سير العمل بدل طلب كلمة المرور صراحة."},
+                {"number":4,"title":tech_title,"description":tech_desc},
+                {"number":5,"title":"مهلة 48 ساعة","description":"الإلحاح متوسط ومهني، وليس تهديدًا واضحًا مثل المستوى السهل."},
+            ]
+        return [
+            {"number":1,"title":"اسم كامل ولقب وظيفي","description":"الرسالة تستخدم هوية مهنية كاملة مما يزيد المصداقية."},
+            {"number":2,"title":"مهمة يومية محددة","description":f"المحتوى مرتبط بـ {sc['topic']} داخل {sc['dept']} وليس طلبًا عامًا."},
+            {"number":3,"title":"مرفق رسمي مسمى","description":f"المرفق ({attach}) يبدو رسميًا ومحددًا."},
+            {"number":4,"title":"رمز QR إلزامي","description":"رمز QR يخفي الوجهة الحقيقية وهو مؤشر المستوى الصعب حسب الإطار."},
+            {"number":5,"title":"نبرة روتينية بلا تهديد","description":"الرسالة لا تستخدم تهديدًا مباشرًا، وهذا يجعلها أصعب في الاكتشاف."},
+        ]
+    if diff == "easy":
+        return [
+            {"number":1,"title":"Generic greeting","description":"The email addresses staff broadly instead of using a healthcare title or personal name, which matches the Easy level."},
+            {"number":2,"title":"Clearly fake visible URL","description":f"The link is shown directly in the message and uses an obviously suspicious domain: {link}."},
+            {"number":3,"title":"Direct credential request","description":"The body asks the user to enter or verify username/password details directly."},
+            {"number":4,"title":"Extreme urgency and threat","description":"The same-day account closure warning is designed to pressure fast action."},
+            {"number":5,"title":"No attachment or QR","description":"This stays within the Easy framework: the risk is obvious through the visible link and direct request, not an advanced technical element."},
+        ]
+    if diff == "medium":
+        tech_title = "Simple PDF attachment" if has_pdf else "Simple review button" if has_button else "Look-alike review link" if has_link else "Simple workflow element"
+        tech_desc = "The email uses exactly one moderate technical element and contains no QR code, keeping it within the Intermediate rules."
+        return [
+            {"number":1,"title":"Partial professional personalization","description":"The greeting uses a healthcare/work title and first name only, which is more believable than Easy but not as specific as Advanced."},
+            {"number":2,"title":"Department-level healthcare context","description":f"The request is connected to {sc['topic']} in {sc['dept']}, so it fits the selected role."},
+            {"number":3,"title":"Indirect request","description":"It asks for review, confirmation, or update rather than directly asking for a password."},
+            {"number":4,"title":tech_title,"description":tech_desc},
+            {"number":5,"title":"Moderate 48-hour urgency","description":"The deadline creates pressure without using the obvious threat style seen in Easy emails."},
+        ]
+    return [
+        {"number":1,"title":"Full professional identity","description":"The recipient is addressed with a full title/name, increasing credibility."},
+        {"number":2,"title":"Daily role-specific workflow","description":f"The message is tied to {sc['topic']} in {sc['dept']}, making it highly believable for the role."},
+        {"number":3,"title":"Named official attachment","description":f"The attachment ({attach}) appears formal and specific, matching the Advanced framework."},
+        {"number":4,"title":"Mandatory QR code","description":"The QR code hides the destination and is the exclusive marker of Advanced examples."},
+        {"number":5,"title":"Professional low-pressure tone","description":"The email avoids blunt threats and uses routine wording, making it harder to detect."},
+    ]
+
+def _make_email_v4(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    diff = _enhanced_diff(difficulty)
+    role_type, sc, sub, person = _pick_v3(role, index, assessment)
+    legit = not bool(is_phishing)
+    channel = _channel_v4(diff, sc, index, legit)
+    domain = _stable_domain_v4(diff, sc, channel, legit)
+    sender = sc.get("sender") or _SIGNATURE_BY_SCENARIO_V3[role_type][index % len(_SIGNATURE_BY_SCENARIO_V3[role_type])]
+    frm = f"{sender} <updates@{domain}>"
+    subject = _subject_v4(diff, sc, channel, language, legit)
+    link = _link_v4(diff, sc, channel, legit)
+    attach = _attachment_v4(diff, sc, channel, legit)
+    body = _body_v4(role_type, sc, sub, person, diff, channel, language, legit, index, link, attach)
+    is_ar = language == "Arabic"
+    if legit:
+        indicators = []
+        why = "This message is legitimate because it avoids credential requests, suspicious external pressure, and threat-based urgency." if not is_ar else "هذه الرسالة شرعية لأنها لا تطلب بيانات دخول ولا تستخدم ضغطًا أو تهديدًا مشبوهًا."
+        attack = "Legitimate Email" if not is_ar else "رسالة شرعية"
+    else:
+        indicators = _analysis_v4(diff, sc, channel, link, attach, language, body)
+        why = (f"This email is risky because it uses {diff} phishing indicators inside a healthcare workflow about {sc['topic']}." if not is_ar else f"هذه الرسالة خطرة لأنها تستخدم مؤشرات تصيد من مستوى {diff} داخل سياق صحي مرتبط بـ {sc['topic']}.")
+        attack = ({"easy":"Obvious Credential Harvesting", "medium":f"Intermediate {channel.title()} Phishing", "hard":"Advanced QR Phishing"}[diff] if not is_ar else {"easy":"تصيد واضح لبيانات الدخول", "medium":"تصيد متوسط", "hard":"تصيد متقدم عبر QR"}[diff])
+    suspicious_text = "" if legit else ({"easy":"username and password", "medium":"within 48 hours", "hard":"QR code"}[diff] if not is_ar else {"easy":"اسم المستخدم وكلمة المرور", "medium":"خلال 48 ساعة", "hard":"رمز QR"}[diff])
+    # suspicious_link must equal the exact URL in the body. For button, renderer will use it but not duplicate it.
+    suspicious_link = "" if (legit or diff == "hard" or channel == "pdf") else link
+    return {
+        "email_type": attack,
+        "attack_type": attack,
+        "risk_level": "Safe" if legit else ("Critical" if diff == "hard" else "High" if diff == "medium" else "Medium"),
+        "from": frm,
+        "to": person[1],
+        "subject": subject,
+        "attachment": attach,
+        "body": body,
+        "suspicious_text": suspicious_text,
+        "suspicious_link": suspicious_link,
+        "is_phishing": not legit,
+        "scenario_id": f"v4:{role_type}:{sc['sub']}:{sc['path']}:{diff}:{channel}:{index}",
+        "subrole": sc["sub"],
+        "indicators": indicators,
+        "why_risky": why,
+        "learning_tip": ("Check whether the request, sender, link, and technical element match the difficulty clues: Easy is obvious, Intermediate is semi-plausible, Advanced uses QR and formal documents." if not is_ar else "تحقق من الطلب والمرسل والرابط والعنصر التقني: السهل واضح، المتوسط شبه مقنع، والصعب يستخدم QR ومستندات رسمية."),
+    }
+
+def _validate_v4(result, role, difficulty, is_phishing=True):
+    if not isinstance(result, dict):
+        return False
+    diff = _enhanced_diff(difficulty)
+    body = str(result.get("body", ""))
+    txt = "\n".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
+    attach = str(result.get("attachment", "")).strip()
+    link = str(result.get("suspicious_link", "")).strip()
+    if is_phishing:
+        if diff == "easy":
+            if attach or "[QR" in txt or "](" in body or "[BUTTON" in body:
+                return False
+            if re.search(r"\b(Dr\.|Nurse|Pharm\.|Lab Specialist|Radiographer|Engineer|Analyst)\b", body):
+                return False
+            if "48 hours" in txt or "within 48" in txt:
+                return False
+            if not (link and link in body and link.startswith("http://")):
+                return False
+            if not re.search(r"password|username|credential", body, re.I):
+                return False
+        elif diff == "medium":
+            if "[QR" in txt:
+                return False
+            tech_count = int(bool(link)) + int("](" in body) + int(bool(attach))
+            # Button body also carries link; count it as button only.
+            if "](" in body and link:
+                tech_count -= 1
+            if tech_count != 1:
+                return False
+            if not re.search(r"48 hours|خلال 48", txt, re.I):
+                return False
+        else:
+            if not attach or "[QR" not in body:
+                return False
+            if re.search(r"closed TODAY|Act NOW|password now|will close today", txt, re.I):
+                return False
+    return True
+
+# Final v4 overrides used by trainee-facing pages.
+def generate_email(role, index, language, difficulty="medium"):
+    for offset in (0, 5, 11, 17):
+        result = _make_email_v4(role, index + offset, language, difficulty, True, assessment=False)
+        if _validate_v4(result, role, difficulty, True):
+            try: evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=True)
+            except Exception: pass
+            return result
+    return result
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    for offset in (0, 7, 13, 19):
+        result = _make_email_v4(role, index + offset, language, difficulty, bool(is_phishing), assessment=True)
+        if _validate_v4(result, role, difficulty, bool(is_phishing)):
+            try: evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=bool(is_phishing))
+            except Exception: pass
+            return result
+    return result
+
+def generate_other_email(index, language, difficulty):
+    return generate_email("Other", index, language, difficulty)
+
+def generate_other_assess_email(index, is_phishing, language, difficulty):
+    return generate_assess_email("Other", index, is_phishing, language, difficulty)
+
+# =============================================================
+# END SCENARIO ENGINE v4
+# =============================================================
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
