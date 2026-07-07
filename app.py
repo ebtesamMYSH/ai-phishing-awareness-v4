@@ -3037,6 +3037,9 @@ def page_home():
 .stButton>button:hover,.stButton>button:focus{{background:linear-gradient(90deg,#0B4FA8,#0284C7);color:white;border-color:#1EA7FF !important;}}
 .start-btn>button{{min-height:56px !important;background:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.65) !important;font-size:1.05rem !important;font-weight:900 !important;border-radius:14px !important;}}
 .start-btn>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border-color:#1EA7FF !important;}}
+div[data-baseweb="select"] *{color:#EAF4FF!important;}
+div[data-baseweb="select"] > div{background:rgba(15,23,42,.82)!important;border:1px solid rgba(37,99,235,.65)!important;border-radius:12px!important;}
+div[data-baseweb="popover"] *{color:#EAF4FF!important;}
 .stSelectbox>div>div,.stTextInput>div>div>input{{background-color:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.55) !important;border-radius:12px !important;min-height:48px;direction:{dir_attr};text-align:{text_align};}}
 div[data-baseweb="select"] span{{color:white !important;}}
 div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:{dir_attr} !important;}}
@@ -3240,7 +3243,7 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
                 "anthropic": "🟣 Claude  (claude-sonnet-4-6) — Best writing quality",
                 "gemini":    "🔵 Gemini  (1.5 Pro) — Fastest growing",
             }
-            cur_provider = st.session_state.get("ai_provider", "groq")
+            cur_provider = st.session_state.get("ai_provider", "openai")
             prov_cols = st.columns(2)
             prov_items = list(provider_options.items())
             for i, (pk, plbl) in enumerate(prov_items):
@@ -3324,8 +3327,10 @@ def page_learning():
         st.session_state["page"] = "phishing_caught"
         st.rerun()
 
-    if st.session_state.get("cache_version",0) < 13:
-        st.session_state["emails"]={}; st.session_state["cache_version"]=13
+    if st.session_state.get("cache_version",0) < 20:
+        st.session_state["emails"]={}
+        st.session_state.pop("assess_emails", None)
+        st.session_state["cache_version"]=20
 
     st.markdown(f"""<style>
 #MainMenu,header,footer{{visibility:hidden;}}
@@ -3340,7 +3345,7 @@ def page_learning():
 
     if idx not in st.session_state["emails"]:
         with st.spinner(t("🤖 Generating phishing example...","🤖 جارٍ توليد مثال التصيد...")):
-            st.session_state["emails"][idx] = generate_email(st.session_state["role"],idx,st.session_state["language"])
+            st.session_state["emails"][idx] = generate_email(st.session_state["role"], idx, st.session_state["language"], st.session_state.get("difficulty", "medium"))
             st.rerun()
 
     email = st.session_state["emails"].get(idx,{})
@@ -3447,7 +3452,7 @@ def page_assessment():
 
     if idx not in st.session_state["assess_emails"]:
         with st.spinner(ta("🤖 Generating scenario...","🤖 جارٍ توليد السيناريو...")):
-            st.session_state["assess_emails"][idx]=generate_assess_email(st.session_state["role"],idx,pattern[idx],st.session_state["language"])
+            st.session_state["assess_emails"][idx]=generate_assess_email(st.session_state["role"], idx, pattern[idx], st.session_state["language"], st.session_state.get("difficulty", "medium"))
             st.rerun()
 
     email=st.session_state["assess_emails"].get(idx,{})
@@ -3624,7 +3629,7 @@ def page_report():
                               "category_order_", "assess_category_order_", "used_topics_")):
                 st.session_state.pop(k, None)
         # تجديد الـ cache_version لإجبار النموذج على توليد محتوى جديد
-        st.session_state["cache_version"] = int(__import__("time").time()) % 99999
+        st.session_state["cache_version"] = int(__import__("time").time()) % 99999 + 20
         st.rerun()
 
 
@@ -3867,11 +3872,18 @@ button[kind="primary"]:hover{{
     box-shadow:none!important;
 }}
 .stTextInput div[data-baseweb="input"]{{
-    background:rgba(15,23,42,.5)!important;
-    border:1px solid rgba(255,255,255,.15)!important;
-    border-radius:8px!important;
-    box-shadow:none!important;
+    background:rgba(15,23,42,.70)!important;
+    border:1.5px solid rgba(37,99,235,.65)!important;
+    border-radius:12px!important;
+    box-shadow:0 0 0 1px rgba(30,167,255,.10)!important;
 }}
+.stTextInput div[data-baseweb="input"]:focus-within{{
+    border-color:#1EA7FF!important;
+    box-shadow:0 0 0 2px rgba(30,167,255,.18)!important;
+}}
+div[data-baseweb="select"] *{{color:#EAF4FF!important;}}
+div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border:1px solid rgba(37,99,235,.55)!important;}}
+.stSelectbox label{{color:#EAF4FF!important;}}
 </style>""", unsafe_allow_html=True)
 
     def _div(content, extra=""):
@@ -3919,7 +3931,7 @@ button[kind="primary"]:hover{{
 
     tab1, tab2, tab3, tab4 = st.tabs([T('tab_provider'), T('tab_score'), T('tab_manual'), "🐞 Debug Log"])
 
-    _persist_pk = load_persistent_provider("groq")
+    _persist_pk = st.session_state.get("ai_provider", load_persistent_provider("openai"))
     _persist_labels = {
         "groq":      "🟠 Groq (LLaMA 3.3-70b)",
         "anthropic": "🟣 Claude (claude-sonnet-4-6)",
@@ -3947,7 +3959,7 @@ button[kind="primary"]:hover{{
             "gemini":    {"label": "🔵 Gemini — 2.5 Flash",          "secret": "GEMINI_API_KEY",    "color": "#3B82F6"},
         }
 
-        cur = st.session_state.get("ai_provider", "groq")
+        cur = st.session_state.get("ai_provider", "openai")
 
         st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("select_provider")}</div>', unsafe_allow_html=True)
         cols = st.columns(4)
@@ -3965,7 +3977,7 @@ button[kind="primary"]:hover{{
                         # Clear cached emails to regenerate with new provider
                         st.session_state["emails"] = {}
                         st.session_state.pop("assess_emails", None)
-                        st.session_state["cache_version"] = int(__import__("time").time()) % 99999
+                        st.session_state["cache_version"] = int(__import__("time").time()) % 99999 + 20
                         st.rerun()
                 else:
                     st.button(T('active'), key=f"adm_prov_{pk}_disabled", use_container_width=True, disabled=True)
@@ -4033,7 +4045,7 @@ button[kind="primary"]:hover{{
         if st.button(T('clear_cache'), use_container_width=True):
             st.session_state["emails"] = {}
             st.session_state.pop("assess_emails", None)
-            st.session_state["cache_version"] = int(__import__("time").time()) % 99999
+            st.session_state["cache_version"] = int(__import__("time").time()) % 99999 + 20
             st.success(T('cache_cleared'))
             st.rerun()
 
