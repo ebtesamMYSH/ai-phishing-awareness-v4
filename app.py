@@ -8300,6 +8300,290 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
 # END SCENARIO ENGINE v4
 # =============================================================
 
+
+
+# =============================================================
+# SCENARIO CONTENT ENGINE v5 — Real 300 Topic Knowledge Base
+# -------------------------------------------------------------
+# This patch replaces the small v4 scenario pool with the full
+# 300 Scenario Cards already defined in SCENARIO_LIBRARY.
+# It keeps the existing UI and assessment flow unchanged.
+# Key fix: Easy/Beginner no longer collapses into one generic
+# "staff account/password" template. It is still Easy per the
+# framework, but the subject/body now revolve around the selected
+# healthcare scenario topic.
+# =============================================================
+
+_V5_DEPT_BY_SUBROLE = {
+    "Doctor": "Medical Affairs",
+    "Nurse": "Nursing Affairs",
+    "Pharmacist": "Pharmacy Services",
+    "Laboratory Specialist": "Laboratory Services",
+    "Radiology Technician": "Radiology Services",
+    "HR Officer": "Human Resources",
+    "Medical Secretary": "Medical Administration",
+    "Insurance Coordinator": "Insurance Office",
+    "Procurement Officer": "Procurement Department",
+    "Finance Officer": "Finance Department",
+    "IT Support Engineer": "IT Helpdesk",
+    "Network Engineer": "Network Operations",
+    "Cybersecurity Analyst": "Cybersecurity Office",
+    "Systems Administrator": "Systems Administration",
+    "Clinical Informatics Specialist": "Clinical Informatics",
+}
+
+_V5_CHANNELS_BY_TOPIC = {
+    "clinical": ["link", "pdf", "button", "calendar"],
+    "admin": ["link", "pdf", "button", "reply"],
+    "it": ["link", "button", "pdf", "ticket"],
+}
+
+_V5_PERSON_BY_SUBROLE = {
+    "Doctor": [("Dr. Ahmed Alotaibi", "dr.ahmed.alotaibi@hospital.org"), ("Dr. Yousef Alghamdi", "dr.yousef.alghamdi@hospital.org"), ("Dr. Sara Almutairi", "dr.sara.almutairi@hospital.org")],
+    "Nurse": [("Nurse Reem Alzahrani", "n.reem.alzahrani@hospital.org"), ("Nurse Noura Alshamri", "n.noura.alshamri@hospital.org"), ("Nurse Maha Alsubaie", "n.maha.alsubaie@hospital.org")],
+    "Pharmacist": [("Pharm. Khalid Alqahtani", "ph.khalid.alqahtani@hospital.org"), ("Pharm. Sara Almutairi", "ph.sara.almutairi@hospital.org"), ("Pharm. Ziad Alharbi", "ph.ziad.alharbi@hospital.org")],
+    "Laboratory Specialist": [("Lab Specialist Maha Alsubaie", "lab.maha.alsubaie@hospital.org"), ("Lab Specialist Faisal Alzahrani", "lab.faisal.alzahrani@hospital.org")],
+    "Radiology Technician": [("Radiographer Faisal Alzahrani", "rad.faisal.alzahrani@hospital.org"), ("Radiology Tech Reem Alzahrani", "rad.reem.alzahrani@hospital.org")],
+    "default": [("Ahmed Alotaibi", "a.ahmed.alotaibi@hospital.org"), ("Maha Alsubaie", "a.maha.alsubaie@hospital.org"), ("Khalid Alqahtani", "a.khalid.alqahtani@hospital.org")],
+}
+
+_V5_AR_LABELS = {
+    "Doctor": "دكتور", "Nurse": "ممرضة", "Pharmacist": "صيدلي", "Laboratory Specialist": "أخصائي مختبر", "Radiology Technician": "فني أشعة",
+    "HR Officer": "موظف موارد بشرية", "Medical Secretary": "سكرتير طبي", "Insurance Coordinator": "منسق تأمين", "Procurement Officer": "موظف مشتريات", "Finance Officer": "موظف مالية",
+    "IT Support Engineer": "مهندس دعم تقني", "Network Engineer": "مهندس شبكات", "Cybersecurity Analyst": "محلل أمن سيبراني", "Systems Administrator": "مسؤول أنظمة", "Clinical Informatics Specialist": "أخصائي معلوماتية صحية"
+}
+
+def _v5_slug(text):
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", str(text).lower()).strip("-")
+    s = re.sub(r"-+", "-", s)
+    return (s[:42] or "hospital-task").strip("-")
+
+def _v5_pick_full_card(role, index, assessment=False):
+    role_type0 = _enhanced_role_type(role)
+    if role_type0 == "other":
+        role_type = ["clinical", "admin", "it"][(index + (2 if assessment else 0)) % 3]
+    else:
+        role_type = role_type0
+    cards = SCENARIO_LIBRARY.get(role_type, SCENARIO_LIBRARY["clinical"])
+    # Use a prime stride to cover all 100 before repeating.
+    pos = ((index * 17) + (31 if assessment else 0)) % len(cards)
+    base = cards[pos]
+    sub = base.get("sub_role", "Staff")
+    dept = _V5_DEPT_BY_SUBROLE.get(sub, base.get("sender", "Hospital Department"))
+    topic = base.get("scenario", "hospital workflow review")
+    path = _v5_slug(topic)
+    attach = re.sub(r"[^A-Za-z0-9]+", "_", topic.title()).strip("_")[:36] + "_Summary.pdf"
+    channels = list(_V5_CHANNELS_BY_TOPIC.get(role_type, ["link", "pdf", "button"]))
+    sc = {
+        "sub": sub,
+        "topic": topic,
+        "dept": dept,
+        "sender": base.get("sender") or dept,
+        "task": base.get("action") or f"review {topic}",
+        "path": path,
+        "channels": channels,
+        "attach": attach,
+        "source_id": base.get("id", "SC")
+    }
+    people = _V5_PERSON_BY_SUBROLE.get(sub, _V5_PERSON_BY_SUBROLE["default"])
+    person = people[(index + len(topic)) % len(people)]
+    return role_type, sc, sub, person
+
+def _v5_domain(diff, sc, channel="link", legit=False):
+    if legit:
+        return "hospital.org"
+    slug = _v5_slug(sc.get("topic", sc.get("path", "task"))).replace("-", "")[:22]
+    if diff == "easy":
+        variants = [
+            f"fake-{slug}-login.com",
+            f"urgent-{slug}-access.info",
+            f"hospital-{slug}-alert.com",
+            f"verify-{slug}-today.net",
+        ]
+    elif diff == "medium":
+        variants = [
+            f"hospital-{slug}-review.net",
+            f"{slug}-hospital-support.org",
+            f"hospital-workflow-{slug}.net",
+            f"dept-{slug}-hospital.org",
+        ]
+    else:
+        variants = [
+            f"kfmc-{slug}.org.sa",
+            f"mohservices-{slug}.org.sa",
+            f"hospitaldept-{slug}.org.sa",
+        ]
+    return variants[(len(slug) + len(channel) + len(sc.get("sender", ""))) % len(variants)]
+
+def _v5_link(diff, sc, channel, legit=False):
+    if legit or diff == "hard" or channel in ("pdf", "reply"):
+        return ""
+    return f"http://{_v5_domain(diff, sc, channel, False)}/{sc['path']}"
+
+def _v5_subject(diff, sc, channel, lang, legit=False):
+    is_ar = lang == "Arabic"
+    topic_en = str(sc["topic"]).title()
+    dept = sc["dept"]
+    if legit:
+        return f"Internal Notice: {topic_en}" if not is_ar else f"إشعار داخلي: {sc['topic']}"
+    if is_ar:
+        if diff == "easy":
+            opts = [
+                f"تحذير عاجل: تعطل وصول {sc['topic']}",
+                f"تأكيد فوري مطلوب: {sc['topic']}",
+                f"إغلاق وصول المستشفى اليوم: {sc['topic']}",
+                f"تنبيه نهائي: صفحة {dept}",
+            ]
+        elif diff == "medium":
+            opts = [f"مراجعة مطلوبة: {sc['topic']}", f"متابعة {dept} خلال 48 ساعة", f"تحديث قسم {dept}: {sc['topic']}"]
+        else:
+            opts = [f"إجراء روتيني: {sc['topic']}", f"مراجعة رسمية لقسم {dept}", f"تأكيد مستند داخلي: {sc['topic']}"]
+        return opts[(len(sc['topic']) + len(channel)) % len(opts)]
+    if diff == "easy":
+        opts = [
+            f"URGENT: {topic_en} Access Will Stop Today",
+            f"Immediate Verification Required: {topic_en}",
+            f"Final Warning: Hospital {topic_en} Page",
+            f"Action Required Today: {dept} Access",
+        ]
+    elif diff == "medium":
+        opts = [f"{topic_en} Review", f"{dept} Follow-Up Required", f"Pending {topic_en} Confirmation", f"48-Hour {dept} Update"]
+    else:
+        opts = [f"Routine {topic_en} Confirmation", f"Official {dept} Workflow Review", f"Quarterly {dept} Document Check"]
+    return opts[(len(sc['topic']) + len(channel)) % len(opts)]
+
+def _v5_body(role_type, sc, sub, person, diff, channel, lang, legit=False, index=0, link="", attach=""):
+    is_ar = lang == "Arabic"
+    name, _email = person
+    sig = sc.get("sender") or sc.get("dept") or "Hospital Department"
+    topic = sc.get("topic", "hospital workflow")
+    dept = sc.get("dept", "Hospital Department")
+    medium_name = _medium_display_name_v3(name)
+    ref = f"HSP-{202600 + index * 37}"
+
+    if legit:
+        if is_ar:
+            return f"عزيزي/عزيزتي {medium_name}،\n\nهذا إشعار داخلي آمن من {dept} بخصوص {topic}. لا يطلب كلمة مرور، ولا يتضمن تهديدًا، ويمكن التحقق منه عبر أنظمة المستشفى الرسمية.\n\nمع التحية،\n{sig}"
+        return f"Dear {medium_name},\n\nThis is a scheduled internal notice from {dept} about {topic}. It does not ask for a password, does not threaten account closure, and can be verified through official hospital systems.\n\nRegards,\n{sig}"
+
+    if diff == "easy":
+        greet = random.choice(_GENERIC_GREETINGS_V3[lang])
+        if is_ar:
+            templates = [
+                f"{greet}،\n\nصفحة المستشفى الخاصة بـ {topic} ستتوقف اليوم. أدخل اسم المستخدم وكلمة المرور الآن حتى لا يتم إيقاف الوصول. هذا الإجراء مطلووب فورًا بسبب خطأ في نظام المستشفى.\n\nرابط الدخول: {link}\n\nفريق دعم المستشفى",
+                f"{greet}،\n\nتم العثور على مشكله في وصول المستشفى المرتبط بـ {topic}. أرسل بيانات الدخول الآن أو سيتم إغلاق الصفحة اليوم.\n\nصفحة التحديث: {link}\n\nمكتب الدعم",
+                f"{greet}،\n\nتحذير نهائي: لم يتم تأكيد حسابك لصفحة {topic}. أكّد كلمة المرور فورًا حتى لا يتوقف الوصول اليوم.\n\nالرابط: {link}\n\nفريق تنبيه المستشفى",
+            ]
+            return templates[index % len(templates)]
+        templates = [
+            f"{greet},\n\nThe hospital page for {topic} will stop TODAY. Enter your username and password now to keep access. This is requiered immediatly for staff access.\n\nLogin page: {link}\n\nThank You,\nHospital Support Team",
+            f"{greet},\n\nWe found a problm with the hospital access page for {topic}. Send your credential update through this page today or the access will close.\n\nSecure page: {link}\n\nSupport Desk",
+            f"{greet},\n\nFinal warning: your access to {topic} is not confirmed. Verfy your password NOW or the hospital page will stop today.\n\nUpdate link: {link}\n\nRegards,\nHospital Alert Team",
+            f"{greet},\n\nThe {dept} page for {topic} needs immediat action. Enter username and password to avoid same-day access closure.\n\nAccess page: {link}\n\nHospital Support Desk",
+        ]
+        return templates[index % len(templates)]
+
+    if diff == "medium":
+        if is_ar:
+            if channel == "pdf":
+                return f"عزيزي/عزيزتي {medium_name}،\n\nيرجى مراجعة المرفق البسيط الخاص بـ {topic} من قسم {dept}. نحتاج تأكيد الحالة خلال 48 ساعة حتى لا يتأخر سير العمل.\n\nمع التحية،\n{sig}"
+            if channel == "button":
+                return f"عزيزي/عزيزتي {medium_name}،\n\nيوجد تحديث مرتبط بـ {topic} في قسم {dept}. يرجى استخدام زر المراجعة لتأكيد الطلب خلال 48 ساعة.\n\n[مراجعة الطلب]({link})\n\nمع التحية،\n{sig}"
+            if channel == "reply":
+                return f"عزيزي/عزيزتي {medium_name}،\n\nيرجى الرد على هذه الرسالة لتأكيد حالة {topic} لقسم {dept} خلال 48 ساعة. لا ترسل كلمة مرور؛ نحتاج فقط تأكيدًا تشغيليًا.\n\nمع التحية،\n{sig}"
+            return f"عزيزي/عزيزتي {medium_name}،\n\nيرجى تأكيد البيانات المرتبطة بـ {topic} لقسم {dept} خلال 48 ساعة. هذا الإجراء يساعد على استمرار سير العمل.\n\nرابط المراجعة: {link}\n\nمع التحية،\n{sig}"
+        if channel == "pdf":
+            return f"Dear {medium_name},\n\nPlease review the attached summary for {topic} from {dept}. Confirmation is requested within 48 hours so the department workflow is not delayed.\n\nRegards,\n{sig}"
+        if channel == "button":
+            return f"Dear {medium_name},\n\nA department-level update is pending for {topic} in {dept}. Please use the review button to confirm the item within 48 hours.\n\n[Review Request]({link})\n\nRegards,\n{sig}"
+        if channel == "reply":
+            return f"Dear {medium_name},\n\nPlease reply to confirm the status of {topic} for {dept} within 48 hours. Do not send a password; only an operational confirmation is required.\n\nRegards,\n{sig}"
+        return f"Dear {medium_name},\n\nPlease confirm the pending update related to {topic} for {dept} within 48 hours. This helps the team keep the workflow current without delaying patient services.\n\nReview page: {link}\n\nRegards,\n{sig}"
+
+    # Advanced
+    if is_ar:
+        return f"عزيزي/عزيزتي {name}،\n\nضمن المراجعة التشغيلية الروتينية لقسم {dept}، يرجى الاطلاع على المستند الرسمي ({attach}) المتعلق بـ {topic}. يرتبط هذا الإجراء بمهمة يومية في وحدتكم ولا يتطلب إجراءً عاجلًا.\n\nيرجى استخدام زر المراجعة الداخلي من جهاز تابع للمستشفى، أو مسح رمز QR داخل شبكة المستشفى فقط: [QR: {sc['path']}]\n\nالمرجع: {ref}\nجهة الاتصال: {sig}\n\nمع التحية،\n{sig}"
+    return f"Dear {name},\n\nAs part of the routine operational review for {dept}, please review the official document ({attach}) related to {topic}. This item is linked to your daily role workflow and does not require urgent action.\n\nUse the internal review button from a hospital-managed device, or scan the QR code inside the hospital network only: [QR: {sc['path']}]\n\nReference: {ref}\nContact unit: {sig}\n\nSincerely,\n{sig}"
+
+def _v5_channel(diff, sc, index, legit=False):
+    if diff == "easy":
+        return "link"
+    if diff == "hard":
+        return "qr_official"
+    channels = sc.get("channels") or ["link", "pdf", "button", "reply"]
+    return channels[index % len(channels)]
+
+def _make_email_v5(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    diff = _enhanced_diff(difficulty)
+    role_type, sc, sub, person = _v5_pick_full_card(role, index, assessment)
+    legit = not bool(is_phishing)
+    channel = _v5_channel(diff, sc, index, legit)
+    domain = _v5_domain(diff, sc, channel, legit)
+    sender = sc.get("sender") or sc.get("dept") or "Hospital Department"
+    frm = f"{sender} <updates@{domain}>"
+    subject = _v5_subject(diff, sc, channel, language, legit)
+    link = _v5_link(diff, sc, channel, legit)
+    attach = _attachment_v4(diff, sc, channel, legit)
+    if diff != "easy" and attach:
+        attach = sc.get("attach") if diff == "medium" else "Official_" + sc.get("attach", "Protocol_Update.pdf")
+    body = _v5_body(role_type, sc, sub, person, diff, channel, language, legit, index, link, attach)
+    is_ar = language == "Arabic"
+    if legit:
+        indicators = []
+        why = "This message is legitimate because it avoids credential requests, suspicious external pressure, and threat-based urgency." if not is_ar else "هذه الرسالة شرعية لأنها لا تطلب بيانات دخول ولا تستخدم ضغطًا أو تهديدًا مشبوهًا."
+        attack = "Legitimate Email" if not is_ar else "رسالة شرعية"
+    else:
+        indicators = _analysis_v4(diff, sc, channel, link, attach, language, body)
+        why = (f"This email is risky because it uses {diff} phishing indicators inside a healthcare workflow about {sc['topic']}." if not is_ar else f"هذه الرسالة خطرة لأنها تستخدم مؤشرات تصيد من مستوى {diff} داخل سياق صحي مرتبط بـ {sc['topic']}.")
+        attack = ({"easy":"Obvious Credential Harvesting", "medium":f"Intermediate {channel.title()} Phishing", "hard":"Advanced QR Phishing"}[diff] if not is_ar else {"easy":"تصيد واضح لبيانات الدخول", "medium":"تصيد متوسط", "hard":"تصيد متقدم عبر QR"}[diff])
+    suspicious_text = "" if legit else ({"easy":"username and password", "medium":"within 48 hours", "hard":"QR code"}[diff] if not is_ar else {"easy":"اسم المستخدم وكلمة المرور", "medium":"خلال 48 ساعة", "hard":"رمز QR"}[diff])
+    suspicious_link = "" if (legit or diff == "hard" or channel in ("pdf", "reply")) else link
+    return {
+        "email_type": attack,
+        "attack_type": attack,
+        "risk_level": "Safe" if legit else ("Critical" if diff == "hard" else "High" if diff == "medium" else "Medium"),
+        "from": frm,
+        "to": person[1],
+        "subject": subject,
+        "attachment": attach,
+        "body": body,
+        "suspicious_text": suspicious_text,
+        "suspicious_link": suspicious_link,
+        "is_phishing": not legit,
+        "scenario_id": f"v5:{role_type}:{sc.get('source_id')}:{sc['sub']}:{sc['path']}:{diff}:{channel}:{index}",
+        "subrole": sc["sub"],
+        "indicators": indicators,
+        "why_risky": why,
+        "learning_tip": ("Focus on whether the message matches the scenario and difficulty: Easy is obvious, Intermediate is semi-plausible, and Advanced hides risk in formal workflow." if not is_ar else "ركز على توافق الرسالة مع السيناريو ومستوى الصعوبة: السهل واضح، المتوسط شبه مقنع، والصعب يخفي الخطر داخل سير عمل رسمي."),
+    }
+
+def generate_email(role, index, language, difficulty="medium"):
+    for offset in (0, 17, 29, 43):
+        result = _make_email_v5(role, index + offset, language, difficulty, True, assessment=False)
+        if _validate_v4(result, role, difficulty, True):
+            try: evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=True)
+            except Exception: pass
+            return result
+    return result
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    for offset in (0, 19, 37, 53):
+        result = _make_email_v5(role, index + offset, language, difficulty, bool(is_phishing), assessment=True)
+        if _validate_v4(result, role, difficulty, bool(is_phishing)):
+            try: evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=bool(is_phishing))
+            except Exception: pass
+            return result
+    return result
+
+def generate_other_email(index, language, difficulty):
+    return generate_email("Other", index, language, difficulty)
+
+def generate_other_assess_email(index, is_phishing, language, difficulty):
+    return generate_assess_email("Other", index, is_phishing, language, difficulty)
+
+# =============================================================
+# END SCENARIO CONTENT ENGINE v5
+# =============================================================
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
