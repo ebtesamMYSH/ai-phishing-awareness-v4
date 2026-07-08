@@ -1804,6 +1804,204 @@ def get_role_unbounded_context(role_type, is_ar=False):
         "other": "General Saudi hospital employee. Freely choose a fresh logical department each time: clinical, administrative, technical, operational, or support.",
     }.get(role_type, "Saudi hospital employee.")
 
+
+# =============================================================
+# HEALTHCARE SCENARIO LIBRARY (300 Scenario Cards)
+# -------------------------------------------------------------
+# These are NOT email templates. They are compact content directions.
+# The AI still writes the full email, analysis and assessment text via API,
+# but it no longer invents the core idea from nothing. This prevents repeated
+# "password/account" emails and keeps the content healthcare-relevant.
+# =============================================================
+def _make_cards(role_type, groups):
+    cards = []
+    counter = 1
+    prefix = {"clinical": "CL", "admin": "AD", "it": "IT"}[role_type]
+    for sub_role, sender, system, topics in groups:
+        for topic in topics:
+            cards.append({
+                "id": f"{prefix}_{counter:03d}",
+                "role_type": role_type,
+                "sub_role": sub_role,
+                "sender": sender,
+                "system": system,
+                "scenario": topic,
+                "action": random.choice([
+                    "review the notice", "confirm the update", "open the referenced workflow",
+                    "acknowledge the task", "check the attached or linked information"
+                ]),
+                "attack_options": ["credential_harvesting", "fake_portal", "malicious_pdf", "button_link", "qr_phishing"],
+            })
+            counter += 1
+    return cards[:100]
+
+_CLINICAL_GROUPS = [
+    ("Doctor", "Medical Affairs Office", "EMR", [
+        "OPD clinic schedule revision", "surgery list confirmation", "ICU rounds handover", "consultant on-call roster",
+        "clinical privileges renewal", "resident evaluation review", "Morbidity and Mortality meeting note", "multidisciplinary team meeting invite",
+        "telemedicine appointment queue", "patient transfer approval", "operative note completion", "discharge summary backlog",
+        "antibiotic stewardship review", "clinical trial screening list", "CME credit confirmation", "BLS recertification reminder",
+        "patient safety event review", "medication interaction alert", "urgent referral acceptance", "outpatient referral triage"
+    ]),
+    ("Nurse", "Nursing Affairs", "Nursing Portal", [
+        "shift handover checklist", "ward staffing adjustment", "medication round checklist", "patient fall incident report",
+        "pressure injury audit", "infection-control competency", "isolation room assignment", "bedside handover update",
+        "nursing documentation correction", "CPR renewal schedule", "float pool assignment", "vaccination campaign roster",
+        "uniform policy acknowledgement", "smart infusion pump update", "patient wristband verification", "ICU bed assignment",
+        "charge nurse monthly report", "controlled medication witness log", "new admission task list", "nurse annual appraisal"
+    ]),
+    ("Pharmacist", "Pharmacy Safety Unit", "Pharmacy System", [
+        "medication recall notice", "controlled drug inventory count", "Pyxis cabinet synchronization", "LASA medication alert",
+        "vaccine cold-chain report", "formulary update approval", "antibiotic restriction request", "expired medication disposal",
+        "IV preparation worksheet", "chemotherapy order verification", "ADR report follow-up", "medication reconciliation queue",
+        "narcotic discrepancy review", "pharmacy rotation schedule", "drug shortage substitution", "clinical pharmacy note review",
+        "high-alert medication policy", "prescription verification backlog", "outpatient refill exception", "ward stock adjustment"
+    ]),
+    ("Laboratory Specialist", "Laboratory Services", "LIS", [
+        "critical value confirmation", "specimen rejection notice", "blood bank inventory check", "analyzer maintenance schedule",
+        "microbiology culture report", "hematology QC review", "chemistry calibration update", "phlebotomy roster change",
+        "sample recollection request", "lab accreditation checklist", "point-of-care testing update", "crossmatch verification",
+        "pathology report correction", "reference lab send-out", "lab result release delay", "reagent lot verification",
+        "blood component traceability", "STAT sample queue", "laboratory incident form", "LIS downtime procedure"
+    ]),
+    ("Radiology Technician", "Radiology Administration", "PACS", [
+        "PACS image review", "CT protocol update", "MRI safety checklist", "ultrasound appointment queue",
+        "radiology report addendum", "contrast media policy", "portable X-ray schedule", "interventional radiology list",
+        "radiation badge reading", "DICOM viewer update", "critical imaging result alert", "radiology equipment maintenance",
+        "patient preparation instruction", "after-hours imaging roster", "mammography audit", "fluoroscopy dose report",
+        "radiology peer review", "PACS storage notice", "contrast allergy documentation", "ER imaging workflow"
+    ]),
+]
+
+_ADMIN_GROUPS = [
+    ("HR Officer", "Human Resources", "HR Portal", [
+        "annual leave balance review", "payroll correction form", "attendance exception request", "staff evaluation cycle",
+        "mandatory training enrollment", "new employee onboarding", "contract renewal acknowledgement", "housing allowance update",
+        "transportation allowance confirmation", "staff survey invitation", "disciplinary policy acknowledgement", "promotion eligibility review",
+        "credential file completion", "overtime approval", "shift allowance verification", "employee data update",
+        "vacation carryover request", "performance improvement plan", "ID badge renewal", "employee benefits window"
+    ]),
+    ("Medical Secretary", "Medical Administration", "Scheduling System", [
+        "clinic appointment reschedule", "consultant meeting agenda", "patient file indexing", "medical report release",
+        "doctor office coverage", "referral letter queue", "department minutes approval", "patient complaint follow-up",
+        "committee attendance sheet", "clinic template adjustment", "physician roster update", "outpatient slot release",
+        "VIP patient coordination", "call center escalation", "medical certificate request", "appointment reminder batch",
+        "doctor signature pending", "department circular", "clinic cancellation notice", "patient correspondence review"
+    ]),
+    ("Insurance Coordinator", "Insurance Office", "Claims Portal", [
+        "insurance pre-authorization", "claim rejection review", "coverage update request", "reimbursement file audit",
+        "payer portal migration", "medical necessity form", "policy number correction", "eligibility verification batch",
+        "approval extension request", "denied claim appeal", "TPA document request", "co-payment exception",
+        "insurance contract update", "patient guarantee letter", "case management review", "billing code correction",
+        "authorization expiry notice", "payer meeting invite", "claim attachment upload", "utilization review list"
+    ]),
+    ("Procurement Officer", "Procurement Department", "Procurement Portal", [
+        "vendor invoice approval", "medical equipment quotation", "supplier contract renewal", "purchase order confirmation",
+        "tender committee schedule", "delivery note mismatch", "warehouse stock request", "vendor registration update",
+        "maintenance contract review", "urgent device replacement", "consumables shortage notice", "capital equipment approval",
+        "service level agreement", "supplier bank details", "contract variation order", "purchase requisition queue",
+        "vendor compliance declaration", "price comparison sheet", "procurement policy update", "delivery appointment booking"
+    ]),
+    ("Finance Officer", "Finance Department", "Finance System", [
+        "budget variance review", "expense reimbursement", "petty cash reconciliation", "month-end closing task",
+        "audit evidence request", "invoice payment batch", "vendor payment schedule", "department budget transfer",
+        "VAT certificate upload", "financial delegation update", "bank guarantee notice", "cashier report review",
+        "cost center correction", "asset capitalization form", "revenue report adjustment", "finance committee minutes",
+        "payment approval workflow", "fund request tracking", "payroll journal review", "accounts payable aging"
+    ]),
+]
+
+_IT_GROUPS = [
+    ("IT Support Engineer", "IT Helpdesk", "Service Desk", [
+        "password expiry notice", "MFA enrollment", "VPN access renewal", "Outlook mailbox quota",
+        "Teams meeting policy", "printer queue maintenance", "laptop compliance check", "remote support ticket",
+        "software license renewal", "device registration", "email quarantine review", "shared drive access",
+        "helpdesk ticket closure", "asset tag verification", "Windows update schedule", "browser certificate prompt",
+        "mobile device management", "endpoint encryption check", "staff portal login", "IT satisfaction survey"
+    ]),
+    ("Network Engineer", "Network Operations", "Network Portal", [
+        "firewall policy review", "WiFi controller upgrade", "switch maintenance window", "VPN gateway certificate",
+        "network access request", "guest WiFi policy", "WAN failover test", "IP address conflict",
+        "data center cabling plan", "NAC re-authentication", "DNS record update", "load balancer change",
+        "internet bandwidth report", "site-to-site VPN tunnel", "network monitoring alert", "DHCP scope update",
+        "wireless survey schedule", "router firmware notice", "network segmentation task", "VoIP extension migration"
+    ]),
+    ("Cybersecurity Analyst", "Cybersecurity Office", "Security Portal", [
+        "phishing simulation notice", "security awareness quiz", "EDR alert review", "SIEM case assignment",
+        "privileged access review", "vulnerability scan report", "patch compliance exception", "incident response drill",
+        "USB control policy", "suspicious login alert", "security baseline update", "threat intelligence bulletin",
+        "data loss prevention alert", "account lockout trend", "red team exercise", "security questionnaire",
+        "certificate trust update", "ransomware readiness checklist", "MFA bypass review", "SOC escalation"
+    ]),
+    ("Systems Administrator", "Systems Team", "Infrastructure Portal", [
+        "Active Directory password policy", "server maintenance window", "backup job failure", "database restore test",
+        "virtual machine snapshot", "storage quota warning", "SSL certificate renewal", "domain controller health",
+        "file server permission", "cloud backup registration", "application server restart", "database account review",
+        "patch Tuesday reboot", "service account expiry", "monitoring agent update", "disaster recovery plan",
+        "system log archive", "Windows server license", "intranet portal migration", "scheduled downtime notice"
+    ]),
+    ("Clinical Informatics Specialist", "Health Informatics", "HIS/EMR", [
+        "EMR downtime notice", "PACS integration check", "LIS interface update", "HIS user acceptance test",
+        "clinical order set update", "barcode medication administration", "e-prescribing workflow", "patient portal configuration",
+        "single sign-on rollout", "clinic template in HIS", "nursing documentation form", "radiology interface queue",
+        "lab result mapping", "appointment system sync", "clinical dashboard access", "ICD coding update",
+        "HL7 message error", "bed management system", "telehealth platform update", "EMR training session"
+    ]),
+]
+
+SCENARIO_LIBRARY = {
+    "clinical": _make_cards("clinical", _CLINICAL_GROUPS),
+    "admin": _make_cards("admin", _ADMIN_GROUPS),
+    "it": _make_cards("it", _IT_GROUPS),
+}
+
+_ATTACK_BY_DIFFICULTY = {
+    "easy": ["credential_harvesting", "fake_login_portal", "urgent_account_closure"],
+    "medium": ["lookalike_portal", "simple_pdf", "simple_button", "external_review_link"],
+    "hard": ["qr_phishing", "official_attachment", "professional_button", "workflow_confirmation"],
+}
+
+def select_scenario_card(role_type, index, phase="learn"):
+    """Pick a scenario card from the 300-card library without repeating the same card order.
+    Other is a deliberate mix of clinical/admin/it, as requested.
+    """
+    if role_type == "other":
+        mix_roles = ["clinical", "admin", "it"]
+        role_type = mix_roles[index % len(mix_roles)]
+    cards = SCENARIO_LIBRARY.get(role_type, SCENARIO_LIBRARY["clinical"])
+    order_key = f"scenario_card_order_{phase}_{role_type}"
+    order = get_session_random_order(len(cards), order_key)
+    return cards[order[index % len(order)]]
+
+def scenario_card_to_prompt(card, difficulty, is_ar=False):
+    attack_pool = _ATTACK_BY_DIFFICULTY.get(difficulty, _ATTACK_BY_DIFFICULTY["medium"])
+    attack = attack_pool[abs(hash(card["id"] + difficulty)) % len(attack_pool)]
+    if is_ar:
+        return f"""
+بطاقة السيناريو المعتمدة — يجب الالتزام بها وعدم استبدالها:
+- رقم السيناريو: {card['id']}
+- النوع الرئيسي: {card['role_type']}
+- الدور الداخلي: {card['sub_role']}
+- الفكرة/المهمة: {card['scenario']}
+- الجهة/المرسل المنطقي: {card['sender']}
+- النظام أو الإجراء الداخلي: {card['system']}
+- الإجراء المطلوب: {card['action']}
+- نوع الهجوم المناسب لهذا المستوى: {attack}
+ممنوع تحويل الإيميل إلى فكرة عامة عن الحسابات فقط. اجعل محتوى الإيميل يدور حول الفكرة/المهمة أعلاه، ثم طبق قواعد الصعوبة.
+"""
+    return f"""
+Approved Scenario Card — you MUST use this scenario and must not replace it:
+- Scenario ID: {card['id']}
+- Main role: {card['role_type']}
+- Internal sub-role: {card['sub_role']}
+- Scenario/task idea: {card['scenario']}
+- Logical sender/unit: {card['sender']}
+- Internal system/procedure: {card['system']}
+- Requested action: {card['action']}
+- Attack type suitable for this difficulty: {attack}
+Do NOT turn this into a generic account/password email only. The email content must revolve around the scenario/task above, then apply the difficulty rules.
+"""
+
 # =============================================================
 # UNBOUNDED LEARNING PROMPT
 # No fixed templates. No fixed scenario pool. No example domains.
@@ -1819,6 +2017,8 @@ def build_prompt(role, index, language):
     avoid_topics = get_avoid_list_text(role_type, "learn", is_ar)
     avoid_domains = get_used_domains_text(role_type, "learn", is_ar)
     role_context = get_role_unbounded_context(role_type, is_ar)
+    scenario_card = select_scenario_card(role_type, index, phase="learn")
+    scenario_instruction = scenario_card_to_prompt(scenario_card, difficulty, is_ar)
     diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
 
     if is_ar:
@@ -1836,11 +2036,13 @@ def build_prompt(role, index, language):
 - ممنوع تمامًا إرسال إيميل عام لا يعكس الدور المحدد.
 - ممنوع تكرار نوع "تقديم العروض التجارية" أو "برامج الرعاية" إلا إذا كان الدور يستدعيه.
 - لا تستخدم أي قالب ثابت أو نطاق مكرر.
+- استخدم بطاقة السيناريو المعتمدة أعلاه كفكرة الإيميل الأساسية، مع تنويع الصياغة.
 - ممنوع استخدام النص الحرفي: suspicious_link داخل body. ضع رابطًا حقيقي الشكل.
 - أخرج JSON فقط بدون Markdown.
 
 السياق الوظيفي الإلزامي:
 {role_context}
+{scenario_instruction}
 المستلم: {recipient_email}
 رقم عشوائي لكسر التكرار: {seed}
 {avoid_topics}{avoid_domains}
@@ -1889,11 +2091,13 @@ MANDATORY rules — Role Alignment & Healthcare Context:
 - FORBIDDEN: sending a generic wellness program, prize draw, or commercial offer email to a clinical role.
 - AVOID repeating commercial offer-type phishing — use it only if rarely used in this session.
 - Do NOT use a fixed template or reused domain.
+- Use the approved Scenario Card above as the core email idea, while varying the wording.
 - Never write the literal placeholder suspicious_link inside body. Use a realistic-looking URL.
 - Return JSON only. No Markdown.
 
 Mandatory role context:
 {role_context}
+{scenario_instruction}
 Recipient: {recipient_email}
 Anti-repeat random seed: {seed}
 {avoid_topics}{avoid_domains}
@@ -1945,6 +2149,8 @@ def build_assess_prompt(role, index, is_phishing, language):
     avoid_topics = get_avoid_list_text(role_type, suffix, is_ar)
     avoid_domains = get_used_domains_text(role_type, suffix, is_ar)
     role_context = get_role_unbounded_context(role_type, is_ar)
+    scenario_card = select_scenario_card(role_type, index, phase="assess")
+    scenario_instruction = scenario_card_to_prompt(scenario_card, difficulty, is_ar)
     diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=is_phishing, is_ar=is_ar)
 
     if is_ar:
@@ -1958,7 +2164,7 @@ def build_assess_prompt(role, index, is_phishing, language):
 قواعد مهمة جدًا:
 - لا تستخدم قوالب ثابتة.
 - لا تستخدم أي نطاق من أمثلة محفوظة أو نطاقات تكررت سابقًا.
-- اختر سيناريو جديدًا من الصفر ومناسبًا للدور.
+- استخدم بطاقة السيناريو المعتمدة أعلاه فقط، ولا تخترع فكرة مختلفة عنها.
 - يجب أن يكون الاختبار متوازنًا: الرسائل الشرعية آمنة فعلًا، ورسائل التصيد فيها علامات حسب مستوى الصعوبة.
 - ممنوع استخدام النص الحرفي: suspicious_link داخل body.
 - أخرج JSON فقط بدون Markdown.
@@ -1966,6 +2172,7 @@ def build_assess_prompt(role, index, is_phishing, language):
 
 السياق:
 {role_context}
+{scenario_instruction}
 المستلم: {recipient_email}
 رقم عشوائي لكسر التكرار: {seed}
 {avoid_topics}{avoid_domains}
@@ -1996,7 +2203,7 @@ Task: Generate ONE assessment email. Correct label must be: {label}.
 Critical rules:
 - Do NOT use fixed templates.
 - Do NOT use memorized example domains or domains already used in this session.
-- Invent a fresh scenario from scratch that fits the role.
+- Use the approved Scenario Card above only; do not invent a different core idea.
 - The assessment must be balanced: legitimate emails must be truly safe, phishing emails must show red flags according to difficulty.
 - Never write the literal placeholder suspicious_link inside body. Use a realistic-looking URL when phishing needs a link.
 - Return JSON only. No Markdown.
@@ -2004,6 +2211,7 @@ Critical rules:
 
 Context:
 {role_context}
+{scenario_instruction}
 Recipient: {recipient_email}
 Anti-repeat random seed: {seed}
 {avoid_topics}{avoid_domains}
