@@ -8995,6 +8995,368 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
 # END EMAIL GENERATION ENGINE v6
 # =============================================================
 
+
+# =============================================================
+# EMAIL CONTENT ENGINE v7 — Framework-locked, richer scenario emails
+# -------------------------------------------------------------
+# هدف هذا الجزء: لا يغيّر العنوان أو تدفق التطبيق. يغيّر فقط محتوى
+# الإيميلات والتحليل بحيث:
+# 1) يستخدم بنك السيناريوهات الكبير SCENARIO_LIBRARY كقاعدة 100 شكل لكل فئة.
+# 2) يلتزم حرفيًا بمستويات الصعوبة: Easy / Intermediate / Advanced.
+# 3) يجعل التحليل مرتبطًا بمحتوى الإيميل نفسه، وليس نصًا ثابتًا.
+# 4) يجعل إيميلات السهل أكثر تفصيلًا لكنها تبقى واضحة التصيد.
+# =============================================================
+
+_V7_GLOBAL_CSS = """
+<style>
+/* Restore visible admin password input border and keep selected dropdown text readable */
+div[data-testid="stTextInput"] input{
+    border:1px solid rgba(59,130,246,.75)!important;
+    box-shadow:0 0 0 1px rgba(59,130,246,.18)!important;
+    border-radius:10px!important;
+    color:#F8FAFC!important;
+}
+div[data-baseweb="select"] *{color:#F8FAFC!important;}
+div[data-baseweb="select"]{border-color:rgba(59,130,246,.65)!important;}
+</style>
+"""
+st.markdown(_V7_GLOBAL_CSS, unsafe_allow_html=True)
+
+_V7_DETAILED_EASY_EN = [
+    """{greeting},\n\nThe {dept} access page for {topic} was not confirmed after the latest hospital system check. Staff access for this page will be stopped TODAY if the account is not verified.\n\nEnter your {credential} on the page below to keep your hospital access active. This is requiered immediatly because the workflow is marked as incomplete in the staff system.\n\n{cta}: {link}\n\nHospital Support Desk""",
+    """{greeting},\n\nA problem was found in the hospital record connected to {topic}. The page now shows a failed staff verification status. If the record is not corrected today, your department access may be blocked.\n\nUse the visible link below and add your {credential}. The request is urgant and must be completed before the end of today.\n\n{cta}: {link}\n\nClinical Operations Support""",
+    """{greeting},\n\nFinal notice for the hospital service related to {topic}. Your staff profile is missing confirmation and the page will close today.\n\nTo prevent interruption, open the link and submit your {credential}. This action is neccessary for current hospital workflow access.\n\n{cta}: {link}\n\nHospital Alert Team""",
+    """{greeting},\n\nThe hospital page used for {topic} has been moved to a temporary verification area. Your account was not moved correctly and must be checked today.\n\nPlease open the page and enter your {credential} now. Failure to act today will stop the service for your department. This mesage was sent automatically.\n\n{cta}: {link}\n\nDepartment Support Team""",
+    """{greeting},\n\nYour department access for {topic} is listed as incomplete in the hospital portal. The page will be disabled today unless the login record is verified.\n\nGo to the link below and confirm your {credential}. This is requierd today to keep access active.\n\n{cta}: {link}\n\nStaff Access Desk""",
+]
+
+_V7_DETAILED_EASY_AR = [
+    """{greeting}،\n\nصفحة الوصول الخاصة بـ {topic} في قسم {dept} لم يتم تأكيدها بعد فحص نظام المستشفى الأخير. سيتم إيقاف الوصول اليوم إذا لم يتم التحقق من الحساب.\n\nأدخل {credential} في الصفحة أدناه للحفاظ على الوصول. هذا الإجراء مطلووب فورًا لأن سير العمل ظاهر كغير مكتمل.\n\n{cta}: {link}\n\nمكتب دعم المستشفى""",
+    """{greeting}،\n\nتم العثور على مشكله في سجل المستشفى المرتبط بـ {topic}. تظهر الصفحة الآن أن تحقق الموظف فشل، وقد يتم حظر الوصول اليوم.\n\nاستخدم الرابط المكشوف أدناه وأدخل {credential}. الطلب عاجل ويجب تنفيذه قبل نهاية اليوم.\n\n{cta}: {link}\n\nفريق دعم العمليات السريرية""",
+    """{greeting}،\n\nتنبيه نهائي لخدمة المستشفى المتعلقة بـ {topic}. ملف الموظف غير مؤكد وقد تتوقف الصفحة اليوم.\n\nلتجنب الانقطاع، افتح الرابط وأرسل {credential}. هذا الإجراء ضروري للوصول الحالي إلى سير العمل.\n\n{cta}: {link}\n\nفريق تنبيه المستشفى""",
+]
+
+_V7_MEDIUM_EN = [
+    """Dear {medium_name},\n\nThe {dept} team is updating the working list for {topic}. Please review the item and confirm whether the record is still current within 48 hours.\n\nThis is a department-level confirmation only, but delays may affect the next workflow handover.\n\nReview page: {link}\n\nRegards,\n{sig}""",
+    """Dear {medium_name},\n\nPlease review the attached summary for {topic} from {dept}. Confirmation is requested within 48 hours so the team can close the pending queue.\n\nNo password is requested in this message; only the listed workflow item needs review.\n\nRegards,\n{sig}""",
+    """Dear {medium_name},\n\nA department-level update is pending for {topic} in {dept}. Please use the review button to confirm the item within 48 hours.\n\n[Review Request]({link})\n\nRegards,\n{sig}""",
+    """Dear {medium_name},\n\nThe scheduled follow-up for {topic} has been added to the {dept} queue. Please reply to confirm that the item can remain open for the next shift cycle.\n\nPlease respond within 48 hours so planning can continue.\n\nRegards,\n{sig}""",
+]
+
+_V7_MEDIUM_AR = [
+    """عزيزي/عزيزتي {medium_name}،\n\nيقوم فريق {dept} بتحديث قائمة العمل الخاصة بـ {topic}. يرجى مراجعة البند وتأكيد أن السجل ما زال محدثًا خلال 48 ساعة.\n\nهذا تأكيد تشغيلي على مستوى القسم، وقد يؤثر التأخير على تسليم العمل التالي.\n\nرابط المراجعة: {link}\n\nمع التحية،\n{sig}""",
+    """عزيزي/عزيزتي {medium_name}،\n\nيرجى مراجعة الملخص المرفق الخاص بـ {topic} من قسم {dept}. نحتاج تأكيد الحالة خلال 48 ساعة لإغلاق قائمة الانتظار.\n\nلا تطلب هذه الرسالة كلمة مرور؛ المطلوب مراجعة البند التشغيلي فقط.\n\nمع التحية،\n{sig}""",
+    """عزيزي/عزيزتي {medium_name}،\n\nيوجد تحديث على مستوى القسم مرتبط بـ {topic} في {dept}. يرجى استخدام زر المراجعة لتأكيد البند خلال 48 ساعة.\n\n[مراجعة الطلب]({link})\n\nمع التحية،\n{sig}""",
+]
+
+_V7_ADV_EN = [
+    """Dear {full_name},\n\nAs part of the scheduled operational governance review for {dept}, please review the official document ({attach}) related to {topic}. This item is linked to the current quarterly workflow validation and does not require urgent action.\n\nUse the internal review option from a hospital-managed device when convenient.\n\nReference: {ref}\nContact: {sig}, ext. {ext}\n\nSincerely,\n{sig}""",
+    """Dear {full_name},\n\nThe {dept} quality team is completing a routine validation for {topic}. The attached document ({attach}) contains the current checklist used for this review.\n\nFor mobile confirmation during ward/department rounds, scan this code from a hospital network device only: [QR: {qr_label}]\n\nReference: {ref}\nContact: {sig}, ext. {ext}\n\nSincerely,\n{sig}""",
+    """Dear {full_name},\n\nA formal internal review has been opened for {topic} in {dept}. Please review the attached document ({attach}) and confirm the routine workflow status through the internal channel.\n\nThere is no emergency deadline; this is part of the scheduled departmental review.\n\nReference: {ref}\nContact: {sig}, ext. {ext}\n\nSincerely,\n{sig}""",
+]
+
+_V7_ADV_AR = [
+    """عزيزي/عزيزتي {full_name}،\n\nضمن مراجعة الحوكمة التشغيلية المجدولة لقسم {dept}، يرجى الاطلاع على المستند الرسمي ({attach}) المتعلق بـ {topic}. يرتبط هذا البند بالتحقق الربع سنوي لسير العمل ولا يتطلب إجراءً عاجلاً.\n\nيرجى استخدام خيار المراجعة الداخلي من جهاز تابع للمستشفى عند توفر الوقت.\n\nالمرجع: {ref}\nجهة الاتصال: {sig}، تحويلة {ext}\n\nمع التحية،\n{sig}""",
+    """عزيزي/عزيزتي {full_name}،\n\nينهي فريق الجودة في {dept} تحققًا روتينيًا بخصوص {topic}. يحتوي المستند المرفق ({attach}) على قائمة المراجعة الحالية لهذا الإجراء.\n\nللتأكيد عبر الجوال أثناء جولات القسم، امسح الرمز من جهاز متصل بشبكة المستشفى فقط: [QR: {qr_label}]\n\nالمرجع: {ref}\nجهة الاتصال: {sig}، تحويلة {ext}\n\nمع التحية،\n{sig}""",
+]
+
+_V7_LEGIT_EN = [
+    """Dear {medium_name},\n\nThis is a scheduled internal notice from {dept} about {topic}. The message is informational only and does not ask for a password or external login.\n\nPlease verify details through the official hospital system if needed.\n\nRegards,\n{sig}""",
+    """Dear {medium_name},\n\nThe {dept} team has posted a routine update about {topic}. No action is required through this email, and no external link is provided.\n\nRegards,\n{sig}""",
+    """Dear {medium_name},\n\nThis message confirms that the scheduled {topic} notice is available in the hospital system. Please use the approved internal application for any follow-up.\n\nRegards,\n{sig}""",
+]
+
+_V7_LEGIT_AR = [
+    """عزيزي/عزيزتي {medium_name}،\n\nهذا إشعار داخلي مجدول من قسم {dept} بخصوص {topic}. الرسالة معلوماتية فقط ولا تطلب كلمة مرور أو دخولًا عبر رابط خارجي.\n\nيمكن التحقق من التفاصيل عبر نظام المستشفى الرسمي عند الحاجة.\n\nمع التحية،\n{sig}""",
+    """عزيزي/عزيزتي {medium_name}،\n\nنشر فريق {dept} تحديثًا روتينيًا بخصوص {topic}. لا يوجد إجراء مطلوب من خلال هذا البريد، ولا يوجد رابط خارجي.\n\nمع التحية،\n{sig}""",
+]
+
+_V7_CREDENTIALS_EN = ["username and password", "staff portal password", "employee ID and password", "network login", "portal username and password"]
+_V7_CREDENTIALS_AR = ["اسم المستخدم وكلمة المرور", "كلمة مرور بوابة الموظف", "رقم الموظف وكلمة المرور", "بيانات الدخول للشبكة"]
+_V7_CTA_EN = ["Update link", "Login page", "Access page", "Verification page", "Hospital page"]
+_V7_CTA_AR = ["رابط التحديث", "صفحة الدخول", "صفحة الوصول", "صفحة التحقق"]
+_V7_GENERIC_EN = ["Dear Hospital Staff", "Dear Employee", "Dear Staff Member", "Dear Department Team", "Attention Hospital User"]
+_V7_GENERIC_AR = ["عزيزي موظف المستشفى", "عزيزي الموظف", "عزيزي عضو الفريق", "عزيزي فريق القسم"]
+
+
+def _v7_role_label(sub, name, diff, lang):
+    is_ar = lang == "Arabic"
+    if diff == "easy":
+        return ""
+    if is_ar:
+        return _V5_AR_LABELS.get(sub, sub)
+    return {
+        "Doctor": "Dr.", "Nurse": "Nurse", "Pharmacist": "Pharm.",
+        "Laboratory Specialist": "Lab Specialist", "Radiology Technician": "Radiographer",
+        "IT Support Engineer": "Eng.", "Network Engineer": "Eng.",
+        "Cybersecurity Analyst": "Analyst", "Systems Administrator": "Admin",
+        "HR Officer": "HR Officer", "Medical Secretary": "Medical Secretary",
+        "Insurance Coordinator": "Insurance Coordinator", "Procurement Officer": "Procurement Officer",
+        "Finance Officer": "Finance Officer", "Clinical Informatics Specialist": "Clinical Informatics Specialist"
+    }.get(sub, "Staff")
+
+
+def _v7_medium_name(sub, person, lang):
+    name = person[0]
+    first = _first_name_v2(name)
+    label = _v7_role_label(sub, name, "medium", lang)
+    if lang == "Arabic":
+        # Keep Arabic UI simple while still showing healthcare/professional identity.
+        return f"{label} {first}" if label else first
+    if label in ("Dr.", "Pharm.", "Eng."):
+        return f"{label} {first}"
+    return f"{label} {first}"
+
+
+def _v7_full_name(sub, person, lang):
+    name = person[0]
+    if lang == "Arabic":
+        return f"{_v7_role_label(sub, name, 'hard', lang)} {name}"
+    # Names in pool already include many titles; avoid double Dr./Pharm. where possible.
+    label = _v7_role_label(sub, name, "hard", lang)
+    if name.startswith(("Dr.", "Pharm.", "Nurse", "Lab Specialist", "Radiographer")):
+        return name
+    return f"{label} {name}"
+
+
+def _v7_domain(diff, sc, channel, legit, index):
+    if legit:
+        return "hospital.org"
+    slug = _v5_slug(sc.get("topic", sc.get("path", "workflow")))
+    compact = slug.replace("-", "")[:24]
+    dept = _v5_slug(sc.get("dept", "dept")).replace("-", "")[:18]
+    if diff == "easy":
+        opts = [
+            f"fake-{compact}-login.com", f"urgent-{compact}-access.info", f"hospital-{compact}-alert.com",
+            f"{compact}-staff-stop-today.net", f"login-{dept}-{compact}.com"
+        ]
+    elif diff == "medium":
+        opts = [
+            f"hospital-{compact}-review.net", f"{compact}-hospital-support.org", f"workflow-{compact}-hospital.net",
+            f"dept-{compact}-hospital.org", f"hospital-{dept}-desk.net"
+        ]
+    else:
+        opts = [
+            f"hospitaldept-{compact}.org.sa", f"mohservices-{compact}.org.sa", f"quality-{dept}.org.sa",
+            f"clinicalgov-{compact}.net.sa", f"staffworkflow-{dept}.org.sa"
+        ]
+    return opts[(index + len(compact) + len(channel)) % len(opts)]
+
+
+def _v7_subject(diff, sc, channel, lang, legit, index):
+    topic = str(sc.get("topic", "hospital workflow"))
+    topic_title = topic.title()
+    dept = sc.get("dept", "Hospital Department")
+    if legit:
+        if lang == "Arabic":
+            return random.choice([f"إشعار داخلي: {topic}", f"تحديث روتيني من {dept}", f"معلومة داخلية بخصوص {topic}"])
+        return _v6_pick([f"Internal Notice: {topic_title}", f"Routine {dept} Notice", f"Scheduled Update: {topic_title}"], index)
+    if lang == "Arabic":
+        if diff == "easy":
+            return _v6_pick([f"تحذير عاجل: وصول {topic}", f"إجراء مطلوب اليوم: {dept}", f"إغلاق صفحة {topic} اليوم", f"تأكيد كلمة مرور فوري مطلوب"], index)
+        if diff == "medium":
+            return _v6_pick([f"مراجعة مطلوبة: {topic}", f"متابعة {dept} خلال 48 ساعة", f"تأكيد {topic} لقسم {dept}"], index)
+        return _v6_pick([f"مراجعة رسمية: {topic}", f"إجراء روتيني لقسم {dept}", f"تأكيد مستند داخلي: {topic}"], index)
+    if diff == "easy":
+        return _v6_pick([f"URGENT: {topic_title} Access Will Stop Today", f"Immediate Password Verification Required", f"Final Warning: Hospital {topic_title} Access", f"Action Required Today: {dept} Access", f"TODAY ONLY: {topic_title} Update"], index)
+    if diff == "medium":
+        return _v6_pick([f"{topic_title} Review", f"{dept} Follow-Up Required", f"Pending {topic_title} Confirmation", f"48-Hour {dept} Update", f"Department Review: {topic_title}"], index)
+    return _v6_pick([f"Routine {topic_title} Confirmation", f"Official {dept} Workflow Review", f"Quarterly {dept} Document Check", f"Scheduled Governance Review: {topic_title}"], index)
+
+
+def _v7_attachment(diff, sc, channel, legit, index):
+    if diff == "easy":
+        return ""
+    if legit:
+        return sc.get("attach", "Internal_Notice.pdf") if channel == "pdf" else ""
+    if diff == "medium":
+        return sc.get("attach", "Workflow_Summary.pdf") if channel == "pdf" else ""
+    base = re.sub(r"[^A-Za-z0-9]+", "_", str(sc.get("topic", "Protocol Review")).title()).strip("_")[:34]
+    year = 2026 + (index % 2)
+    return f"Official_{base}_Protocol_{year}.pdf"
+
+
+def _v7_channel(diff, sc, index, legit=False):
+    if legit:
+        return _v6_pick(["none", "pdf", "none", "none"], index)
+    if diff == "easy":
+        return "link"
+    if diff == "medium":
+        return _v6_pick(["link", "pdf", "button", "reply"], index, len(sc.get("topic", "")))
+    return _v6_pick(["qr_official", "document", "document", "qr_official", "document"], index, len(sc.get("dept", "")))
+
+
+def _v7_body(role_type, sc, sub, person, diff, channel, lang, legit, index, link, attach):
+    is_ar = lang == "Arabic"
+    topic, dept = sc.get("topic", "hospital workflow"), sc.get("dept", "Hospital Department")
+    sig = sc.get("sender") or dept
+    medium_name = _v7_medium_name(sub, person, lang)
+    full_name = _v7_full_name(sub, person, lang)
+    ref = f"HSP-{202600 + ((index * 41) % 900)}"
+    ext = str(1200 + ((index * 73) % 7700))
+    if legit:
+        template = _v6_pick(_V7_LEGIT_AR if is_ar else _V7_LEGIT_EN, index, len(topic))
+        return template.format(medium_name=medium_name, topic=topic, dept=dept, sig=sig)
+    if diff == "easy":
+        template = _v6_pick(_V7_DETAILED_EASY_AR if is_ar else _V7_DETAILED_EASY_EN, index, len(topic))
+        return template.format(
+            greeting=_v6_pick(_V7_GENERIC_AR if is_ar else _V7_GENERIC_EN, index, len(dept)),
+            topic=topic, dept=dept, link=link,
+            credential=_v6_pick(_V7_CREDENTIALS_AR if is_ar else _V7_CREDENTIALS_EN, index, len(topic)),
+            cta=_v6_pick(_V7_CTA_AR if is_ar else _V7_CTA_EN, index, len(topic))
+        )
+    if diff == "medium":
+        template = _v6_pick(_V7_MEDIUM_AR if is_ar else _V7_MEDIUM_EN, index, len(topic) + len(channel))
+        # Channel-specific cleanup: for pdf/reply, remove printed link; for link/button keep it.
+        if channel == "pdf":
+            template = _V7_MEDIUM_AR[1] if is_ar else _V7_MEDIUM_EN[1]
+        elif channel == "button":
+            template = _V7_MEDIUM_AR[2] if is_ar else _V7_MEDIUM_EN[2]
+        elif channel == "reply":
+            template = _V7_MEDIUM_AR[0] if is_ar else _V7_MEDIUM_EN[3]
+        else:
+            template = _V7_MEDIUM_AR[0] if is_ar else _V7_MEDIUM_EN[0]
+        return template.format(medium_name=medium_name, topic=topic, dept=dept, sig=sig, link=link, attach=attach)
+    template = _v6_pick(_V7_ADV_AR if is_ar else _V7_ADV_EN, index, len(topic) + len(channel))
+    if channel != "qr_official":
+        template = _V7_ADV_AR[0] if is_ar else _V7_ADV_EN[0]
+    return template.format(full_name=full_name, topic=topic, dept=dept, sig=sig, attach=attach, ref=ref, ext=ext, qr_label=_v5_slug(topic)[:24])
+
+
+def _v7_analysis(diff, sc, channel, link, attach, lang, body, legit=False):
+    is_ar = lang == "Arabic"
+    topic = sc.get("topic", "hospital workflow")
+    dept = sc.get("dept", "Hospital Department")
+    if legit:
+        return []
+    if is_ar:
+        if diff == "easy":
+            return [
+                {"number":1,"title":"تحية عامة","description":f"الرسالة تبدأ بتحية عامة رغم أنها تزعم وجود مشكلة محددة في {topic}. هذا يطابق مستوى السهل."},
+                {"number":2,"title":"رابط مزيف مكشوف","description":f"الرابط ظاهر مباشرة ويستخدم نطاقًا غير رسمي: {link}."},
+                {"number":3,"title":"طلب مباشر لبيانات الدخول","description":"المحتوى يطلب اسم مستخدم أو كلمة مرور بشكل مباشر، وهذا مؤشر تصيد واضح."},
+                {"number":4,"title":"ضغط في نفس اليوم","description":f"التهديد بإيقاف وصول {dept} اليوم يخلق استعجالًا متعمدًا."},
+                {"number":5,"title":"بدون مرفق أو QR","description":"هذا يلتزم بإطار السهل: الرابط مكشوف والطلب مباشر ولا توجد عناصر تقنية متقدمة."},
+            ]
+        if diff == "medium":
+            tech = "مرفق PDF بسيط" if attach else "زر مراجعة بسيط" if "](" in body else "رابط مشابه" if link else "طلب رد"
+            return [
+                {"number":1,"title":"تخصيص مهني جزئي","description":f"التحية تستخدم لقبًا أو اسمًا أوليًا مرتبطًا بدور صحي، لكنها لا تصل لتفصيل المستوى الصعب."},
+                {"number":2,"title":"سياق قسم واضح","description":f"الرسالة مرتبطة بـ {topic} داخل {dept}، وهذا يجعلها أكثر إقناعًا من السهل."},
+                {"number":3,"title":"طلب غير مباشر","description":"المطلوب مراجعة أو تأكيد، وليس كلمة مرور صريحة."},
+                {"number":4,"title":tech,"description":"يوجد عنصر تقني متوسط واحد فقط ولا يوجد QR، وهذا يطابق إطار المتوسط."},
+                {"number":5,"title":"مهلة 48 ساعة","description":"الضغط موجود لكنه مهني وغير تهديدي مقارنة بالسهل."},
+            ]
+        return [
+            {"number":1,"title":"هوية مهنية كاملة","description":"التحية تستخدم اسمًا مهنيًا كاملاً أو لقبًا محددًا، مما يزيد المصداقية."},
+            {"number":2,"title":"مهمة يومية محددة","description":f"المحتوى مرتبط بمهمة عملية محددة عن {topic} داخل {dept}."},
+            {"number":3,"title":"مرفق رسمي مسمى","description":f"اسم المرفق ({attach}) يبدو كوثيقة رسمية مرتبطة بالإجراء."},
+            {"number":4,"title":"قناة تقنية أقل وضوحًا","description":"الخطر مخفي داخل صياغة روتينية ومرفق/قناة داخلية بدل طلب كلمة مرور مباشر."},
+            {"number":5,"title":"نبرة منخفضة الضغط","description":"عدم وجود تهديد واضح يجعل الاكتشاف أصعب من السهل والمتوسط."},
+        ]
+    if diff == "easy":
+        domain = link.replace("http://", "").split("/")[0] if link else "the displayed URL"
+        return [
+            {"number":1,"title":"Generic healthcare greeting","description":f"The email uses a broad greeting even though it claims a specific issue with {topic}."},
+            {"number":2,"title":"Clearly fake visible URL","description":f"The URL is printed in the email and points to {domain}, not an official hospital domain."},
+            {"number":3,"title":"Direct credential request","description":"The body asks for login details such as username, password, employee ID, or network credentials."},
+            {"number":4,"title":"Same-day pressure","description":f"The message threatens loss of access today for a {dept} workflow, pushing fast action."},
+            {"number":5,"title":"Easy-level technical pattern","description":"There is no QR code or attachment; the risk is deliberately obvious through wording and a visible link."},
+        ]
+    if diff == "medium":
+        tech = "PDF attachment" if attach else "review button" if "](" in body else "look-alike link" if link else "reply request"
+        return [
+            {"number":1,"title":"Partial professional personalization","description":"The greeting uses a role/title or first name, making it more believable than Easy but not as specific as Advanced."},
+            {"number":2,"title":"Department-level healthcare context","description":f"The message is tied to {topic} in {dept}, so the scenario fits the selected role."},
+            {"number":3,"title":"Indirect action request","description":"It asks for review, confirmation, or reply rather than directly asking for a password."},
+            {"number":4,"title":tech.title(),"description":"Only one moderate technical element is used and there is no QR code, matching the Intermediate framework."},
+            {"number":5,"title":"Moderate 48-hour urgency","description":"The deadline adds pressure without the obvious account-closure threat used in Easy examples."},
+        ]
+    return [
+        {"number":1,"title":"Full professional identity","description":"The email addresses the recipient with a professional role/name, increasing credibility."},
+        {"number":2,"title":"Daily role-specific workflow","description":f"The request is tied to a concrete {dept} task about {topic}, not a generic account problem."},
+        {"number":3,"title":"Official-looking attachment","description":f"The attachment name ({attach}) appears formal and relevant to the workflow."},
+        {"number":4,"title":"Advanced technical presentation","description":"The risk is hidden inside a formal document/QR-style workflow rather than a visible password trap."},
+        {"number":5,"title":"Low-pressure tone","description":"The email avoids obvious threats, making it harder to detect than Easy or Intermediate examples."},
+    ]
+
+
+def _make_email_v7(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    diff = _enhanced_diff(difficulty)
+    role_type, sc, sub, person = _v5_pick_full_card(role, index, assessment)
+    legit = not bool(is_phishing)
+    channel = _v7_channel(diff, sc, index, legit)
+    domain = _v7_domain(diff, sc, channel, legit, index)
+    sender = sc.get("sender") or sc.get("dept") or "Hospital Department"
+    frm = f"{sender} <updates@{domain}>"
+    subject = _v7_subject(diff, sc, channel, language, legit, index)
+    link = "" if legit or diff == "hard" or channel in ("pdf", "reply", "none") else f"http://{domain}/{sc['path']}"
+    attach = _v7_attachment(diff, sc, channel, legit, index)
+    body = _v7_body(role_type, sc, sub, person, diff, channel, language, legit, index, link, attach)
+    indicators = _v7_analysis(diff, sc, channel, link, attach, language, body, legit)
+    is_ar = language == "Arabic"
+    if legit:
+        attack = "Legitimate Email" if not is_ar else "رسالة شرعية"
+        why = "This message is legitimate because it stays informational, avoids credential requests, and does not use an external suspicious link." if not is_ar else "هذه الرسالة شرعية لأنها معلوماتية ولا تطلب بيانات دخول ولا تستخدم رابطًا خارجيًا مشبوهًا."
+        suspicious_text = ""
+    else:
+        attack = ({"easy":"Obvious Credential Harvesting", "medium":f"Intermediate {channel.title()} Phishing", "hard":"Advanced Workflow Phishing"}[diff] if not is_ar else {"easy":"تصيد واضح لبيانات الدخول", "medium":"تصيد متوسط", "hard":"تصيد متقدم داخل سير عمل"}[diff])
+        why = (f"This message is risky because it uses {diff} phishing indicators inside a healthcare workflow about {sc['topic']}." if not is_ar else f"هذه الرسالة خطرة لأنها تستخدم مؤشرات تصيد من مستوى {diff} داخل سياق صحي مرتبط بـ {sc['topic']}.")
+        suspicious_text = ({"easy":"username and password", "medium":"within 48 hours", "hard":"official document"}[diff] if not is_ar else {"easy":"كلمة المرور", "medium":"خلال 48 ساعة", "hard":"المستند الرسمي"}[diff])
+    suspicious_link = "" if legit or diff == "hard" or channel in ("pdf", "reply", "none") else link
+    return {
+        "email_type": attack,
+        "attack_type": attack,
+        "risk_level": "Safe" if legit else ("Critical" if diff == "hard" else "High" if diff == "medium" else "Medium"),
+        "from": frm,
+        "to": person[1],
+        "subject": subject,
+        "attachment": attach,
+        "body": body,
+        "suspicious_text": suspicious_text,
+        "suspicious_link": suspicious_link,
+        "is_phishing": not legit,
+        "scenario_id": f"v7:{role_type}:{sc.get('source_id')}:{sub}:{sc.get('path')}:{diff}:{channel}:{index}",
+        "subrole": sub,
+        "indicators": indicators,
+        "why_risky": why,
+        "learning_tip": (_v6_pick(_V6_TIPS_AR if is_ar else _V6_TIPS_EN, index, len(sc.get("topic", ""))) if '_V6_TIPS_EN' in globals() else ("Verify through official hospital systems before acting." if not is_ar else "تحقق عبر أنظمة المستشفى الرسمية قبل التصرف.")),
+    }
+
+
+def generate_email(role, index, language, difficulty="medium"):
+    # Learning phase: always phishing, 6 examples. Use prime offsets for session variety.
+    for offset in (0, 17, 31, 47, 63, 79):
+        result = _make_email_v7(role, index + offset, language, difficulty, True, assessment=False)
+        if _validate_v4(result, role, difficulty, True):
+            try: evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=True)
+            except Exception: pass
+            return result
+    return result
+
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    # Assessment: mixed phishing/legitimate, same scenario bank, no tutor analysis shown in UI.
+    for offset in (0, 19, 37, 53, 71, 89):
+        result = _make_email_v7(role, index + offset, language, difficulty, bool(is_phishing), assessment=True)
+        if _validate_v4(result, role, difficulty, bool(is_phishing)):
+            try: evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=bool(is_phishing))
+            except Exception: pass
+            return result
+    return result
+
+
+def generate_other_email(index, language, difficulty):
+    return generate_email("Other", index, language, difficulty)
+
+
+def generate_other_assess_email(index, is_phishing, language, difficulty):
+    return generate_assess_email("Other", index, is_phishing, language, difficulty)
+
+# =============================================================
+# END EMAIL CONTENT ENGINE v7
+# =============================================================
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
