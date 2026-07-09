@@ -3012,12 +3012,10 @@ def render_email_window(email, is_arabic, show_badges=False):
     # Also for easy: if suspicious_link exists but no visible URL in body, append it
     if _difficulty == "easy" and (email.get("suspicious_link") or "").strip():
         _sl = (email.get("suspicious_link") or "").strip()
-        if _sl and _sl not in body_raw and not has_link_button:
-            body_raw = _insert_before_signature(body_raw, _sl)
-        elif _sl and _sl in body_raw:
-            # Link already present somewhere — make sure it isn't sitting
-            # detached after the signature (model's own placement).
-            body_raw = _reposition_trailing_lone_link(body_raw, _sl)
+        # Always run _place_link_in_body — it handles all cases:
+        # link missing, link after signature, link already correct.
+        if _sl and not has_link_button:
+            body_raw = _place_link_in_body(body_raw, _sl)
 
     # Tidy up extra blank lines left behind after removing the placeholders above.
     body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
@@ -3037,31 +3035,22 @@ def render_email_window(email, is_arabic, show_badges=False):
     body_raw = body_raw.strip()
 
     # --------------------------------------------------------
-    # SAFETY NET: some providers still print the raw URL as plain
-    # text (e.g. in the signature) EVEN THOUGH it is also being
-    # rendered as a real QR image or a real button below. If we
     # Remove duplicate URL — strip any standalone line that is exactly the suspicious_link
     # This applies ALWAYS (not just when has_qr or has_link_button) to prevent double display
-    if suspicious_link:
+    # NOTE: For easy level the link was already placed correctly by _place_link_in_body above.
+    # This block only removes truly redundant duplicate occurrences.
+    if suspicious_link and (has_qr or has_link_button):
         bare_link_pattern = re.escape(suspicious_link)
         bare_no_scheme    = re.escape(re.sub(r'^https?://', '', suspicious_link))
-        # Remove if it appears as a standalone line (with or without http prefix)
         body_raw = re.sub(rf'^[ \t]*{bare_link_pattern}[ \t]*$\n?', '', body_raw, flags=re.MULTILINE)
         body_raw = re.sub(rf'^[ \t]*{bare_no_scheme}[ \t]*$\n?', '', body_raw, flags=re.MULTILINE)
         body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
-    # For easy level: URL should appear once as plain text in body — add only if missing
-    if _difficulty == "easy" and suspicious_link and not has_qr and not has_link_button:
-        if suspicious_link not in body_raw:
-            link_bare = re.sub(r'^https?://', '', suspicious_link)
-            if link_bare not in body_raw:
-                body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
-
-    # For medium/hard: if no button and no QR and link missing — add as fallback only for medium
+    # For medium/hard: if no button and no QR and link missing — place correctly, not at end
     if _difficulty == "medium" and suspicious_link and not has_qr and not has_link_button:
         link_bare = re.sub(r'^https?://', '', suspicious_link)
         if suspicious_link not in body_raw and link_bare not in body_raw:
-            body_raw = body_raw.rstrip() + f'\n\n{suspicious_link}'
+            body_raw = _place_link_in_body(body_raw, suspicious_link)
 
     has_attachment  = bool((email.get("attachment") or "").strip())
 
