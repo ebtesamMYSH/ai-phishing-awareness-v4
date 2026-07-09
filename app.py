@@ -9133,35 +9133,123 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
 # =============================================================
 
 _V10_BODY_SHAPES_EN = [
-    "notice with background, impact, action, link, closing",
-    "workflow alert with affected item, operational consequence, required action, link, closing",
-    "department update with short context, failed status, required credential step, link, closing",
-    "service interruption warning with affected healthcare workflow, direct request, visible URL, closing",
-    "portal record mismatch with explanation, staff action, deadline, visible URL, closing",
-    "queue access warning with scenario detail, sensitive request, visible URL, support closing",
+    "notice with background, operational impact, specific action requested, link/action, closing",
+    "workflow alert with affected clinical item, consequence to patient care, required staff action, link, closing",
+    "department update with short context, system status, required action step, link or reply, closing",
+    "service interruption warning with affected healthcare workflow, staff responsibility, direct request, URL, closing",
+    "record mismatch notification with explanation, staff action required, deadline phrase, visible URL, closing",
+    "queue or assignment warning with scenario detail, what happens if ignored, specific request, URL, support closing",
+    "manager impersonation with brief authority claim, task delegation, reply or link request, no official header, closing",
+    "system alert with fake technical context, account status warning, credential or click request, URL, closing",
 ]
 _V10_BODY_SHAPES_AR = [
-    "إشعار مع خلفية، أثر، إجراء، رابط، توقيع",
-    "تنبيه سير عمل مع العنصر المتأثر، نتيجة تشغيلية، إجراء مطلوب، رابط، توقيع",
-    "تحديث قسم مع سياق قصير، حالة فشل، خطوة بيانات دخول، رابط، توقيع",
-    "تحذير تعطل خدمة مع سير عمل صحي متأثر، طلب مباشر، رابط ظاهر، توقيع",
+    "إشعار مع خلفية، أثر تشغيلي، إجراء محدد، رابط أو إجراء، توقيع",
+    "تنبيه سير عمل مع العنصر السريري المتأثر، أثر على رعاية المريض، إجراء مطلوب من الموظف، رابط، توقيع",
+    "تحديث قسم مع سياق قصير، حالة النظام، خطوة إجراء مطلوبة، رابط أو رد، توقيع",
+    "تحذير تعطل خدمة مع سير عمل صحي متأثر، مسؤولية الموظف، طلب مباشر، رابط ظاهر، توقيع",
+    "إشعار تناقض سجل مع شرح، إجراء مطلوب من الموظف، عبارة مهلة، رابط ظاهر، توقيع",
+    "انتحال صفة مدير مع ادعاء صلاحية موجز، تفويض مهمة، طلب رد أو رابط، بلا رأسية رسمية، توقيع",
 ]
 
-_V10_EASY_REQUESTS_EN = [
-    "enter username and password", "verify staff password", "confirm employee ID and password",
-    "add portal password", "submit staff PIN and password", "update login credentials",
+# ── Easy attack type packages (vary the ATTACK VECTOR, not just the wording) ──
+_V10_EASY_ATTACK_TYPES_EN = [
+    {
+        "attack": "Credential Phishing",
+        "request": "update your login credentials via the link below",
+        "tactic": "visible_fake_url leading to a fake credential-harvest portal",
+        "indicators_hint": "1-Fake sender domain  2-Direct password/credential request  3-Same-day urgency phrase",
+    },
+    {
+        "attack": "Credential Phishing",
+        "request": "verify your staff PIN and password through the following link",
+        "tactic": "obvious non-hospital URL collecting PIN and password",
+        "indicators_hint": "1-Non-official domain  2-PIN and password request  3-Threat of access loss today",
+    },
+    {
+        "attack": "Malware Link",
+        "request": "download and open the required system update file from the link",
+        "tactic": "tricking staff into clicking a link to download a fake update or file",
+        "indicators_hint": "1-Unknown file-download domain  2-No IT-team involvement mentioned  3-Urgency without official channel",
+    },
+    {
+        "attack": "Social Engineering",
+        "request": "reply directly to this email with your employee ID and current shift schedule",
+        "tactic": "manager/senior impersonation requesting sensitive info via plain email reply — NO link needed",
+        "indicators_hint": "1-Reply-to address mismatch or unofficial domain  2-Sensitive info requested by reply  3-Bypasses official hospital process",
+    },
+    {
+        "attack": "Spear Phishing",
+        "request": "click the account verification link to prevent disruption to your clinical workflow",
+        "tactic": "fake internal system notification mimicking hospital IT alerts with a raw URL",
+        "indicators_hint": "1-Plausible but fake system name  2-Suspicious visible URL  3-Generic greeting despite claiming targeted issue",
+    },
+    {
+        "attack": "Information Gathering",
+        "request": "complete the mandatory staff survey via the external link and enter your employee number and department",
+        "tactic": "fake internal survey to harvest employee IDs and department information",
+        "indicators_hint": "1-External survey domain not hospital.org  2-Unnecessary personal data request  3-No official announcement or reference number",
+    },
 ]
-_V10_EASY_REQUESTS_AR = [
-    "إدخال اسم المستخدم وكلمة المرور", "تأكيد كلمة مرور الموظف", "تحديث بيانات الدخول",
-    "إرسال الرقم الوظيفي وكلمة المرور", "إضافة كلمة مرور البوابة",
+_V10_EASY_ATTACK_TYPES_AR = [
+    {
+        "attack": "تصيد بيانات الدخول",
+        "request": "تحديث بيانات الدخول عبر الرابط التالي",
+        "tactic": "رابط خام ظاهر يقود لبوابة مزيفة لجمع بيانات الدخول",
+        "indicators_hint": "1-نطاق مرسِل مزيف  2-طلب مباشر لكلمة المرور/بيانات الدخول  3-عبارة إلحاح في نفس اليوم",
+    },
+    {
+        "attack": "تصيد بيانات الدخول",
+        "request": "تأكيد الرقم الوظيفي وكلمة المرور عبر الرابط",
+        "tactic": "رابط غير رسمي واضح لجمع الرقم الوظيفي وكلمة المرور",
+        "indicators_hint": "1-نطاق غير رسمي  2-طلب رمز PIN وكلمة مرور  3-تهديد بفقدان الوصول اليوم",
+    },
+    {
+        "attack": "رابط خبيث",
+        "request": "تحميل ملف التحديث المطلوب من الرابط",
+        "tactic": "خداع الموظف للنقر على رابط لتحميل ملف تحديث مزيف",
+        "indicators_hint": "1-نطاق تحميل غير معروف  2-غياب قسم تقنية المعلومات في الإشعار  3-إلحاح بدون قناة رسمية",
+    },
+    {
+        "attack": "هندسة اجتماعية",
+        "request": "الرد على هذا البريد مباشرةً بالرقم الوظيفي وجدول المناوبة الحالية",
+        "tactic": "انتحال صفة مدير يطلب معلومات حساسة بالرد — بدون رابط",
+        "indicators_hint": "1-عنوان الرد غير رسمي أو مختلف  2-طلب معلومات حساسة بالرد  3-يتجاوز الإجراء الرسمي للمستشفى",
+    },
+    {
+        "attack": "تصيد موجه",
+        "request": "النقر على رابط التحقق لمنع انقطاع سير العمل",
+        "tactic": "إشعار نظام داخلي مزيف يحاكي تنبيهات تقنية المعلومات برابط ظاهر",
+        "indicators_hint": "1-اسم نظام موثوق لكن مزيف  2-رابط ظاهر مشبوه  3-تحية عامة رغم ادعاء مشكلة موجهة",
+    },
 ]
 
+# ── Subject pattern pool for Easy (index-rotated for max variety) ──
+_V10_EASY_SUBJECTS_EN = [
+    "Action Required: {topic} Update",
+    "Urgent Staff Notice: {topic} Verification",
+    "Final Warning: {topic} Access Expiring Today",
+    "Important: {topic} Record Issue Detected",
+    "Alert: Immediate {topic} Response Needed",
+    "Notice: {topic} Portal Access Will Be Suspended",
+]
+_V10_EASY_SUBJECTS_AR = [
+    "إجراء مطلوب: تحديث {topic}",
+    "إشعار عاجل للموظفين: التحقق من {topic}",
+    "تحذير نهائي: انتهاء صلاحية {topic} اليوم",
+    "مهم: اكتُشفت مشكلة في سجل {topic}",
+    "تنبيه: مطلوب رد فوري على {topic}",
+    "إشعار: سيتم تعليق وصول بوابة {topic}",
+]
+
+# ── Pressure phrases (kept for backward compat, also used in prompt) ──
 _V10_EASY_PRESSURE_EN = [
     "access will stop TODAY", "the page will be disabled today", "your department access will close today",
     "service access will be blocked before the end of the day", "the hospital record will be locked today",
+    "your account will be suspended within hours",
 ]
 _V10_EASY_PRESSURE_AR = [
-    "سيتم إيقاف الوصول اليوم", "ستتعطل الصفحة اليوم", "سيُغلق وصول القسم اليوم", "سيتم حجب الخدمة قبل نهاية اليوم",
+    "سيتم إيقاف الوصول اليوم", "ستتعطل الصفحة اليوم", "سيُغلق وصول القسم اليوم",
+    "سيتم حجب الخدمة قبل نهاية اليوم", "سيتم تعليق حسابك خلال ساعات",
 ]
 
 _V10_MEDIUM_CHANNELS = ["lookalike_link", "simple_button", "simple_pdf", "reply_confirmation"]
@@ -9200,13 +9288,42 @@ def _v10_prompt(role, index, language, difficulty="medium", is_phishing=True, as
     is_ar = language == "Arabic"
     role_type, sc, sub, person = _v10_select_card(role, index, assessment)
     shape = random.choice(_V10_BODY_SHAPES_AR if is_ar else _V10_BODY_SHAPES_EN)
-    channel = ("official_notice" if not is_phishing else (random.choice(_V10_MEDIUM_CHANNELS) if diff == "medium" else random.choice(_V10_HARD_CHANNELS) if diff == "hard" else "visible_raw_link"))
-    request = random.choice(_V10_EASY_REQUESTS_AR if is_ar else _V10_EASY_REQUESTS_EN)
+
+    # ── Attack type: for Easy, rotate through diverse attack packages ──
+    if diff == "easy" and is_phishing:
+        pool = _V10_EASY_ATTACK_TYPES_AR if is_ar else _V10_EASY_ATTACK_TYPES_EN
+        attack_pkg = pool[index % len(pool)]
+        attack_type_hint = attack_pkg["attack"]
+        request        = attack_pkg["request"]
+        tactic         = attack_pkg["tactic"]
+        indicators_hint= attack_pkg["indicators_hint"]
+    else:
+        attack_type_hint = ""; request = ""; tactic = ""; indicators_hint = ""
+
+    # ── Subject pattern: rotate by index for variety ──
+    topic_slug = (sc.get("topic") or sc.get("path") or "system").title()
+    if diff == "easy" and is_phishing:
+        subj_pool    = _V10_EASY_SUBJECTS_AR if is_ar else _V10_EASY_SUBJECTS_EN
+        subject_hint = subj_pool[index % len(subj_pool)].replace("{topic}", topic_slug)
+    else:
+        subject_hint = ""
+
+    # ── Pressure phrase ──
     pressure = random.choice(_V10_EASY_PRESSURE_AR if is_ar else _V10_EASY_PRESSURE_EN)
-    seed = random.randint(100000, 999999)
-    recipient = person[1]
-    lang_rule = "اكتب كل شيء بالعربية فقط." if is_ar else "Write everything in English only."
-    label = "تصيد" if is_ar and is_phishing else "شرعي" if is_ar else "PHISHING" if is_phishing else "LEGITIMATE"
+
+    # ── Channel ──
+    channel = (
+        "official_notice" if not is_phishing
+        else random.choice(_V10_MEDIUM_CHANNELS) if diff == "medium"
+        else random.choice(_V10_HARD_CHANNELS)   if diff == "hard"
+        else (tactic if tactic else "visible_raw_link")
+    )
+
+    seed        = random.randint(100000, 999999)
+    recipient   = person[1]
+    sender_dept = sc.get("sender") or sc.get("dept") or sub
+    lang_rule   = "اكتب كل شيء بالعربية فقط." if is_ar else "Write everything in English only."
+    label       = "تصيد" if is_ar and is_phishing else "شرعي" if is_ar else "PHISHING" if is_phishing else "LEGITIMATE"
     schema = """
 {
   "email_type": "specific type",
@@ -9232,6 +9349,13 @@ def _v10_prompt(role, index, language, difficulty="medium", is_phishing=True, as
 }
 """
     if is_ar:
+        attack_section = f"""
+نوع الهجوم المحدد لهذه الرسالة: {attack_type_hint}
+أسلوب الهجوم: {tactic}
+الطلب الحساس المطلوب: {request}
+اقتراح عنوان الموضوع: {subject_hint}
+تلميح المؤشرات (لا تكرر نفس الثلاثة دائمًا): {indicators_hint}
+""" if diff == "easy" and is_phishing else ""
         return f"""
 أنت مولد محتوى توعوي بالتصيد لمستشفى سعودي. يجب أن يكون التوليد من API وليس قالبًا ثابتًا.
 {lang_rule}
@@ -9242,35 +9366,41 @@ def _v10_prompt(role, index, language, difficulty="medium", is_phishing=True, as
 بطاقة السيناريو من قاعدة الـ300:
 - الموضوع: {sc.get('topic')}
 - القسم: {sc.get('dept')}
-- المرسل المنطقي: {sc.get('sender')}
+- المرسل المنطقي (استخدمه): {sender_dept}
 - المهمة: {sc.get('task')}
 - المسار/المفتاح: {sc.get('path')}
 المستلم: {recipient}
 
 إطار الصعوبة الإلزامي:
 {_v10_diff_contract(diff, is_phishing, is_ar)}
-
+{attack_section}
 تنويع المحتوى الإلزامي:
 - شكل الرسالة هذه المرة: {shape}
 - قناة الهجوم/الإجراء: {channel}
-- الطلب الحساس إذا كان سهلًا: {request}
-- الضغط الزمني إذا كان سهلًا: {pressure}
+- الضغط الزمني: {pressure}
 - رقم تنويع: {seed}
 
 قواعد حاسمة:
+- المُرسِل يجب أن يكون من '{sender_dept}' أو قسم مرتبط به — لا Nursing Affairs دائمًا.
 - اربط كل جملة بالموضوع الصحي المحدد. لا تجعل الرسالة كلها "حساب عام" فقط.
-- المستوى السهل لا يعني رسالة قصيرة جدًا؛ اجعلها واضحة لكن فيها تفاصيل سياق صحي بسيطة.
-- لا تستخدم QR أو مرفق في السهل.
-- لا تستخدم QR في المتوسط.
+- لا تستخدم QR أو مرفق في السهل. لا تستخدم QR في المتوسط.
 - لا تكرر نفس بداية أو نهاية الرسالة.
-- التحليل يجب أن يطابق البريد نفسه: لا تكتب تحليلًا عامًا.
+- التحليل يجب أن يطابق نوع الهجوم الفعلي ({attack_type_hint or 'مطابق للبريد'}): لا تكتب تحليلًا عامًا ثابتًا.
+- المؤشرات يجب أن تعكس نوع الهجوم الفعلي، وليس دائمًا (نطاق مزيف + إلحاح + بيانات دخول).
 - suspicious_text يجب أن يكون عبارة موجودة حرفيًا داخل body.
-- suspicious_link يجب أن يكون الرابط نفسه الموجود في body إذا كان الرابط ظاهرًا.
+- suspicious_link يجب أن يكون الرابط الموجود في body، أو فارغًا إذا كان الهجوم بالرد.
 - أخرج JSON فقط بالمخطط التالي، دون Markdown.
 {schema}
 """
+    attack_section = f"""
+Attack type for this email: {attack_type_hint}
+Attack tactic: {tactic}
+Sensitive action required from victim: {request}
+Suggested subject line (adapt to scenario): {subject_hint}
+Indicator diversity hint (vary from the usual 3 — match the actual attack): {indicators_hint}
+""" if diff == "easy" and is_phishing else ""
     return f"""
-You are generating phishing-awareness content for a Saudi hospital. The content must be API-generated, not a fixed template.
+You are generating phishing-awareness content for a Saudi hospital. Content must be API-generated, not a fixed template.
 {lang_rule}
 
 Required label: {label}
@@ -9279,34 +9409,32 @@ Internal sub-role: {sub}
 Scenario card from the 300-card knowledge base:
 - Topic: {sc.get('topic')}
 - Department: {sc.get('dept')}
-- Logical sender: {sc.get('sender')}
+- Logical sender (USE THIS — do not default to Nursing Affairs): {sender_dept}
 - Task: {sc.get('task')}
 - Path/key: {sc.get('path')}
 Recipient: {recipient}
 
 Mandatory difficulty framework:
 {_v10_diff_contract(diff, is_phishing, is_ar)}
-
+{attack_section}
 Mandatory content diversity:
 - Email structure this time: {shape}
 - Attack/action channel: {channel}
-- Sensitive request if Easy: {request}
-- Pressure phrase if Easy: {pressure}
+- Pressure phrase (if Easy): {pressure}
 - Diversity seed: {seed}
 
 Critical rules:
-- Tie every paragraph to the specific healthcare topic. Do not make the message only a generic account notice.
-- Easy does not mean too short; make it obvious but include simple healthcare context.
-- No QR and no attachment in Easy.
-- No QR in Intermediate.
-- Do not reuse the same opening or closing style.
-- The analysis must match this exact email. Do not write generic analysis.
-- suspicious_text must be an exact phrase from body.
-- suspicious_link must be the same URL visible in body when a raw visible link is used.
+- Sender MUST be from '{sender_dept}' or a closely related sub-department. Do NOT default to Nursing Affairs every time.
+- Tie every sentence to the specific healthcare topic. Do not write a generic account notice.
+- Easy is not too short; keep it obvious but include real healthcare context details.
+- No QR and no attachment in Easy. No QR in Intermediate.
+- Do not reuse the same opening or closing phrasing as standard phishing templates.
+- Indicators MUST reflect the ACTUAL attack type ({attack_type_hint or 'match the email content'}). Do NOT always write (fake domain + urgency + credential request) — vary based on attack.
+- suspicious_text must be an exact phrase present in body.
+- suspicious_link must be the URL visible in body, or empty string if attack is reply-based.
 - Return JSON only using this schema. No Markdown.
 {schema}
 """
-
 
 def _v10_parse_or_none(data):
     try:
