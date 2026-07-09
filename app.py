@@ -3368,6 +3368,10 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.82)!important;border
 div[data-baseweb="popover"] *{{color:#EAF4FF!important;}}
 .stSelectbox>div>div,.stTextInput>div>div>input{{background-color:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.55) !important;border-radius:12px !important;min-height:48px;direction:{dir_attr};text-align:{text_align};}}
 div[data-baseweb="select"] span{{color:white !important;}}
+div[data-baseweb="single-value"]{{color:white !important;}}
+div[data-baseweb="select"] [data-value]{{color:white !important;}}
+.stSelectbox div[class*="ValueContainer"] span{{color:white !important;}}
+div[data-baseweb="select"] input{{color:white !important;caret-color:white;}}
 div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:{dir_attr} !important;}}
 .footer-bar{{margin-top:2rem;padding:1.5rem 0;border-top:1px solid rgba(37,99,235,.35);display:flex;justify-content:space-between;align-items:center;color:#7DD3FC;font-size:.95rem;direction:{dir_attr};}}
 .footer-side{{display:flex;align-items:center;gap:.8rem;}}
@@ -4198,14 +4202,14 @@ button[kind="primary"]:hover{{
     box-shadow:none!important;
 }}
 .stTextInput div[data-baseweb="input"]{{
-    background:rgba(15,23,42,.70)!important;
-    border:1.5px solid rgba(37,99,235,.65)!important;
+    background:rgba(15,23,42,.80)!important;
+    border:2px solid rgba(148,163,184,.75)!important;
     border-radius:12px!important;
-    box-shadow:0 0 0 1px rgba(30,167,255,.10)!important;
+    box-shadow:0 0 0 3px rgba(148,163,184,.08)!important;
 }}
 .stTextInput div[data-baseweb="input"]:focus-within{{
-    border-color:#1EA7FF!important;
-    box-shadow:0 0 0 2px rgba(30,167,255,.18)!important;
+    border:2px solid #60A5FA!important;
+    box-shadow:0 0 0 3px rgba(96,165,250,.20)!important;
 }}
 div[data-baseweb="select"] *{{color:#EAF4FF!important;}}
 div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border:1px solid rgba(37,99,235,.55)!important;}}
