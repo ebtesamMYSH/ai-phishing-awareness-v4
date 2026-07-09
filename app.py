@@ -9821,6 +9821,175 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
 # END API-FIRST DYNAMIC GENERATION ENGINE v10
 # =============================================================
 
+
+
+# =============================================================
+# FINAL REVIEW PATCH v11 — Multi-provider + research design cleanup
+# -------------------------------------------------------------
+# What this patch fixes without changing the UI flow:
+# 1) v10 generation now uses the selected provider through call_ai()
+#    instead of hard-wiring generation to Groq.
+# 2) Hard difficulty is no longer forced into the same QR+attachment
+#    shape every time. It can use one advanced channel: QR, attachment,
+#    SharePoint-style review, Microsoft 365-style notice, or polished
+#    authority impersonation, depending on the selected scenario.
+# 3) The "Other" role remains a mixed role by routing through the same
+#    role-card selector, so it can draw from clinical/admin/IT contexts.
+# 4) Validation is stricter for real structural problems, but it accepts
+#    professional stylistic variety so valid API outputs are not rejected
+#    unnecessarily.
+# =============================================================
+
+_PROVIDER_LABEL_V11 = {
+    "groq": "Groq",
+    "anthropic": "Claude",
+    "openai": "OpenAI",
+    "gemini": "Gemini",
+}
+
+_ADVANCED_CHANNEL_RE_V11 = re.compile(
+    r"\[\s*QR\s*:|\.pdf\b|\.xlsx\b|\.docx\b|SharePoint|Microsoft\s*365|Outlook|OneDrive|Teams|بوابة|شيربوينت|مايكروسوفت|أوتلوك|مرفق|اعتماد|مراجعة",
+    re.I,
+)
+_RAW_URL_RE_V11 = re.compile(r"https?://[^\s)]+", re.I)
+
+_BASE_V11_QUALITY_ISSUES = get_generation_quality_issues
+
+def _v11_has_advanced_channel(result):
+    if not isinstance(result, dict):
+        return False
+    combined = "\n".join(str(result.get(k, "")) for k in ["body", "attachment", "suspicious_link", "email_type", "attack_type"])
+    return bool(_ADVANCED_CHANNEL_RE_V11.search(combined))
+
+
+def get_generation_quality_issues(result, difficulty, is_phishing=True):
+    """Final validator used by v11.
+    Keeps the original guardrails, but relaxes one research-design issue:
+    Hard/Advanced should be realistic and varied, not always QR + attachment.
+    """
+    issues = list(_BASE_V11_QUALITY_ISSUES(result, difficulty, is_phishing) or [])
+    if difficulty == "hard" and is_phishing:
+        relaxed_fragments = [
+            "Advanced/Hard must include a QR code marker",
+            "Advanced/Hard must include an official named attachment",
+            "Advanced must include a mandatory named attachment",
+        ]
+        issues = [i for i in issues if not any(f in i for f in relaxed_fragments)]
+        if not _v11_has_advanced_channel(result):
+            issues.append("Advanced/Hard must include at least one realistic advanced channel: QR, attachment, SharePoint/Microsoft 365-style review, or polished authority workflow.")
+        body = str(result.get("body", "")) if isinstance(result, dict) else ""
+        raw_urls = _RAW_URL_RE_V11.findall(body)
+        if raw_urls and not re.search(r"\[[^\]]+\]\(https?://", body):
+            issues.append("Advanced/Hard should not expose a raw URL; use a button, QR marker, attachment workflow, or named portal.")
+    return issues
+
+
+def _v11_diff_contract(diff, phishing=True, is_ar=False):
+    if not phishing:
+        return _v10_diff_contract(diff, phishing, is_ar)
+    if is_ar:
+        if diff == "easy":
+            return ("سهل: تحية عامة فقط؛ رابط خام واضح التزوير؛ لا QR؛ لا مرفق؛ طلب مباشر وواضح؛ "
+                    "إلحاح اليوم؛ مؤشرات كثيرة وواضحة؛ 7-10 أسطر.")
+        if diff == "medium":
+            return ("متوسط: تحية شبه شخصية؛ نطاق أو رابط قابل للتصديق لكنه قابل للكشف؛ لا QR؛ "
+                    "عنصر تقني واحد فقط مثل زر أو PDF بسيط أو رابط مراجعة؛ طلب غير مباشر؛ مهلة 24-72 ساعة؛ مؤشرات أقل.")
+        return ("صعب: اسم كامل أو منصب دقيق؛ نبرة داخلية احترافية بلا تهديد مباشر؛ لا طلب كلمة مرور صريح؛ "
+                "استخدم قناة متقدمة واحدة أو أكثر حسب السيناريو: QR، مرفق رسمي، SharePoint/Microsoft 365، Outlook، أو سير عمل اعتماد داخلي؛ "
+                "لا تستخدم رابطًا خامًا ظاهرًا؛ المؤشرات قليلة ومخفية.")
+    if diff == "easy":
+        return ("Easy: generic greeting only; raw visibly fake URL; no QR; no attachment; direct obvious request; "
+                "same-day urgency; many clear indicators; 7-10 readable lines.")
+    if diff == "medium":
+        return ("Intermediate: semi-personal greeting; believable but detectable link/domain; no QR; exactly one simple technical element "
+                "such as a button, simple PDF, or review link; indirect request; 24-72 hour deadline; fewer indicators.")
+    return ("Advanced: full name or precise title; polished internal tone with no direct threat; no direct password request; "
+            "use one or more advanced channels as the scenario requires: QR, official attachment, SharePoint/Microsoft 365, Outlook, or internal approval workflow; "
+            "do not expose a raw URL; indicators should be few and subtle.")
+
+
+def _v11_prompt(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    # Reuse the v10 prompt, then replace only the difficulty contract text with
+    # the final research framework so all four providers receive identical rules.
+    prompt = _v10_prompt(role, index, language, difficulty, is_phishing, assessment)
+    diff = _enhanced_diff(difficulty)
+    is_ar = (language == "Arabic")
+    old = _v10_diff_contract(diff, is_phishing, is_ar)
+    new = _v11_diff_contract(diff, is_phishing, is_ar)
+    prompt = prompt.replace(old, new)
+    provider = st.session_state.get("ai_provider", "openai")
+    return prompt + f"\n\nProvider selected for this run: {_PROVIDER_LABEL_V11.get(provider, provider)}. Return valid JSON only.\n"
+
+
+def _v11_postprocess_advanced(result, difficulty):
+    if not isinstance(result, dict) or _enhanced_diff(difficulty) != "hard":
+        return result
+    body = str(result.get("body", ""))
+    # If an advanced email contains a raw URL, convert the first visible URL into
+    # a button-style reference so the UI still renders it professionally.
+    m = _RAW_URL_RE_V11.search(body)
+    if m and not re.search(r"\[[^\]]+\]\(https?://", body):
+        url = m.group(0)
+        label = "فتح بوابة المراجعة" if re.search(r"[\u0600-\u06ff]", body) else "Open internal review"
+        body = body.replace(url, f"[{label}]({url})", 1)
+        result["body"] = body
+        result.setdefault("suspicious_link", url)
+    return result
+
+
+def _v11_generate_api(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    is_ar = language == "Arabic"
+    last_issues = []
+    provider = st.session_state.get("ai_provider", "openai")
+    # Gemini/Claude benefit from one extra attempt because they are more likely
+    # to return transient load or formatting errors.
+    attempts = 4 if provider in {"gemini", "anthropic"} else 3
+    for attempt in range(attempts):
+        prompt = _v11_prompt(role, index + attempt * 101, language, difficulty, is_phishing, assessment)
+        if last_issues:
+            prompt += build_retry_guidance(last_issues, is_ar)
+        data = call_ai(prompt, max_tokens=3600)
+        result = _v10_parse_or_none(data)
+        result = _v10_fix_result(result, role, index + attempt * 101, language, difficulty, is_phishing, assessment) if result else None
+        result = _v11_postprocess_advanced(result, difficulty) if result else None
+        if result:
+            issues = get_generation_quality_issues(result, _enhanced_diff(difficulty), bool(is_phishing))
+            # Reject only issues that break the research design or UI rendering.
+            severe_words = [
+                "must not contain", "must show", "must include", "must have", "must use",
+                "must avoid", "must reflect", "not allowed", "does not match", "expose a raw URL",
+                "لا تستخدم", "يجب", "محظور",
+            ]
+            severe = [i for i in issues if any(w.lower() in i.lower() for w in severe_words)]
+            if not severe:
+                try:
+                    evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=bool(is_phishing))
+                except Exception:
+                    pass
+                return result
+            last_issues = severe[:6]
+    return {"error": "API generation did not pass the selected role/difficulty guardrails. Please press Generate/Try again."}
+
+
+def generate_email(role, index, language, difficulty="medium"):
+    return _v11_generate_api(role, index, language, difficulty, True, assessment=False)
+
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    return _v11_generate_api(role, index, language, difficulty, bool(is_phishing), assessment=True)
+
+
+def generate_other_email(index, language, difficulty):
+    return generate_email("Other", index, language, difficulty)
+
+
+def generate_other_assess_email(index, is_phishing, language, difficulty):
+    return generate_assess_email("Other", index, is_phishing, language, difficulty)
+
+# =============================================================
+# END FINAL REVIEW PATCH v11
+# =============================================================
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
