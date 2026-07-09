@@ -10406,6 +10406,567 @@ if st.session_state.get("page","home") == "home":
 # ══════════════════════════════════════════════════════════════
 # MAIN ROUTING
 # ══════════════════════════════════════════════════════════════
+# =============================================================
+# PHD FINAL PATCH v14 — DEEP DYNAMIC SCENARIO ENGINE
+# -------------------------------------------------------------
+# Keeps the original Easy / Medium / Hard philosophy unchanged,
+# but fixes the key research weakness: repeated scenario stories.
+# This patch adds:
+#   • large role-specific scenario pools for Clinical/Admin/IT
+#   • fresh scenario order every time the user starts learning
+#   • multi-layer variation: department, workflow, attack, channel,
+#     greeting, urgency, sender, domain, subject, closing, indicators
+#   • API-first generation with strict scenario validation; if the
+#     provider ignores the selected scenario, a strong deterministic
+#     fallback is used so participants never see errors or repeated old
+#     templates.
+# =============================================================
+
+try:
+    _BASE_GO_TO_LEARNING_V14 = go_to_learning
+except Exception:
+    _BASE_GO_TO_LEARNING_V14 = None
+
+
+def go_to_learning(role):
+    """Start a fresh learning cycle and force a new scenario shuffle.
+    This is critical for repeated testing in the same browser session."""
+    st.session_state["role"] = role
+    st.session_state["page"] = "learning"
+    st.session_state["example_index"] = 0
+    st.session_state["emails"] = {}
+    st.session_state.pop("assess_emails", None)
+    st.session_state.pop("assess_pattern", None)
+    st.session_state.pop("assess_index", None)
+    st.session_state.pop("assess_answers", None)
+    st.session_state["v14_cycle_token"] = random.randint(100000, 999999999)
+
+
+_V14_CLINICAL_DEPTS = [
+    "Emergency Department", "Adult ICU", "Neonatal ICU", "Cardiac Care Unit", "Operating Theatre",
+    "Post-Anesthesia Care Unit", "Radiology", "PACS Imaging", "MRI Unit", "CT Scan Unit",
+    "Ultrasound Unit", "Interventional Radiology", "Laboratory", "Microbiology Lab", "Histopathology Lab",
+    "Blood Bank", "Pharmacy", "Medication Safety", "Clinical Nutrition", "Infection Control",
+    "Patient Safety", "Quality Improvement", "Medical Records", "Respiratory Therapy", "Dialysis Unit",
+    "Endoscopy Unit", "Oncology Day Care", "Cardiology Clinic", "Neurology Clinic", "Stroke Unit",
+    "Maternity Ward", "Pediatrics Ward", "Surgical Ward", "Internal Medicine Ward", "Outpatient Clinics",
+    "Telemedicine Service", "Wound Care Clinic", "Anesthesia Department", "CSSD Sterilization", "Clinical Education",
+    "Nursing Affairs", "Bed Management", "Pain Management", "Rehabilitation Services", "Ambulatory Care",
+]
+
+_V14_CLINICAL_WORKFLOWS = [
+    "critical result acknowledgement", "patient handover verification", "clinical protocol acknowledgement",
+    "duty roster correction", "incident report follow-up", "patient safety audit", "medication recall response",
+    "high-risk patient review", "sterilization record confirmation", "scan report access review",
+    "lab-result portal verification", "blood product release approval", "infection-control declaration",
+    "clinical competency renewal", "case conference invitation", "remote consultation schedule",
+    "consultation request queue review", "controlled medication register review", "discharge summary correction",
+    "urgent referral update", "patient transfer note approval", "equipment downtime notice",
+    "fall-risk assessment follow-up", "sepsis bundle compliance review", "antibiotic stewardship review",
+    "vaccination campaign staff list", "radiation safety acknowledgement", "sample rejection report review",
+    "operating list amendment", "Morbidity and Mortality review attendance", "patient complaint clinical response",
+    "new care pathway acknowledgement", "smart pump library update", "PACS viewer access notice",
+    "LIS barcode verification", "emergency drill participation", "clinical privileges document review",
+]
+
+_V14_ADMIN_DEPTS = [
+    "Human Resources", "Payroll", "Finance", "Procurement", "Medical Supply Chain", "Insurance Office",
+    "Patient Registration", "Appointment Center", "Billing Office", "Executive Office", "Legal Affairs",
+    "Compliance", "Internal Audit", "Quality Administration", "Training Department", "Credentialing Office",
+    "CME Office", "Facilities Management", "Medical Records Administration", "Contracts Department",
+    "Vendor Management", "Patient Experience", "Public Relations", "Administrative Affairs", "Recruitment Office",
+    "Employee Relations", "Travel Desk", "Housing Office", "Security Office", "Document Control",
+    "Policy Office", "Accreditation Office", "Risk Management", "Call Center", "Transport Services",
+    "Warehouse Office", "Asset Management", "Government Relations", "Research Administration", "Data Governance Office",
+]
+
+_V14_ADMIN_WORKFLOWS = [
+    "salary bank-detail review", "annual leave balance confirmation", "performance review acknowledgement",
+    "supplier invoice approval", "vendor contract renewal", "insurance claim reconciliation", "appointment template update",
+    "patient complaint follow-up", "policy acknowledgement", "audit evidence submission", "training enrollment confirmation",
+    "CME certificate access", "staff benefits enrollment", "procurement quotation review", "executive meeting pack review",
+    "confidential memo acknowledgement", "new employee onboarding form", "housing allowance confirmation",
+    "overtime approval review", "committee attendance confirmation", "contract addendum review",
+    "accreditation evidence upload", "risk register update", "asset custody confirmation", "travel reimbursement review",
+    "legal document attestation", "document control revision", "insurance portal access review", "public announcement approval",
+    "patient experience survey export", "recruitment shortlist review", "vendor prequalification form",
+]
+
+_V14_IT_DEPTS = [
+    "Service Desk", "Cybersecurity", "Network Operations", "Data Center", "Microsoft 365 Administration",
+    "Outlook Support", "SharePoint Administration", "Teams Administration", "VPN Gateway", "Active Directory",
+    "MFA Enrollment", "Endpoint Security", "Firewall Operations", "Backup Operations", "Cloud Services",
+    "HIS Support", "EMR Integration", "PACS Integration", "LIS Support", "Pharmacy System Support",
+    "Wi-Fi Services", "Asset Management", "Software Licensing", "Change Management", "Database Administration",
+    "Identity Governance", "Security Operations Center", "Email Security", "Device Management", "Integration Engine",
+    "Helpdesk Quality", "Clinical Informatics", "Disaster Recovery", "Printer Services", "Telephony Support",
+]
+
+_V14_IT_WORKFLOWS = [
+    "password-expiry review", "MFA re-enrollment", "VPN access revalidation", "mailbox quota correction",
+    "SharePoint permission review", "Teams external-access setting", "certificate renewal", "firewall policy approval",
+    "backup verification", "endpoint agent update", "software license renewal", "change-ticket acknowledgement",
+    "database access review", "privileged account attestation", "cloud storage migration", "service outage follow-up",
+    "secure email gateway release", "device compliance check", "remote access exception", "PACS integration test",
+    "LIS interface queue review", "EMR single sign-on validation", "network maintenance notice", "domain account cleanup",
+    "phishing simulation result portal", "conditional access policy notice", "server patch approval", "print queue migration",
+    "asset inventory confirmation", "API token rotation notice", "disaster recovery exercise", "helpdesk ticket escalation",
+]
+
+_V14_ATTACKS = [
+    {"key":"credential", "label":"Credential Phishing", "easy":"enter your username and password", "medium":"complete the access review", "hard":"approve the assigned workflow"},
+    {"key":"survey", "label":"Information Gathering", "easy":"submit your employee ID and password", "medium":"complete the staff survey", "hard":"confirm the assigned attestation"},
+    {"key":"mfa", "label":"MFA Phishing", "easy":"enter your OTP code", "medium":"re-confirm MFA registration", "hard":"review the conditional access notice"},
+    {"key":"shared_doc", "label":"Shared Document Phishing", "easy":"open the document login link", "medium":"review the shared document", "hard":"open the restricted SharePoint workspace"},
+    {"key":"attachment", "label":"Malicious Attachment", "easy":"download the required update file", "medium":"review the attached PDF", "hard":"open the Excel/PDF workflow package"},
+    {"key":"qr", "label":"QR Phishing", "easy":"scan the login QR code", "medium":"scan the verification code", "hard":"scan the internal approval QR"},
+    {"key":"social", "label":"Social Engineering", "easy":"reply with sensitive details", "medium":"send a confirmation reply", "hard":"respond to the named coordinator through the thread"},
+    {"key":"teams", "label":"Fake Teams Invite", "easy":"join using the fake link", "medium":"confirm meeting attendance", "hard":"open the Teams governance notice"},
+    {"key":"onedrive", "label":"Fake OneDrive File", "easy":"open the fake file link", "medium":"review the OneDrive folder", "hard":"open the restricted document library"},
+    {"key":"docusign", "label":"Fake Approval Workflow", "easy":"sign in to approve", "medium":"review the approval request", "hard":"complete the policy acknowledgement"},
+]
+
+_V14_OPENINGS_EN = [
+    "Our records show a pending item related to", "A system notice has been created for",
+    "This message concerns a time-sensitive update for", "A review task was assigned regarding",
+    "The department is completing a scheduled check for", "An exception was detected in",
+    "Please review the latest notice connected to", "There is a pending confirmation for",
+]
+_V14_OPENINGS_AR = [
+    "تُظهر سجلاتنا وجود إجراء معلق مرتبط بـ", "تم إنشاء إشعار نظام بخصوص",
+    "تتعلق هذه الرسالة بتحديث يحتاج متابعة حول", "تم إسناد مهمة مراجعة بخصوص",
+    "يقوم القسم بإكمال مراجعة مجدولة حول", "تم رصد استثناء مرتبط بـ",
+    "يرجى مراجعة الإشعار الأخير المرتبط بـ", "يوجد تأكيد معلق بخصوص",
+]
+
+_V14_CLOSINGS_EN = ["Regards", "Sincerely", "Thank you", "Best regards", "Kind regards"]
+_V14_CLOSINGS_AR = ["مع التحية", "شاكرين تعاونكم", "وتفضلوا بقبول التحية", "مع الشكر"]
+
+_V14_EASY_URGENCY_EN = ["today", "immediately", "within hours", "before the end of the shift", "before the end of the day"]
+_V14_MED_URGENCY_EN = ["within 24 hours", "within 48 hours", "before the scheduled review window closes", "before tomorrow afternoon"]
+_V14_HARD_URGENCY_EN = ["before the next business day", "before the audit window closes", "before the scheduled governance review", "when convenient today"]
+_V14_EASY_URGENCY_AR = ["اليوم", "فورًا", "خلال ساعات", "قبل نهاية المناوبة", "قبل نهاية اليوم"]
+_V14_MED_URGENCY_AR = ["خلال 24 ساعة", "خلال 48 ساعة", "قبل إغلاق نافذة المراجعة", "قبل ظهر الغد"]
+_V14_HARD_URGENCY_AR = ["قبل يوم العمل القادم", "قبل إغلاق نافذة التدقيق", "قبل مراجعة الحوكمة المجدولة", "خلال اليوم عند التفرغ"]
+
+_V14_HARD_CHANNELS = ["SharePoint", "Microsoft 365", "Outlook workflow", "PDF", "Excel", "QR", "Teams", "OneDrive", "Internal Portal", "DocuSign-style approval"]
+_V14_MED_CHANNELS = ["Review Link", "Portal Link", "PDF", "Survey Portal", "Login Page", "Shared Document", "Teams Notice"]
+
+
+def _v14_slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")[:54] or "workflow"
+
+
+def _v14_role_type(role):
+    try:
+        return _v12_role_type(role)
+    except Exception:
+        info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
+        return info[2] if info and len(info) >= 3 else "clinical"
+
+
+def _v14_build_pool(role_type):
+    if role_type == "admin":
+        depts, flows = _V14_ADMIN_DEPTS, _V14_ADMIN_WORKFLOWS
+    elif role_type == "it":
+        depts, flows = _V14_IT_DEPTS, _V14_IT_WORKFLOWS
+    elif role_type == "clinical":
+        depts, flows = _V14_CLINICAL_DEPTS, _V14_CLINICAL_WORKFLOWS
+    else:
+        return _v14_build_pool("clinical") + _v14_build_pool("admin") + _v14_build_pool("it")
+    pool = []
+    for i, dept in enumerate(depts):
+        for j in range(7):
+            flow = flows[(i * 5 + j * 3) % len(flows)]
+            attack = _V14_ATTACKS[(i * 2 + j) % len(_V14_ATTACKS)]
+            pool.append({
+                "role_type": role_type,
+                "dept": dept,
+                "workflow": flow,
+                "attack_key": attack["key"],
+                "attack_type": attack["label"],
+                "easy_action": attack["easy"],
+                "medium_action": attack["medium"],
+                "hard_action": attack["hard"],
+                "medium_channel": _V14_MED_CHANNELS[(i + j) % len(_V14_MED_CHANNELS)],
+                "hard_channel": _V14_HARD_CHANNELS[(i * 3 + j) % len(_V14_HARD_CHANNELS)],
+                "scenario_id": f"{role_type}-{i:03d}-{j:02d}-{attack['key']}",
+            })
+    return pool
+
+
+_V14_POOLS = {"clinical": _v14_build_pool("clinical"), "admin": _v14_build_pool("admin"), "it": _v14_build_pool("it")}
+_V14_POOLS["other"] = _V14_POOLS["clinical"] + _V14_POOLS["admin"] + _V14_POOLS["it"]
+
+
+def _v14_pick_scenario(role, index, assessment=False):
+    role_type = _v14_role_type(role)
+    if role_type not in _V14_POOLS:
+        role_type = "other"
+    pool = _V14_POOLS[role_type]
+    token = st.session_state.get("v14_cycle_token")
+    if not token:
+        token = random.randint(100000, 999999999)
+        st.session_state["v14_cycle_token"] = token
+    key = f"v14_order_{role_type}_{'assess' if assessment else 'learn'}_{token}"
+    if key not in st.session_state:
+        order = list(range(len(pool)))
+        random.shuffle(order)
+        # de-clump: prefer different departments for the first 16 items.
+        front, used = [], set()
+        for pos in order:
+            d = pool[pos]["dept"]
+            if d not in used:
+                front.append(pos); used.add(d)
+            if len(front) >= 16:
+                break
+        rest = [p for p in order if p not in set(front)]
+        st.session_state[key] = front + rest
+    order = st.session_state[key]
+    return pool[order[index % len(order)]]
+
+
+def _v14_person(role, index, assessment=False):
+    try:
+        return _v12_person(role, index, assessment)
+    except Exception:
+        rt = _v14_role_type(role)
+        email = (EN_NAMES.get(rt) or EN_NAMES.get("clinical") or ["employee@hospital.org"])[index % 6]
+        name = email.split("@")[0].replace(".", " ").title()
+        return name, email, rt, rt.title()
+
+
+def _v14_domain(diff, role_type, sc, index, legit=False):
+    if legit:
+        return "hospital.org"
+    base = _v14_slug(sc["dept"])
+    flow = _v14_slug(sc["workflow"]).split("-")[0]
+    if diff == "easy":
+        choices = [f"{base}-login-update.com", f"secure-{flow}-verify.net", f"hospital-{base}-access.co", f"{flow}-account-check.biz"]
+    elif diff == "medium":
+        choices = [f"{base}.hospital-review.net", f"hospital-{flow}-portal.org", f"{base}-workflow.health-review.com", f"{flow}.sa-hospital-review.net"]
+    else:
+        choices = [f"hospital.org.{base}-workflow.com", f"sharepoint-hospital-{flow}.com", f"m365-hospital-review.org", f"hospital-gov-review.net"]
+    return choices[index % len(choices)]
+
+
+def _v14_indicator_set(diff, is_ar, sc, link, attachment):
+    attack = sc["attack_type"]
+    channel = sc["hard_channel"] if diff == "hard" else sc["medium_channel"] if diff == "medium" else "obvious link"
+    if is_ar:
+        if diff == "easy":
+            return [
+                {"number":1,"title":"نطاق مرسل مزيف وواضح","description":"عنوان المرسل لا يستخدم نطاق المستشفى الرسمي."},
+                {"number":2,"title":"طلب مباشر لبيانات الدخول","description":"الرسالة تطلب كلمة مرور أو رمز دخول بشكل صريح."},
+                {"number":3,"title":"إلحاح وتهديد سريع","description":"تضغط على المستخدم بعبارات مثل اليوم أو خلال ساعات."},
+                {"number":4,"title":"رابط خارجي ظاهر","description":f"الرابط يقود إلى نطاق غير رسمي: {link}"},
+            ]
+        if diff == "medium":
+            return [
+                {"number":1,"title":"رابط قريب من الرسمي لكنه خارجي","description":"النطاق يبدو مهنيًا لكنه ليس نطاق المستشفى الحقيقي."},
+                {"number":2,"title":"طلب مراجعة غير معتاد","description":f"تستخدم الرسالة قناة {channel} لإجراء حساس."},
+                {"number":3,"title":"مهلة زمنية مصطنعة","description":"الطلب يستخدم مهلة معقولة لكنها تدفع المستخدم للتصرف بسرعة."},
+            ]
+        return [
+            {"number":1,"title":"قناة عمل متقدمة لكن غير مؤكدة","description":f"الطلب يستخدم {channel} بطريقة قد تبدو داخلية لكنها تحتاج تحقق."},
+            {"number":2,"title":"رابط أو مرفق خارج المسار الرسمي","description":"المؤشر قليل وواضح فقط عند فحص النطاق أو مسار الملف."},
+        ]
+    if diff == "easy":
+        return [
+            {"number":1,"title":"Obvious fake sender domain","description":"The sender does not use the official hospital.org domain."},
+            {"number":2,"title":"Direct credential request","description":"The message asks for a password, PIN, OTP, or login details."},
+            {"number":3,"title":"Strong urgency or threat","description":"The email pressures the user to act today or within hours."},
+            {"number":4,"title":"Visible external link","description":f"The link points to a non-official domain: {link}"},
+        ]
+    if diff == "medium":
+        return [
+            {"number":1,"title":"Plausible but external domain","description":"The domain looks professional but is not the official hospital domain."},
+            {"number":2,"title":"Unusual review workflow","description":f"The message uses {channel} for a sensitive workplace action."},
+            {"number":3,"title":"Artificial deadline","description":"The deadline sounds reasonable but still pushes fast action."},
+        ]
+    return [
+        {"number":1,"title":"Advanced channel needs verification","description":f"The request uses {channel}, which can look internal but still needs domain verification."},
+        {"number":2,"title":"Subtle link or attachment risk","description":"The risky clue is limited to the link destination or attachment source."},
+    ]
+
+
+def _v14_legitimate(role, index, language, difficulty, assessment=False):
+    is_ar = language == "Arabic"
+    name, email, rt, sub = _v14_person(role, index, assessment)
+    sc = _v14_pick_scenario(role, index, assessment)
+    dept, workflow = sc["dept"], sc["workflow"]
+    if is_ar:
+        body = f"""عزيزي الموظف،
+
+نود إفادتكم بوجود تحديث داخلي روتيني مرتبط بـ {workflow} ضمن {dept}. لا يتطلب هذا الإشعار إدخال كلمة مرور أو رمز تحقق أو فتح رابط خارجي.
+
+سيتم نشر أي إجراء مطلوب عبر القنوات الرسمية داخل المستشفى فقط.
+
+مع التحية،
+{dept}"""
+        return {"email_type":"رسالة عمل شرعية","attack_type":"Legitimate","from":f"{dept} <notice@hospital.org>","to":email,"subject":f"تحديث داخلي: {workflow}","attachment":"","body":body,"suspicious_text":"","suspicious_link":"","injected_errors":[],"indicators":[{"number":1,"title":"لا يوجد مؤشر تصيد واضح","description":"الرسالة لا تطلب بيانات حساسة ولا تستخدم رابطًا خارجيًا."}],"why_risky":"هذه رسالة شرعية لأغراض الاختبار وليست تصيدًا.","learning_tip":"قارن دائمًا بين المصدر والطلب والقناة قبل اتخاذ القرار.","risk_level":"Safe","is_phishing":False}
+    body = f"""Dear Staff,
+
+This is a routine internal notice related to {workflow} within {dept}. This message does not require a password, OTP, external link, QR code, or attachment.
+
+Any required action will be published through official hospital channels only.
+
+Regards,
+{dept}"""
+    return {"email_type":"Legitimate workplace email","attack_type":"Legitimate","from":f"{dept} <notice@hospital.org>","to":email,"subject":f"Internal update: {workflow}","attachment":"","body":body,"suspicious_text":"","suspicious_link":"","injected_errors":[],"indicators":[{"number":1,"title":"No clear phishing indicator","description":"The message does not request sensitive data or use an external action link."}],"why_risky":"This is a legitimate message for assessment purposes, not a phishing email.","learning_tip":"Compare the sender, request, and channel before making a decision.","risk_level":"Safe","is_phishing":False}
+
+
+def _v14_fallback_email(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    diff = _enhanced_diff(difficulty) if "_enhanced_diff" in globals() else str(difficulty or "medium").lower()
+    if diff == "advanced": diff = "hard"
+    is_ar = language == "Arabic"
+    name, email, role_type, sub = _v14_person(role, index, assessment)
+    sc = _v14_pick_scenario(role, index, assessment)
+    if not is_phishing:
+        return _v14_legitimate(role, index, language, difficulty, assessment)
+    dept, workflow, attack = sc["dept"], sc["workflow"], sc["attack_type"]
+    domain = _v14_domain(diff, role_type, sc, index)
+    link = (f"http://{domain}/verify/{index+101}" if diff == "easy" else f"https://{domain}/review/{index+381}" if diff == "medium" else f"https://{domain}/workflow/{index+740}")
+    opening_en = _V14_OPENINGS_EN[(index + len(dept)) % len(_V14_OPENINGS_EN)]
+    opening_ar = _V14_OPENINGS_AR[(index + len(dept)) % len(_V14_OPENINGS_AR)]
+    closing_en = _V14_CLOSINGS_EN[(index + len(workflow)) % len(_V14_CLOSINGS_EN)]
+    closing_ar = _V14_CLOSINGS_AR[(index + len(workflow)) % len(_V14_CLOSINGS_AR)]
+    attachment = ""
+    suspicious_text = ""
+
+    if is_ar:
+        if diff == "easy":
+            urgency = _V14_EASY_URGENCY_AR[index % len(_V14_EASY_URGENCY_AR)]
+            subject = f"إجراء عاجل اليوم: {workflow}"
+            sender = f"{dept} <support@{domain}>"
+            suspicious_text = "أدخل كلمة المرور أو رمز الدخول"
+            body = f"""عزيزي الموظف،
+
+{opening_ar} {workflow} في {dept}. يجب تحديث بيانات الدخول {urgency} حتى لا يتم إيقاف وصولك للنظام.
+
+اضغط الرابط التالي وأدخل اسم المستخدم وكلمة المرور أو رمز الدخول:
+{link}
+
+عدم الإكمال {urgency} سيؤدي إلى تعليق الحساب خلال ساعات.
+
+{closing_ar}،
+فريق الدعم"""
+        elif diff == "medium":
+            urgency = _V14_MED_URGENCY_AR[index % len(_V14_MED_URGENCY_AR)]
+            subject = f"مراجعة مطلوبة: {workflow}"
+            sender = f"{dept} <coordination@{domain}>"
+            attachment = "Review_Notice.pdf" if sc["medium_channel"] == "PDF" else ""
+            suspicious_text = "رابط مراجعة خارجي"
+            body = f"""عزيزي/عزيزتي {sub if sub else dept}،
+
+{opening_ar} {workflow} ضمن {dept}. يرجى إكمال المراجعة {urgency} حتى لا يتأخر الإجراء المرتبط بقسمك.
+
+رابط المراجعة:
+{link}
+
+{closing_ar}،
+مكتب تنسيق الأنظمة"""
+        else:
+            urgency = _V14_HARD_URGENCY_AR[index % len(_V14_HARD_URGENCY_AR)]
+            channel = sc["hard_channel"]
+            subject = f"اعتماد داخلي مطلوب: {workflow}"
+            sender = f"{dept} <workflow@{domain}>"
+            attachment = "Governance_Review.pdf" if channel in ("PDF", "DocuSign-style approval") else "Roster_Update.xlsx" if channel == "Excel" else ""
+            label = "فتح طلب الاعتماد" if channel != "QR" else "مسح رمز QR الخاص بالمراجعة"
+            suspicious_text = label
+            body = f"""عزيزتي/عزيزي {name}،
+
+ضمن مراجعة داخلية مرتبطة بـ {workflow} في {dept}، نرجو اعتماد الملاحظة المسندة إليك عبر {channel} {urgency}.
+
+لا يلزم إرسال كلمة المرور بالبريد. الرجاء استخدام مسار المراجعة التالي:
+[{label}]({link})
+
+{closing_ar}،
+وحدة الحوكمة والامتثال"""
+        indicators = _v14_indicator_set(diff, True, sc, link, attachment)
+        return {"email_type": workflow, "attack_type": attack, "from": sender, "to": email, "subject": subject, "attachment": attachment, "body": body, "suspicious_text": suspicious_text, "suspicious_link": link if not (diff == "hard" and attachment) else "", "injected_errors": ["إلحاح واضح", "طلب بيانات مباشر"] if diff == "easy" else [], "indicators": indicators, "why_risky": "هذه رسالة تصيد تدريبية لأنها تستخدم نطاقًا أو قناة غير موثوقة لدفع الموظف إلى إجراء حساس.", "learning_tip": "تحقق من النطاق والقناة الرسمية قبل فتح الروابط أو المرفقات أو رموز QR.", "risk_level": "High" if diff == "hard" else "Medium" if diff == "medium" else "Low", "is_phishing": True}
+
+    if diff == "easy":
+        urgency = _V14_EASY_URGENCY_EN[index % len(_V14_EASY_URGENCY_EN)]
+        subject = f"Urgent action today: {workflow}"
+        sender = f"{dept} <support@{domain}>"
+        suspicious_text = "enter your username and password or access code"
+        body = f"""Dear Staff,
+
+{opening_en} {workflow} in {dept}. You must update your login details {urgency} to prevent system access from being stopped.
+
+Click the link below and enter your username and password or access code:
+{link}
+
+Failure to complete this {urgency} will suspend your account within hours.
+
+{closing_en},
+Support Team"""
+    elif diff == "medium":
+        urgency = _V14_MED_URGENCY_EN[index % len(_V14_MED_URGENCY_EN)]
+        subject = f"Review required: {workflow}"
+        sender = f"{dept} <coordination@{domain}>"
+        attachment = "Review_Notice.pdf" if sc["medium_channel"] == "PDF" else ""
+        suspicious_text = "non-official review link"
+        body = f"""Dear {sub if sub else dept},
+
+{opening_en} {workflow} within {dept}. Please complete the review {urgency} to avoid delaying the workflow assigned to your department.
+
+Review link:
+{link}
+
+{closing_en},
+Systems Coordination Office"""
+    else:
+        urgency = _V14_HARD_URGENCY_EN[index % len(_V14_HARD_URGENCY_EN)]
+        channel = sc["hard_channel"]
+        subject = f"Internal approval required: {workflow}"
+        sender = f"{dept} <workflow@{domain}>"
+        attachment = "Governance_Review.pdf" if channel in ("PDF", "DocuSign-style approval") else "Roster_Update.xlsx" if channel == "Excel" else ""
+        label = "Open approval request" if channel != "QR" else "Scan the review QR code"
+        suspicious_text = label
+        body = f"""Dear {name},
+
+As part of an internal review related to {workflow} in {dept}, please approve the note assigned to you through {channel} {urgency}.
+
+Do not send your password by email. Please use the review path below:
+[{label}]({link})
+
+{closing_en},
+Governance and Compliance Unit"""
+    indicators = _v14_indicator_set(diff, False, sc, link, attachment)
+    return {"email_type": workflow, "attack_type": attack, "from": sender, "to": email, "subject": subject, "attachment": attachment, "body": body, "suspicious_text": suspicious_text, "suspicious_link": link if not (diff == "hard" and attachment) else "", "injected_errors": ["clear urgency wording", "direct credential request"] if diff == "easy" else [], "indicators": indicators, "why_risky": "This is a training phishing email because it uses an untrusted domain or channel to push a sensitive action.", "learning_tip": "Verify the domain and official workflow before opening links, attachments, or QR codes.", "risk_level": "High" if diff == "hard" else "Medium" if diff == "medium" else "Low", "is_phishing": True}
+
+
+def _v14_prompt(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    is_ar = language == "Arabic"
+    diff = _enhanced_diff(difficulty) if "_enhanced_diff" in globals() else str(difficulty or "medium").lower()
+    sc = _v14_pick_scenario(role, index, assessment)
+    fb = _v14_fallback_email(role, index, language, difficulty, is_phishing, assessment)
+    rules = _v13_diff_rules(diff, is_ar) if "_v13_diff_rules" in globals() else "Follow the selected difficulty rules exactly."
+    return f"""
+You are generating ONE email for a phishing-awareness training platform for Saudi healthcare employees.
+Return ONLY valid JSON. No markdown. No text outside JSON.
+
+Language: {'Arabic' if is_ar else 'English'}.
+Role type: {_v14_role_type(role)}.
+Difficulty: {diff}.
+Is phishing: {bool(is_phishing)}.
+
+MANDATORY selected scenario. Do not replace it with any other topic:
+- Department/area: {sc['dept']}
+- Workflow/topic: {sc['workflow']}
+- Attack type: {sc['attack_type']}
+- Channel hint: {sc['hard_channel'] if diff == 'hard' else sc['medium_channel'] if diff == 'medium' else 'obvious external link'}
+- Recipient email must be: {fb['to']}
+- Suggested sender: {fb['from']}
+- Suggested subject: {fb['subject']}
+- Suggested link: {fb.get('suspicious_link','')}
+
+{rules}
+
+Required JSON keys exactly:
+email_type, attack_type, from, to, subject, attachment, body, suspicious_text, suspicious_link, injected_errors, indicators, why_risky, learning_tip, risk_level, is_phishing
+
+Make the writing natural, but keep the selected department and workflow clearly visible in the subject or first paragraph.
+""".strip()
+
+
+def _v14_matches_scenario(result, sc):
+    if not isinstance(result, dict):
+        return False
+    blob = " ".join(str(result.get(k, "")) for k in ["subject", "body", "from", "email_type"]).lower()
+    dept_words = [w for w in re.split(r"[^a-zA-Z]+", sc["dept"].lower()) if len(w) >= 4]
+    flow_words = [w for w in re.split(r"[^a-zA-Z]+", sc["workflow"].lower()) if len(w) >= 5]
+    dept_ok = any(w in blob for w in dept_words[:3]) if dept_words else True
+    flow_ok = any(w in blob for w in flow_words[:4]) if flow_words else True
+    return dept_ok and flow_ok
+
+
+def _v14_finalize(result, role, index, language, difficulty, is_phishing, assessment=False):
+    fb = _v14_fallback_email(role, index, language, difficulty, is_phishing, assessment)
+    if not isinstance(result, dict):
+        result = {}
+    # Do NOT let old template repair functions overwrite the scenario.
+    for k, v in fb.items():
+        if k not in result or result.get(k) in (None, "", []):
+            result[k] = v
+    result["to"] = fb["to"]
+    result["is_phishing"] = bool(is_phishing)
+    # Preserve exact difficulty-driven indicator counts.
+    diff = _enhanced_diff(difficulty) if "_enhanced_diff" in globals() else str(difficulty or "medium").lower()
+    max_ind = 5 if diff == "easy" else 4 if diff == "medium" else 2
+    min_ind = 4 if diff == "easy" else 3 if diff == "medium" else 1
+    inds = result.get("indicators") if isinstance(result.get("indicators"), list) else []
+    if len(inds) < min_ind or len(inds) > max_ind:
+        result["indicators"] = fb["indicators"]
+    if diff == "easy":
+        result["attachment"] = ""
+        # Easy must stay obvious and simple.
+        if not result.get("suspicious_link"):
+            result["suspicious_link"] = fb.get("suspicious_link", "")
+    if not is_phishing:
+        result["risk_level"] = "Safe"
+        result["suspicious_link"] = ""
+        result["attachment"] = ""
+    try:
+        result = clean_result(result, language == "Arabic")
+    except Exception:
+        pass
+    return result
+
+
+def _v14_generate_api(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    """API-first, but scenario-safe. Old repeated templates are rejected."""
+    sc = _v14_pick_scenario(role, index, assessment)
+    provider = st.session_state.get("ai_provider", "openai")
+    attempts = 2 if provider in {"openai", "groq"} else 3
+    for attempt in range(attempts):
+        try:
+            prompt = _v14_prompt(role, index + attempt * 97, language, difficulty, is_phishing, assessment)
+            raw = call_ai(prompt, max_tokens=3600)
+            result = _v10_parse_or_none(raw) if "_v10_parse_or_none" in globals() else parse_json_response(raw)
+            if isinstance(result, dict) and "error" not in result and (not is_phishing or _v14_matches_scenario(result, sc)):
+                result = _v14_finalize(result, role, index, language, difficulty, is_phishing, assessment)
+                try:
+                    evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=bool(is_phishing))
+                except Exception:
+                    pass
+                return result
+        except Exception as e:
+            try:
+                _store_debug("v14_generate_api", str(e))
+            except Exception:
+                pass
+    result = _v14_finalize(_v14_fallback_email(role, index, language, difficulty, is_phishing, assessment), role, index, language, difficulty, is_phishing, assessment)
+    try:
+        evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=bool(is_phishing))
+    except Exception:
+        pass
+    return result
+
+
+# Public generator overrides used by the Streamlit pages.
+def generate_email(role, index, language, difficulty="medium"):
+    return _v14_generate_api(role, index, language, difficulty, True, assessment=False)
+
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    return _v14_generate_api(role, index, language, difficulty, bool(is_phishing), assessment=True)
+
+
+def generate_other_email(index, language, difficulty):
+    return generate_email("Other", index, language, difficulty)
+
+
+def generate_other_assess_email(index, is_phishing, language, difficulty):
+    return generate_assess_email("Other", index, is_phishing, language, difficulty)
+
+# =============================================================
+# END PHD FINAL PATCH v14
+# =============================================================
+
+
 pg = st.session_state.get("page", "home")
 if pg == "admin":
     page_admin()
