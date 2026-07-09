@@ -5656,7 +5656,18 @@ def _place_link_in_body(body, link):
     body_above = lines[:sig_start] if sig_start is not None else lines[:]
     sig_block  = lines[sig_start:]  if sig_start is not None else []
 
-    # ── 3. Find the best cue sentence above the signature ───────────────────
+    # ── Early-exit: link is already present above the signature ─────────────
+    # This happens when the AI writes the link inline in a sentence
+    # (e.g. "visit this link: http://..."). Step 1 only removes standalone
+    # link lines, so inline occurrences survive. If the link is already
+    # above the signature, we must NOT insert a second copy.
+    if link in "\n".join(body_above):
+        merged = body_above[:]
+        if sig_block:
+            if merged and merged[-1].strip():
+                merged.append("")
+            merged.extend(sig_block)
+        return "\n".join(merged).strip()
     _CUE_RE = re.compile(
         r"(link below|following link|the link|click here|click the|visit the|"
         r"access.*link|download.*link|open.*link|survey.*link|"
