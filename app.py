@@ -5633,7 +5633,12 @@ def _insert_before_signature(body, marker):
         return _reposition_trailing_lone_link(body, marker)
 
     lines = body.split("\n")
-    cue_re = re.compile(r"(link below|following link|access it|open it|view it|click|scan|الرابط|اضغط|افتح|امسح|الوصول|للمراجعة)", re.I)
+    cue_re = re.compile(
+        r"(link below|following link|access it|open it|view it|click|scan|download|"
+        r"survey|complete|submit|visit|here:|enter below|fill in|the link:|link:|"
+        r"الرابط|اضغط|افتح|امسح|الوصول|للمراجعة|انقر|حمّل|أكمل|قدّم|زيارة|هنا:)",
+        re.I
+    )
     for i in range(len(lines) - 1, -1, -1):
         if cue_re.search(lines[i]):
             new_lines = lines[:i+1] + [marker] + lines[i+1:]
@@ -9477,15 +9482,29 @@ def _v10_fix_result(result, role, index, language, difficulty, is_phishing, asse
         result["body"] = re.sub(r"\[QR[^\]]*\]", "", str(result.get("body", ""))).strip()
     if diff == "easy":
         result["attachment"] = ""
-        # If link is missing, create one from the shown scenario id/body topic but keep API body mostly intact.
         link = str(result.get("suspicious_link", "")).strip()
         body = str(result.get("body", ""))
-        if not link:
-            slug = re.sub(r"[^a-z0-9]+", "-", str(result.get("email_type") or "hospital-update").lower()).strip("-")[:28] or "hospital-update"
-            link = f"http://fake-{slug}-login.com/{slug}"
-            result["suspicious_link"] = link
-        if link and link not in body:
-            result["body"] = _insert_before_signature(body, link)
+        # Detect reply-based attacks (Social Engineering) — no link should be injected
+        attack_type_str = str(result.get("attack_type") or "").lower()
+        is_reply_based = (
+            "social engineering" in attack_type_str
+            or "هندسة اجتماعية" in attack_type_str
+            or (
+                not link
+                and re.search(r"\breply\b", body, re.I)
+                and not re.search(r"http", body, re.I)
+            )
+        )
+        if not is_reply_based:
+            # Inject a link if none was generated
+            if not link:
+                slug = re.sub(r"[^a-z0-9]+", "-", str(result.get("email_type") or "hospital-update").lower()).strip("-")[:28] or "hospital-update"
+                link = f"http://fake-{slug}-login.com/{slug}"
+                result["suspicious_link"] = link
+            # Insert into body if missing, then always reposition if it landed after signature
+            if link and link not in body:
+                body = _insert_before_signature(body, link)
+            result["body"] = _reposition_trailing_lone_link(body, link)
     return result
 
 
