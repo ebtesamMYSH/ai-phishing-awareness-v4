@@ -5621,97 +5621,99 @@ def infer_attack_type_from_content(result, is_ar=False):
     existing = result.get("attack_type") or result.get("email_type")
     return existing or ("تصيد موجه" if is_ar else "Spear Phishing")
 
-def _insert_before_signature(body, marker):
-    """Place a link/QR/button where users expect it: immediately after the
-    sentence that refers to accessing/clicking/scanning, otherwise before
-    the closing signature. This prevents links appearing after Best regards."""
-    body = (body or "").rstrip()
-    marker = (marker or "").strip()
-    if not body:
-        return marker
-    if marker and marker in body:
-        return _reposition_trailing_lone_link(body, marker)
+def _place_link_in_body(body, link):
+    """
+    GUARANTEED link placement — removes link from anywhere it appears
+    (including after the signature) and re-inserts it either:
+      (a) immediately after the last cue sentence ('click the link below', etc.)
+          that appears before the signature, OR
+      (b) immediately before the closing signature block.
+    This means the link can NEVER end up after 'Best regards / Regards / Sincerely'.
+    """
+    body = (body or "").strip()
+    link = (link or "").strip()
+    if not link or not body:
+        return body
 
+    # ── 1. Remove all occurrences of the link from the body ─────────────────
     lines = body.split("\n")
-    cue_re = re.compile(
-        r"(link below|following link|access it|open it|view it|click|scan|download|"
-        r"survey|complete|submit|visit|here:|enter below|fill in|the link:|link:|"
-        r"الرابط|اضغط|افتح|امسح|الوصول|للمراجعة|انقر|حمّل|أكمل|قدّم|زيارة|هنا:)",
-        re.I
+    cleaned = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if stripped == link or (link in stripped and len(stripped) <= len(link) + 8):
+            # eat a trailing blank line too
+            if i + 1 < len(lines) and not lines[i + 1].strip():
+                i += 1
+        else:
+            cleaned.append(lines[i])
+        i += 1
+    body = "\n".join(cleaned).strip()
+
+    # ── 2. Find the signature block start ───────────────────────────────────
+    _SIG_RE = re.compile(
+        r"^(regards|best regards|kind regards|warm regards|thank you|sincerely|"
+        r"respectfully|yours truly|yours sincerely|best wishes|"
+        r"شكرا|شكراً|مع تحياتي|تحياتي|أطيب التحيات|وتفضلوا)",
+        re.I,
     )
-    for i in range(len(lines) - 1, -1, -1):
-        if cue_re.search(lines[i]):
-            new_lines = lines[:i+1] + [marker] + lines[i+1:]
-            return "\n".join(new_lines).strip()
+    lines = body.split("\n")
+    sig_start = None
+    for idx, line in enumerate(lines):
+        if _SIG_RE.match(line.strip()):
+            sig_start = idx
+            break
 
-    for i in range(len(lines) - 1, -1, -1):
-        if _SALUTATION_LINE_RE.match(lines[i].strip()):
-            new_lines = lines[:i] + [marker, ""] + lines[i:]
-            return "\n".join(new_lines).strip()
+    body_above = lines[:sig_start] if sig_start is not None else lines[:]
+    sig_block  = lines[sig_start:]  if sig_start is not None else []
 
-    paragraphs = re.split(r'\n\s*\n', body)
-    if len(paragraphs) >= 2:
-        paragraphs.insert(len(paragraphs) - 1, marker)
-        return "\n\n".join(p.strip() for p in paragraphs if p.strip())
-    return body + "\n\n" + marker
+    # ── 3. Find the best cue sentence above the signature ───────────────────
+    _CUE_RE = re.compile(
+        r"(link below|following link|the link|click here|click the|visit the|"
+        r"access.*link|download.*link|open.*link|survey.*link|"
+        r"link:|here:|click:|visit:|download:|scan:|submit:|complete:|"
+        r"الرابط|اضغط|افتح|امسح|انقر|حمّل|زيارة|هنا:|أكمل)",
+        re.I,
+    )
+    cue_idx = None
+    for idx in range(len(body_above) - 1, -1, -1):
+        if _CUE_RE.search(body_above[idx]):
+            cue_idx = idx
+            break
+
+    # ── 4. Insert the link ───────────────────────────────────────────────────
+    if cue_idx is not None:
+        insert_at = cue_idx + 1
+        # Skip any blank lines that immediately follow the cue
+        while insert_at < len(body_above) and not body_above[insert_at].strip():
+            insert_at += 1
+        body_above.insert(insert_at, link)
+    else:
+        # No cue sentence — append just before the signature
+        body_above.append(link)
+
+    # ── 5. Reassemble with exactly one blank line before signature ───────────
+    merged = body_above[:]
+    if sig_block:
+        if merged and merged[-1].strip():
+            merged.append("")
+        merged.extend(sig_block)
+
+    return "\n".join(merged).strip()
+
+
+# Backward-compatible aliases so every existing call site works unchanged.
+def _insert_before_signature(body, marker):
+    return _place_link_in_body(body, marker)
 
 _SALUTATION_LINE_RE = re.compile(
-    r'^(regards|best regards|kind regards|warm regards|thank you|sincerely|respectfully|'
-    r'شكرا|شكراً|مع تحياتي|تحياتي|أطيب التحيات|وتفضلوا بقبول)',
+    r"^(regards|best regards|kind regards|warm regards|thank you|sincerely|"
+    r"respectfully|شكرا|شكراً|مع تحياتي|تحياتي|أطيب التحيات|وتفضلوا بقبول)",
     re.I,
 )
 
 def _reposition_trailing_lone_link(body, link):
-    """Some providers write the referring sentence ('click the link
-    below...') correctly in-flow, but then place the actual bare URL as
-    its own line AFTER the closing signature instead of right after
-    that sentence — sometimes separated by a blank line (paragraph
-    break), sometimes by a single newline (signature lines joined to
-    the link with no blank line at all). This is independent of our own
-    code (which only appends a link if one is completely missing) —
-    this catches the model's OWN misplacement in BOTH formatting cases
-    by working line-by-line rather than only on blank-line paragraphs."""
-    link = (link or "").strip()
-    raw_body = body or ""
-    if not link or not raw_body.strip():
-        return raw_body
-
-    lines = raw_body.rstrip().split("\n")
-    idx = len(lines) - 1
-    while idx >= 0 and not lines[idx].strip():
-        idx -= 1
-    if idx < 0:
-        return raw_body
-    last_line = lines[idx].strip()
-    if not (last_line == link or (link in last_line and len(last_line) <= len(link) + 6)):
-        return raw_body  # last line isn't a bare/near-bare link — nothing to fix
-
-    before = lines[:idx]
-    before_text = "\n".join(before).rstrip()
-    if not before_text:
-        return raw_body
-
-    # Case 1: there's a blank-line paragraph break before the link —
-    # insert the link as its own paragraph just before the last one
-    # (assumed to be the signature).
-    paragraphs = re.split(r'\n\s*\n', before_text)
-    if len(paragraphs) >= 2:
-        paragraphs.insert(len(paragraphs) - 1, last_line)
-        return "\n\n".join(p.strip() for p in paragraphs if p.strip())
-
-    # Case 2: everything is joined with single newlines (no blank-line
-    # break at all) — find the closing salutation line ("Regards,"/
-    # "Best regards,"/etc.) and insert the link right before it.
-    for i in range(len(before) - 1, -1, -1):
-        if _SALUTATION_LINE_RE.match(before[i].strip()):
-            new_lines = before[:i] + [last_line, ""] + before[i:]
-            return "\n".join(new_lines).rstrip()
-
-    # Fallback: no salutation line found — insert two lines before the
-    # very end rather than leaving the link fully detached.
-    insert_at = max(0, len(before) - 2)
-    new_lines = before[:insert_at] + [last_line, ""] + before[insert_at:]
-    return "\n".join(new_lines).rstrip()
+    return _place_link_in_body(body, link)
 
 def _enforce_attack_vector(result, vector):
     """Many providers (Groq/Llama especially) acknowledge the requested
