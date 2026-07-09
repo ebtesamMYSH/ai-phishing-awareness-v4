@@ -9268,7 +9268,36 @@ def _v10_language_name(language):
 
 
 def _v10_select_card(role, index, assessment=False):
-    # reuse the validated 300-card picker so every role has 100+ ideas
+    """
+    Select scenario card for v10 generation.
+
+    CLINICAL role — guaranteed sub-role rotation across the 6 learning emails:
+      index % 5 →  0=Doctor (Medical Affairs)
+                   1=Nurse (Nursing Affairs)
+                   2=Pharmacist (Pharmacy Safety Unit)
+                   3=Laboratory Specialist (Lab Services)
+                   4=Radiology Technician (Radiology Administration)
+
+    This prevents any single department appearing more than once per learning cycle.
+    Uses the modular-inverse trick so _v5_pick_full_card lands exactly on the
+    target sub-role group (cards are laid out as 20-per-group in blocks of 100).
+
+    All other roles — original random approach.
+    """
+    _rt = str(role).lower().strip()
+    is_clinical = (_rt in ("clinical", "سريري") or "clinical" in _rt)
+
+    if is_clinical:
+        # The 100 clinical cards are blocked: [0-19]=Doctor, [20-39]=Nurse,
+        # [40-59]=Pharmacist, [60-79]=Lab Specialist, [80-99]=Radiology Tech.
+        # _v5_pick_full_card computes pos = (raw * 17) % 100.
+        # Modular inverse of 17 mod 100 = 53, so raw = (target * 53) % 100.
+        subrole_slot    = index % 5
+        scenario_offset = (index // 5 * 13 + 7) % 20   # vary scenario within group
+        target_pos      = subrole_slot * 20 + scenario_offset
+        raw_idx         = (target_pos * 53) % 100       # → pos == target_pos
+        return _v5_pick_full_card(role, raw_idx, assessment)
+
     return _v5_pick_full_card(role, index + random.randint(0, 999), assessment)
 
 
@@ -9277,14 +9306,21 @@ def _v10_diff_contract(diff, phishing=True, is_ar=False):
         if not phishing:
             return "شرعي: نطاق رسمي hospital.org أو moh.gov.sa فقط، لا طلب كلمة مرور، لا تهديد، لا رابط خارجي مشبوه، نبرة طبيعية."
         if diff == "easy":
-            return "سهل: تحية عامة فقط؛ رابط خام ظاهر وواضح التزوير؛ لا QR؛ لا مرفقات؛ طلب مباشر لكلمة المرور/بيانات الدخول؛ إلحاح اليوم؛ أخطاء واضحة قليلة؛ 7-10 أسطر حتى لا يكون قصيرًا جدًا."
+            return ("سهل: التحية يجب أن تكون 'عزيزي الموظف،' أو 'عزيزتي الموظفة،' أو 'فريق الرعاية الصحية،' فقط "
+                    "— ممنوع استخدام المسمى الوظيفي (طبيب/ممرضة/صيدلاني/فني) وممنوع أي اسم شخصي؛ "
+                    "رابط خام ظاهر وواضح التزوير؛ لا QR؛ لا مرفقات؛ "
+                    "طلب مباشر حسب نوع الهجوم؛ إلحاح اليوم؛ أخطاء واضحة قليلة؛ 7-10 أسطر.")
         if diff == "medium":
             return "متوسط: تحية باسم أول أو لقب مهني؛ نطاق قريب من الرسمي لكن قابل للكشف؛ لا QR؛ عنصر تقني واحد فقط مثل زر أو PDF بسيط أو رابط مراجعة؛ طلب غير مباشر؛ مهلة 24-72 ساعة؛ خطأ خفيف واحد."
         return "صعب: اسم كامل ولقب دقيق؛ نبرة احترافية بلا تهديد؛ لا طلب كلمة مرور مباشر؛ مرفق رسمي إلزامي؛ QR أو زر رسمي حسب السيناريو؛ نطاق شبه رسمي لا يحتوي secure/update/verify/login/reset؛ تفاصيل يومية دقيقة."
     if not phishing:
         return "Legitimate: official hospital.org or moh.gov.sa domain only; no password request; no threat; no suspicious external link; normal professional tone."
     if diff == "easy":
-        return "Easy: generic greeting only; raw visible obviously fake URL; no QR; no attachment; direct password/credential request; same-day urgency; a few obvious errors; 7-10 readable lines so it is not too short."
+        return ("Easy: greeting MUST be 'Dear Staff,' or 'Dear Healthcare Professional,' or 'Dear Healthcare Team,' "
+                "— NEVER a job title (Dear Doctor / Dear Nurse / Dear Pharmacist / Dear Technician) and NEVER a personal name; "
+                "raw visible obviously fake URL; no QR; no attachment; "
+                "direct credential/action request matching the attack type; same-day urgency phrase; "
+                "a few obvious errors; 7-10 readable lines.")
     if diff == "medium":
         return "Intermediate: first name or professional title; look-alike but detectable domain; no QR; exactly one technical element such as a simple button, PDF, or review link; indirect request; 24-72 hour deadline; one subtle error."
     return "Advanced: full name and precise title; polished professional tone with no threat; no direct password request; official attachment required; QR or official button depending on scenario; near-official domain without secure/update/verify/login/reset; detailed daily-workflow context."
@@ -9389,6 +9425,7 @@ def _v10_prompt(role, index, language, difficulty="medium", is_phishing=True, as
 
 قواعد حاسمة:
 - المُرسِل يجب أن يكون من '{sender_dept}' أو قسم مرتبط به — لا Nursing Affairs دائمًا.
+- قاعدة التحية (مستوى سهل فقط): يجب أن تكون التحية 'عزيزي الموظف،' أو 'عزيزتي الموظفة،' أو 'فريق الرعاية الصحية،' — ممنوع تمامًا 'عزيزي الطبيب' أو 'عزيزتي الممرضة' أو أي مسمى وظيفي أو اسم شخصي.
 - اربط كل جملة بالموضوع الصحي المحدد. لا تجعل الرسالة كلها "حساب عام" فقط.
 - لا تستخدم QR أو مرفق في السهل. لا تستخدم QR في المتوسط.
 - لا تكرر نفس بداية أو نهاية الرسالة.
@@ -9432,6 +9469,7 @@ Mandatory content diversity:
 
 Critical rules:
 - Sender MUST be from '{sender_dept}' or a closely related sub-department. Do NOT default to Nursing Affairs every time.
+- GREETING RULE (Easy only): The salutation MUST be exactly 'Dear Staff,' or 'Dear Healthcare Professional,' or 'Dear Healthcare Team,' — NEVER 'Dear Doctor,' / 'Dear Nurse,' / 'Dear Pharmacist,' / 'Dear Technician,' or any personal name.
 - Tie every sentence to the specific healthcare topic. Do not write a generic account notice.
 - Easy is not too short; keep it obvious but include real healthcare context details.
 - No QR and no attachment in Easy. No QR in Intermediate.
