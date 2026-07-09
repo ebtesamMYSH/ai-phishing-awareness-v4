@@ -9262,6 +9262,195 @@ _V10_EASY_PRESSURE_AR = [
 _V10_MEDIUM_CHANNELS = ["lookalike_link", "simple_button", "simple_pdf", "reply_confirmation"]
 _V10_HARD_CHANNELS = ["official_attachment_button", "qr_with_document", "sharepoint_style_review", "microsoft365_style_notice"]
 
+# ── Hard attack type packages — near-legitimate, 1-2 subtle indicators max ──
+_V10_HARD_ATTACK_TYPES_EN = [
+    {
+        "attack": "QR + Official Document Phishing",
+        "tactic": "qr_with_document — polished internal notice with an official PDF and a QR code that redirects to a credential page",
+        "indicators_hint": "1-QR destination differs from stated domain  2-Sender signature almost but not exactly from official system",
+    },
+    {
+        "attack": "SharePoint-Style Document Review",
+        "tactic": "sharepoint_style_review — email mimics SharePoint or hospital intranet notification; button leads to a cloned portal",
+        "indicators_hint": "1-Button URL domain is near-official but slightly off  2-No internal ticket or reference number",
+    },
+    {
+        "attack": "Microsoft 365 Credential Harvest",
+        "tactic": "microsoft365_style_notice — email perfectly imitates an O365 / Outlook re-authentication request with a professional blue button",
+        "indicators_hint": "1-O365 button URL points to external domain instead of login.microsoftonline.com  2-Subtle mismatch in sender display name",
+    },
+    {
+        "attack": "Colleague Impersonation + Attachment",
+        "tactic": "official_attachment_button — sender appears to be a named colleague or committee chair forwarding an official policy PDF for signature",
+        "indicators_hint": "1-Sender email domain subtly wrong (e.g. hospital-kfmc.net vs kfmc.org.sa)  2-Attachment requires login to 'e-sign'",
+    },
+    {
+        "attack": "EMR / HIS Workflow Hijack",
+        "tactic": "microsoft365_style_notice — near-perfect imitation of an EMR or HIS automated alert with ticket number and patient context",
+        "indicators_hint": "1-EMR link resolves to external domain not on hospital whitelist  2-Generic ticket number format inconsistent with real system",
+    },
+    {
+        "attack": "Governance Policy Phishing",
+        "tactic": "sharepoint_style_review — looks like a routine governance or JCI audit request with an official-looking PDF and an 'Acknowledge' button",
+        "indicators_hint": "1-Sender domain uses a plausible abbreviation (e.g. kfmc-governance.sa) not on official list  2-No contact number or department extension listed",
+    },
+]
+_V10_HARD_ATTACK_TYPES_AR = [
+    {
+        "attack": "تصيد QR + مستند رسمي",
+        "tactic": "qr_with_document — إشعار داخلي مصقول مع PDF رسمي ورمز QR يؤدي لصفحة بيانات دخول",
+        "indicators_hint": "1-وجهة QR تختلف عن النطاق المذكور  2-توقيع المرسل شبه رسمي لكن ليس من النظام الحقيقي",
+    },
+    {
+        "attack": "مراجعة مستند بأسلوب SharePoint",
+        "tactic": "sharepoint_style_review — يحاكي إشعار SharePoint أو الإنترانت الداخلي وزر يقود لبوابة مستنسخة",
+        "indicators_hint": "1-نطاق الزر قريب جداً من الرسمي مع فرق طفيف  2-لا رقم تذكرة أو مرجع داخلي",
+    },
+    {
+        "attack": "سرقة بيانات Microsoft 365",
+        "tactic": "microsoft365_style_notice — يحاكي طلب إعادة مصادقة O365/Outlook بزر أزرق احترافي",
+        "indicators_hint": "1-رابط الزر يشير لنطاق خارجي وليس login.microsoftonline.com  2-تناقض طفيف في اسم عرض المرسل",
+    },
+    {
+        "attack": "انتحال زميل + مرفق",
+        "tactic": "official_attachment_button — يبدو أن مرسِلاً هو زميل مسمى أو رئيس لجنة يُعيد توجيه PDF رسمي للسياسة",
+        "indicators_hint": "1-نطاق المرسل خاطئ بشكل طفيف  2-المرفق يطلب تسجيل الدخول للتوقيع الإلكتروني",
+    },
+    {
+        "attack": "اختطاف سير عمل EMR/HIS",
+        "tactic": "microsoft365_style_notice — محاكاة شبه مثالية لتنبيه آلي من EMR أو HIS مع رقم تذكرة وسياق مريض",
+        "indicators_hint": "1-رابط EMR يحل على نطاق خارجي  2-تنسيق رقم التذكرة لا يتطابق مع النظام الحقيقي",
+    },
+    {
+        "attack": "تصيد سياسة حوكمة",
+        "tactic": "sharepoint_style_review — يبدو كطلب تدقيق JCI روتيني مع PDF رسمي المظهر وزر 'إقرار'",
+        "indicators_hint": "1-نطاق المرسل اختصار قابل للتصديق لكن غير رسمي  2-لا رقم تواصل أو امتداد قسم مذكور",
+    },
+]
+
+# ── Hard subject patterns (routine governance / clinical tone — no "URGENT") ──
+_V10_HARD_SUBJECTS_EN = [
+    "Routine Compliance: {topic} Acknowledgement Required",
+    "Internal Governance: {topic} Policy Review",
+    "Scheduled Update: {topic} Protocol Documentation",
+    "Action Required: {topic} Quarterly Audit Follow-Up",
+    "JCI Compliance: {topic} Staff Verification",
+    "Clinical Governance: {topic} Record Review Notice",
+]
+_V10_HARD_SUBJECTS_AR = [
+    "امتثال روتيني: مطلوب إقرار {topic}",
+    "حوكمة داخلية: مراجعة سياسة {topic}",
+    "تحديث مجدول: توثيق بروتوكول {topic}",
+    "متابعة تدقيق ربعي: {topic}",
+    "امتثال JCI: تحقق موظفي {topic}",
+]
+
+# ── Hard pressure phrases (logical professional reason, NOT same-day) ──
+_V10_HARD_PRESSURE_EN = [
+    "as part of the upcoming Joint Commission International (JCI) audit cycle",
+    "ahead of the scheduled quarterly clinical governance review",
+    "in compliance with the updated MOH patient safety protocols (circular 2024/31)",
+    "as requested by the Clinical Affairs Committee for this fiscal quarter",
+    "to complete the mandatory hospital-wide cybersecurity compliance process",
+    "ahead of the hospital's annual accreditation review next month",
+]
+_V10_HARD_PRESSURE_AR = [
+    "استعداداً لدورة تدقيق هيئة مستشفيات الاعتماد الدولي (JCI) القادمة",
+    "قبيل مراجعة الحوكمة السريرية الربعية المجدولة",
+    "امتثالاً لبروتوكولات سلامة المرضى المحدّثة لوزارة الصحة (تعميم 2024/31)",
+    "بناءً على طلب لجنة الشؤون السريرية للربع المالي الحالي",
+    "إتماماً لعملية الامتثال الإلزامية لأمن المعلومات على مستوى المستشفى",
+]
+
+# ── Medium attack type packages — varied, semi-convincing, 3-4 subtle indicators ──
+_V10_MEDIUM_ATTACK_TYPES_EN = [
+    {
+        "attack": "Lookalike Portal Phishing",
+        "tactic": "lookalike_link — domain resembles official but has small detectable difference (e.g. hospital-kfmc.net vs kfmc.org.sa)",
+        "indicators_hint": "1-Subtle domain difference  2-Indirect credential request via portal  3-Moderate urgency (48-72 h)",
+    },
+    {
+        "attack": "Button-Based Phishing",
+        "tactic": "simple_button — professional-looking blue 'Verify Access' or 'Confirm Identity' button hiding a suspicious URL",
+        "indicators_hint": "1-Button URL mismatch from display text  2-Semi-professional tone  3-Plausible but non-official sender",
+    },
+    {
+        "attack": "Fake PDF Attachment",
+        "tactic": "simple_pdf — email claims to attach an official policy or report PDF; link actually leads to a credential page",
+        "indicators_hint": "1-PDF filename looks official but link goes elsewhere  2-Indirect credential collection  3-Sender domain slightly off",
+    },
+    {
+        "attack": "Reply-Confirmation Social Engineering",
+        "tactic": "reply_confirmation — asks staff to reply or call to confirm identity before accessing a workflow update",
+        "indicators_hint": "1-Verification through non-official channel  2-Semi-plausible authority claim  3-Missing official reference number",
+    },
+    {
+        "attack": "Lookalike Portal Phishing",
+        "tactic": "lookalike_link — URL uses hyphenated variant of official domain (e.g. hospital-records-update.net)",
+        "indicators_hint": "1-Hyphenated domain differs from official  2-Reasonable 48-hour deadline  3-Indirect credential step",
+    },
+    {
+        "attack": "Button-Based Phishing",
+        "tactic": "simple_button — 'Access Secure Portal' button with plausible label but external URL",
+        "indicators_hint": "1-External button URL  2-Missing hospital logo or reference number  3-Professional but slightly generic tone",
+    },
+]
+_V10_MEDIUM_ATTACK_TYPES_AR = [
+    {
+        "attack": "تصيد بوابة مشابهة",
+        "tactic": "lookalike_link — نطاق يشبه الرسمي مع فرق طفيف قابل للكشف",
+        "indicators_hint": "1-فرق طفيف في النطاق  2-طلب بيانات دخول غير مباشر  3-إلحاح معتدل 48-72 ساعة",
+    },
+    {
+        "attack": "تصيد عبر زر",
+        "tactic": "simple_button — زر 'تحقق من الهوية' أو 'تأكيد الوصول' يخفي رابطاً مشبوهاً",
+        "indicators_hint": "1-رابط الزر يختلف عن النص الظاهر  2-نبرة شبه احترافية  3-مرسل شبه رسمي",
+    },
+    {
+        "attack": "مرفق PDF مزيف",
+        "tactic": "simple_pdf — يدّعي إرفاق تقرير رسمي لكن الرابط يؤدي لصفحة بيانات دخول",
+        "indicators_hint": "1-اسم PDF يبدو رسمياً لكن الرابط خارجي  2-جمع بيانات دخول غير مباشر  3-نطاق المرسل مختلف قليلاً",
+    },
+    {
+        "attack": "هندسة اجتماعية بالرد",
+        "tactic": "reply_confirmation — يطلب من الموظف الرد أو الاتصال لتأكيد الهوية",
+        "indicators_hint": "1-التحقق عبر قناة غير رسمية  2-ادعاء صلاحية موثوق جزئياً  3-غياب رقم مرجعي رسمي",
+    },
+    {
+        "attack": "تصيد بوابة مشابهة",
+        "tactic": "lookalike_link — رابط يستخدم نطاقاً مشابهاً بشرطة مثل hospital-portal-update.net",
+        "indicators_hint": "1-نطاق يحتوي كلمة مشبوهة  2-مهلة معقولة 48 ساعة  3-خطوة تسجيل دخول غير مباشرة",
+    },
+]
+
+# ── Medium subject patterns (more professional than Easy) ──
+_V10_MEDIUM_SUBJECTS_EN = [
+    "Pending Review: {topic} Access Confirmation Required",
+    "Department Notice: {topic} Workflow Update",
+    "Action Required Within 48 Hours: {topic} Verification",
+    "Important: {topic} System Access Renewal",
+    "Follow-Up: {topic} Compliance Review Needed",
+    "Reminder: {topic} Record Confirmation Deadline",
+]
+_V10_MEDIUM_SUBJECTS_AR = [
+    "مراجعة معلقة: تأكيد مطلوب لـ {topic}",
+    "إشعار قسم: تحديث سير عمل {topic}",
+    "إجراء مطلوب خلال 48 ساعة: تحقق من {topic}",
+    "مهم: تجديد الوصول لنظام {topic}",
+    "متابعة: مراجعة امتثال {topic}",
+]
+
+# ── Medium pressure phrases (reasonable, not "TODAY") ──
+_V10_MEDIUM_PRESSURE_EN = [
+    "within the next 48 hours", "before the end of this week",
+    "by the end of tomorrow", "within 72 hours to avoid access disruption",
+    "no later than two business days from now",
+]
+_V10_MEDIUM_PRESSURE_AR = [
+    "خلال الـ48 ساعة القادمة", "قبل نهاية الأسبوع",
+    "خلال 72 ساعة لتجنب انقطاع الوصول", "في غضون يومي عمل",
+]
+
 
 def _v10_language_name(language):
     return "Arabic" if language == "Arabic" else "English"
@@ -9340,6 +9529,20 @@ def _v10_prompt(role, index, language, difficulty="medium", is_phishing=True, as
         request        = attack_pkg["request"]
         tactic         = attack_pkg["tactic"]
         indicators_hint= attack_pkg["indicators_hint"]
+    elif diff == "medium" and is_phishing:
+        pool = _V10_MEDIUM_ATTACK_TYPES_AR if is_ar else _V10_MEDIUM_ATTACK_TYPES_EN
+        attack_pkg = pool[index % len(pool)]
+        attack_type_hint = attack_pkg["attack"]
+        request        = ""
+        tactic         = attack_pkg["tactic"]
+        indicators_hint= attack_pkg["indicators_hint"]
+    elif diff == "hard" and is_phishing:
+        pool = _V10_HARD_ATTACK_TYPES_AR if is_ar else _V10_HARD_ATTACK_TYPES_EN
+        attack_pkg = pool[index % len(pool)]
+        attack_type_hint = attack_pkg["attack"]
+        request        = ""
+        tactic         = attack_pkg["tactic"]
+        indicators_hint= attack_pkg["indicators_hint"]
     else:
         attack_type_hint = ""; request = ""; tactic = ""; indicators_hint = ""
 
@@ -9348,11 +9551,22 @@ def _v10_prompt(role, index, language, difficulty="medium", is_phishing=True, as
     if diff == "easy" and is_phishing:
         subj_pool    = _V10_EASY_SUBJECTS_AR if is_ar else _V10_EASY_SUBJECTS_EN
         subject_hint = subj_pool[index % len(subj_pool)].replace("{topic}", topic_slug)
+    elif diff == "medium" and is_phishing:
+        subj_pool    = _V10_MEDIUM_SUBJECTS_AR if is_ar else _V10_MEDIUM_SUBJECTS_EN
+        subject_hint = subj_pool[index % len(subj_pool)].replace("{topic}", topic_slug)
+    elif diff == "hard" and is_phishing:
+        subj_pool    = _V10_HARD_SUBJECTS_AR if is_ar else _V10_HARD_SUBJECTS_EN
+        subject_hint = subj_pool[index % len(subj_pool)].replace("{topic}", topic_slug)
     else:
         subject_hint = ""
 
     # ── Pressure phrase ──
-    pressure = random.choice(_V10_EASY_PRESSURE_AR if is_ar else _V10_EASY_PRESSURE_EN)
+    if diff == "medium":
+        pressure = random.choice(_V10_MEDIUM_PRESSURE_AR if is_ar else _V10_MEDIUM_PRESSURE_EN)
+    elif diff == "hard":
+        pressure = random.choice(_V10_HARD_PRESSURE_AR if is_ar else _V10_HARD_PRESSURE_EN)
+    else:
+        pressure = random.choice(_V10_EASY_PRESSURE_AR if is_ar else _V10_EASY_PRESSURE_EN)
 
     # ── Channel ──
     channel = (
@@ -9397,8 +9611,10 @@ def _v10_prompt(role, index, language, difficulty="medium", is_phishing=True, as
 أسلوب الهجوم: {tactic}
 الطلب الحساس المطلوب: {request}
 اقتراح عنوان الموضوع: {subject_hint}
-تلميح المؤشرات (لا تكرر نفس الثلاثة دائمًا): {indicators_hint}
-""" if diff == "easy" and is_phishing else ""
+عبارة الضغط / المهلة: {pressure}
+تلميح المؤشرات (لا تكرر نفس الثلاثة — طابق نوع الهجوم): {indicators_hint}
+عدد المؤشرات المستهدف: {'4-5 مؤشرات واضحة' if diff == 'easy' else '3-4 مؤشرات خفية' if diff == 'medium' else 'مؤشر أو مؤشران شبه غير مرئيين فقط'}
+""" if (diff in ("easy", "medium", "hard")) and is_phishing else ""
         return f"""
 أنت مولد محتوى توعوي بالتصيد لمستشفى سعودي. يجب أن يكون التوليد من API وليس قالبًا ثابتًا.
 {lang_rule}
@@ -9425,7 +9641,7 @@ def _v10_prompt(role, index, language, difficulty="medium", is_phishing=True, as
 
 قواعد حاسمة:
 - المُرسِل يجب أن يكون من '{sender_dept}' أو قسم مرتبط به — لا Nursing Affairs دائمًا.
-- قاعدة التحية (مستوى سهل فقط): يجب أن تكون التحية 'عزيزي الموظف،' أو 'عزيزتي الموظفة،' أو 'فريق الرعاية الصحية،' — ممنوع تمامًا 'عزيزي الطبيب' أو 'عزيزتي الممرضة' أو أي مسمى وظيفي أو اسم شخصي.
+- قاعدة التحية: سهل → 'عزيزي الموظف' فقط. متوسط → المسمى الوظيفي أو الاسم الأول (مثل 'عزيزي الطبيب') — ممنوع العامة. صعب → الاسم الكامل + اللقب الدقيق (مثل 'عزيزتي د. نورة المطيري، استشارية العناية المركزة،') — ممنوع أي تحية مختصرة.
 - اربط كل جملة بالموضوع الصحي المحدد. لا تجعل الرسالة كلها "حساب عام" فقط.
 - لا تستخدم QR أو مرفق في السهل. لا تستخدم QR في المتوسط.
 - لا تكرر نفس بداية أو نهاية الرسالة.
@@ -9441,8 +9657,10 @@ Attack type for this email: {attack_type_hint}
 Attack tactic: {tactic}
 Sensitive action required from victim: {request}
 Suggested subject line (adapt to scenario): {subject_hint}
-Indicator diversity hint (vary from the usual 3 — match the actual attack): {indicators_hint}
-""" if diff == "easy" and is_phishing else ""
+Pressure / deadline phrase: {pressure}
+Indicator diversity hint (vary — match the actual attack): {indicators_hint}
+Indicator count target: {'4-5 obvious indicators' if diff == 'easy' else '3-4 subtle indicators' if diff == 'medium' else '1-2 almost-invisible indicators only'}
+""" if (diff in ("easy", "medium", "hard")) and is_phishing else ""
     return f"""
 You are generating phishing-awareness content for a Saudi hospital. Content must be API-generated, not a fixed template.
 {lang_rule}
@@ -9469,7 +9687,7 @@ Mandatory content diversity:
 
 Critical rules:
 - Sender MUST be from '{sender_dept}' or a closely related sub-department. Do NOT default to Nursing Affairs every time.
-- GREETING RULE (Easy only): The salutation MUST be exactly 'Dear Staff,' or 'Dear Healthcare Professional,' or 'Dear Healthcare Team,' — NEVER 'Dear Doctor,' / 'Dear Nurse,' / 'Dear Pharmacist,' / 'Dear Technician,' or any personal name.
+- GREETING RULE: Easy → 'Dear Staff,' / 'Dear Healthcare Professional,' / 'Dear Healthcare Team,' only — NEVER a job title or name. Intermediate → ONLY the job title or first name (e.g. 'Dear Nurse,' / 'Dear Dr. Al-Zahrani,' / 'Dear Pharmacist,') — NEVER generic. Advanced → recipient's FULL NAME + precise job title (e.g. 'Dear Dr. Noura Al-Mutairi, ICU Consultant,') — NEVER generic, NEVER first-name-only.
 - Tie every sentence to the specific healthcare topic. Do not write a generic account notice.
 - Easy is not too short; keep it obvious but include real healthcare context details.
 - No QR and no attachment in Easy. No QR in Intermediate.
@@ -9545,6 +9763,18 @@ def _v10_fix_result(result, role, index, language, difficulty, is_phishing, asse
             if link and link not in body:
                 body = _insert_before_signature(body, link)
             result["body"] = _reposition_trailing_lone_link(body, link)
+    elif diff == "medium":
+        # For medium: ensure link is correctly positioned (not after signature)
+        link = str(result.get("suspicious_link", "")).strip()
+        body = str(result.get("body", ""))
+        attack_type_str = str(result.get("attack_type") or "").lower()
+        is_reply_based = (
+            "reply" in attack_type_str or "social engineering" in attack_type_str
+            or "هندسة اجتماعية" in attack_type_str
+            or ("reply_confirmation" in str(result.get("email_type") or "").lower())
+        )
+        if link and not is_reply_based:
+            result["body"] = _place_link_in_body(body, link)
     return result
 
 
