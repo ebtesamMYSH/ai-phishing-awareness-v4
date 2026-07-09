@@ -9990,6 +9990,359 @@ def generate_other_assess_email(index, is_phishing, language, difficulty):
 # END FINAL REVIEW PATCH v11
 # =============================================================
 
+
+
+# =============================================================
+# FINAL STABLE PATCH v12 — NO USER-FACING GENERATION ERROR
+# -------------------------------------------------------------
+# Purpose:
+# 1) Keep the four-provider API route: Groq / Claude / OpenAI / Gemini.
+# 2) Do NOT block the trainee screen because of strict guardrails.
+# 3) If the provider output is usable, show it after light cleanup.
+# 4) If all providers/attempts fail or return invalid JSON, show a safe
+#    deterministic training fallback instead of an error card.
+# =============================================================
+
+def _v12_role_type(role):
+    try:
+        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
+    except Exception:
+        return "other"
+
+
+def _v12_person(role, index, assessment=False):
+    try:
+        role_type, sc, sub, person = _v5_pick_full_card(role, index, assessment)
+        if isinstance(person, (list, tuple)) and len(person) >= 2:
+            return str(person[0]), str(person[1]), role_type, sub
+        return "Staff Member", "staff@hospital.org", role_type, sub
+    except Exception:
+        role_type = _v12_role_type(role)
+        pools = globals().get("RECIPIENT_POOLS", {})
+        pool = pools.get(role_type) or pools.get("clinical") or []
+        if pool:
+            item = pool[index % len(pool)]
+            return item.get("name_en") or item.get("name") or "Staff Member", item.get("email") or "staff@hospital.org", role_type, role_type
+        return "Staff Member", "staff@hospital.org", role_type, role_type
+
+
+def _v12_indicators(diff, is_ar, is_phishing=True):
+    if not is_phishing:
+        if is_ar:
+            return [
+                {"number": 1, "title": "مصدر رسمي", "description": "المرسل والقسم متسقان مع سياق العمل."},
+                {"number": 2, "title": "لا يوجد طلب حساس", "description": "الرسالة لا تطلب كلمة مرور أو رمز تحقق أو تحويل أموال."},
+                {"number": 3, "title": "إجراء طبيعي", "description": "الطلب مرتبط بعملية عمل معتادة داخل المستشفى."},
+            ]
+        return [
+            {"number": 1, "title": "Official source", "description": "The sender and department match a normal workplace context."},
+            {"number": 2, "title": "No sensitive request", "description": "The email does not ask for a password, OTP, or payment transfer."},
+            {"number": 3, "title": "Normal workflow", "description": "The request fits a routine hospital process."},
+        ]
+    if is_ar:
+        if diff == "easy":
+            return [
+                {"number": 1, "title": "رابط واضح التزوير", "description": "الرابط لا يستخدم نطاقًا رسميًا للمستشفى."},
+                {"number": 2, "title": "طلب مباشر لبيانات الدخول", "description": "الرسالة تطلب إجراءً حساسًا بشكل صريح."},
+                {"number": 3, "title": "إلحاح زائد", "description": "استخدام عبارات مثل اليوم أو فورًا للضغط على الموظف."},
+                {"number": 4, "title": "تحية عامة", "description": "الرسالة لا تستخدم اسم الموظف أو مسماه بدقة."},
+            ]
+        if diff == "medium":
+            return [
+                {"number": 1, "title": "رابط قابل للتصديق", "description": "الرابط يبدو قريبًا من النظام الرسمي لكنه ليس النطاق الصحيح."},
+                {"number": 2, "title": "مهلة زمنية", "description": "الرسالة تستخدم مهلة 24 إلى 72 ساعة لدفع الموظف للتصرف."},
+                {"number": 3, "title": "طلب مراجعة غير مباشر", "description": "الرسالة لا تطلب كلمة المرور صراحة لكنها تقود إلى صفحة تحقق."},
+            ]
+        return [
+            {"number": 1, "title": "سير عمل شديد الواقعية", "description": "الرسالة تستخدم لغة داخلية وتفاصيل مهنية تقلل الشك."},
+            {"number": 2, "title": "قناة متقدمة", "description": "استخدام مرفق أو SharePoint أو Microsoft 365 أو QR يجعل الخدعة أصعب."},
+        ]
+    if diff == "easy":
+        return [
+            {"number": 1, "title": "Obviously fake link", "description": "The link does not use an official hospital domain."},
+            {"number": 2, "title": "Direct credential request", "description": "The message directly asks for a sensitive action."},
+            {"number": 3, "title": "Excessive urgency", "description": "Words like today or immediately pressure the employee."},
+            {"number": 4, "title": "Generic greeting", "description": "The email does not use a real name or precise role."},
+        ]
+    if diff == "medium":
+        return [
+            {"number": 1, "title": "Believable review link", "description": "The link looks work-related but is not the official domain."},
+            {"number": 2, "title": "Time window pressure", "description": "A 24-72 hour deadline nudges the user to act."},
+            {"number": 3, "title": "Indirect verification request", "description": "It avoids asking for a password directly but leads to verification."},
+        ]
+    return [
+        {"number": 1, "title": "Polished internal workflow", "description": "The email uses professional internal language and realistic details."},
+        {"number": 2, "title": "Advanced delivery channel", "description": "Attachment, SharePoint, Microsoft 365, or QR makes the attack harder to spot."},
+    ]
+
+
+def _v12_fallback_email(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    diff = _enhanced_diff(difficulty)
+    is_ar = (language == "Arabic")
+    name, email, role_type, sub = _v12_person(role, index, assessment)
+    seq = index % 6
+
+    if not is_phishing:
+        if is_ar:
+            body = """عزيزي الموظف،
+
+نود إفادتك بأن فريق الجودة سيجري مراجعة دورية لإجراءات سلامة المرضى خلال هذا الأسبوع. لا يلزم إدخال أي كلمة مرور أو رمز تحقق.
+
+يرجى الاطلاع على التحديث من خلال القنوات الداخلية المعتادة في المستشفى عند توفره.
+
+مع التحية،
+إدارة الجودة وسلامة المرضى"""
+            return {
+                "email_type": "رسالة عمل شرعية", "attack_type": "Legitimate", "from": "إدارة الجودة وسلامة المرضى <quality@hospital.org>",
+                "to": email, "subject": "تحديث دوري لإجراءات سلامة المرضى", "attachment": "", "body": body,
+                "suspicious_text": "", "suspicious_link": "", "injected_errors": [],
+                "indicators": _v12_indicators(diff, is_ar, False), "why_risky": "هذه رسالة شرعية لأنها لا تطلب بيانات حساسة وتستخدم سياق عمل طبيعي.",
+                "learning_tip": "لا تعتبر كل رسالة داخلية تصيدًا؛ قيّم المصدر والطلب والرابط.", "risk_level": "Safe", "is_phishing": False,
+            }
+        body = """Dear Staff,
+
+The Quality and Patient Safety team will conduct a routine review of patient-safety procedures this week. No password, OTP, or account verification is required.
+
+Please check the update through the usual internal hospital channels when it becomes available.
+
+Regards,
+Quality and Patient Safety Department"""
+        return {
+            "email_type": "Legitimate workplace email", "attack_type": "Legitimate", "from": "Quality and Patient Safety <quality@hospital.org>",
+            "to": email, "subject": "Routine patient-safety procedure update", "attachment": "", "body": body,
+            "suspicious_text": "", "suspicious_link": "", "injected_errors": [],
+            "indicators": _v12_indicators(diff, is_ar, False), "why_risky": "This is legitimate because it does not request sensitive data and follows a normal hospital workflow.",
+            "learning_tip": "Do not mark every internal message as phishing; check the sender, request, and link.", "risk_level": "Safe", "is_phishing": False,
+        }
+
+    # Choose a role-specific topic to preserve job-role variety.
+    topics_en = {
+        "clinical": ["EMR access revalidation", "critical lab results review", "clinical protocol update", "shift roster confirmation", "pharmacy system access", "telemedicine consultation list"],
+        "admin": ["patient appointment system update", "insurance portal verification", "payroll bank-detail review", "supplier invoice approval", "medical procurement renewal", "staff benefits confirmation"],
+        "it": ["VPN re-authentication", "SSL certificate renewal", "firewall policy review", "software license renewal", "backup verification", "Active Directory access review"],
+        "other": ["hospital portal update", "staff records review", "policy acknowledgement", "internal service confirmation", "department access review", "training portal update"],
+    }
+    topics_ar = {
+        "clinical": ["إعادة تحقق دخول السجل الطبي", "مراجعة نتائج مختبر حرجة", "تحديث بروتوكول سريري", "تأكيد جدول المناوبات", "دخول نظام الصيدلية", "قائمة استشارات عن بعد"],
+        "admin": ["تحديث نظام حجز المواعيد", "التحقق من بوابة التأمين", "مراجعة بيانات الرواتب", "اعتماد فاتورة مورد", "تجديد مشتريات طبية", "تأكيد مزايا الموظفين"],
+        "it": ["إعادة تحقق VPN", "تجديد شهادة SSL", "مراجعة سياسة الجدار الناري", "تجديد ترخيص برنامج", "التحقق من النسخ الاحتياطي", "مراجعة Active Directory"],
+        "other": ["تحديث بوابة المستشفى", "مراجعة سجلات الموظفين", "إقرار سياسة داخلية", "تأكيد خدمة داخلية", "مراجعة صلاحيات القسم", "تحديث بوابة التدريب"],
+    }
+    rt = role_type if role_type in topics_en else "other"
+    topic_en = topics_en[rt][seq]
+    topic_ar = topics_ar[rt][seq]
+
+    if is_ar:
+        if diff == "easy":
+            link = f"http://hospital-{rt}-login-check.com/verify-{index+1}"
+            body = f"""عزيزي الموظف،
+
+يجب تحديث بيانات الدخول الخاصة بك اليوم بسبب {topic_ar}.
+
+اضغط على الرابط التالي فورًا وأدخل اسم المستخدم وكلمة المرور لتجنب إيقاف الحساب:
+{link}
+
+إذا لم يتم التحديث اليوم سيتم تعليق الوصول للنظام.
+
+مع التحية،
+فريق الدعم"""
+            attachment = ""
+            subject = f"إجراء عاجل اليوم: {topic_ar}"
+            suspicious = "أدخل اسم المستخدم وكلمة المرور"
+            sender = "دعم المستشفى <support@hospital-login-help.com>"
+        elif diff == "medium":
+            link = f"https://hospital-review-{rt}.secure-update.net/case/{index+381}"
+            body = f"""عزيزي {sub if sub else 'الموظف'}،
+
+تجري إدارة المستشفى مراجعة مجدولة بخصوص {topic_ar}. يرجى إكمال مراجعة الطلب خلال 48 ساعة حتى لا يتأخر الإجراء المرتبط بقسمك.
+
+رابط المراجعة:
+{link}
+
+شاكرين تعاونك،
+مكتب تنسيق الأنظمة"""
+            attachment = ""
+            subject = f"مراجعة مطلوبة خلال 48 ساعة: {topic_ar}"
+            suspicious = "رابط المراجعة"
+            sender = "مكتب تنسيق الأنظمة <coordination@hospital-review.net>"
+        else:
+            channels = ["SharePoint", "Microsoft 365", "PDF", "QR"]
+            ch = channels[index % len(channels)]
+            link = f"https://m365-hospital-workflow.sharepoint-review.org/approval/{index+740}"
+            attachment = "Patient_Safety_Review.pdf" if ch == "PDF" else ""
+            channel_text = "مرفق PDF الرسمي" if ch == "PDF" else "بوابة Microsoft 365" if ch == "Microsoft 365" else "مساحة SharePoint" if ch == "SharePoint" else "رمز QR الخاص بالمراجعة"
+            body = f"""عزيزتي/عزيزي {name}،
+
+ضمن مراجعة داخلية مرتبطة بـ {topic_ar}، نرجو اعتماد الملاحظة المسندة إليك عبر {channel_text} قبل نهاية يوم العمل القادم.
+
+لا يلزم إرسال كلمة المرور بالبريد. الرجاء فتح طلب الاعتماد من المسار الداخلي الموضح في إشعار المراجعة:
+[فتح مراجعة الاعتماد]({link})
+
+مع التحية،
+وحدة الحوكمة والامتثال السريري"""
+            subject = f"اعتماد داخلي مطلوب: {topic_ar}"
+            suspicious = "فتح مراجعة الاعتماد"
+            sender = "وحدة الحوكمة والامتثال السريري <governance@hospital-workflow.org>"
+        return {
+            "email_type": topic_ar, "attack_type": "Phishing Simulation", "from": sender, "to": email,
+            "subject": subject, "attachment": attachment, "body": body, "suspicious_text": suspicious,
+            "suspicious_link": link, "injected_errors": ["صياغة ضغط زمني"] if diff == "easy" else [],
+            "indicators": _v12_indicators(diff, True, True),
+            "why_risky": "هذه رسالة تصيد تدريبية لأنها تدفع الموظف إلى إجراء حساس عبر قناة غير موثوقة أو نطاق غير رسمي.",
+            "learning_tip": "تحقق من النطاق والقناة الرسمية قبل فتح الروابط أو المرفقات.",
+            "risk_level": "High" if diff == "hard" else "Medium" if diff == "medium" else "Low",
+            "is_phishing": True,
+        }
+
+    if diff == "easy":
+        link = f"http://hospital-{rt}-login-check.com/verify-{index+1}"
+        body = f"""Dear Staff,
+
+Your account must be updated today because of {topic_en}.
+
+Click the link below immediately and enter your username and password to avoid account suspension:
+{link}
+
+If this is not completed today, system access will be disabled.
+
+Regards,
+Support Team"""
+        attachment = ""
+        subject = f"Urgent action today: {topic_en}"
+        suspicious = "enter your username and password"
+        sender = "Hospital Support <support@hospital-login-help.com>"
+    elif diff == "medium":
+        link = f"https://hospital-review-{rt}.secure-update.net/case/{index+381}"
+        body = f"""Dear {sub if sub else 'Staff Member'},
+
+Hospital Administration is completing a scheduled review related to {topic_en}. Please complete the review within 48 hours to avoid delaying the workflow assigned to your department.
+
+Review link:
+{link}
+
+Thank you,
+Systems Coordination Office"""
+        attachment = ""
+        subject = f"Review required within 48 hours: {topic_en}"
+        suspicious = "Review link"
+        sender = "Systems Coordination Office <coordination@hospital-review.net>"
+    else:
+        channels = ["SharePoint", "Microsoft 365", "PDF", "QR"]
+        ch = channels[index % len(channels)]
+        link = f"https://m365-hospital-workflow.sharepoint-review.org/approval/{index+740}"
+        attachment = "Patient_Safety_Review.pdf" if ch == "PDF" else ""
+        channel_text = "the attached PDF" if ch == "PDF" else "the Microsoft 365 workflow" if ch == "Microsoft 365" else "the SharePoint review space" if ch == "SharePoint" else "the review QR code"
+        body = f"""Dear {name},
+
+As part of an internal review related to {topic_en}, please approve the note assigned to you through {channel_text} before the end of the next business day.
+
+Do not send your password by email. Open the approval request from the internal review path below:
+[Open approval review]({link})
+
+Regards,
+Clinical Governance and Compliance Unit"""
+        subject = f"Internal approval required: {topic_en}"
+        suspicious = "Open approval review"
+        sender = "Clinical Governance and Compliance <governance@hospital-workflow.org>"
+    return {
+        "email_type": topic_en, "attack_type": "Phishing Simulation", "from": sender, "to": email,
+        "subject": subject, "attachment": attachment, "body": body, "suspicious_text": suspicious,
+        "suspicious_link": link, "injected_errors": ["pressure wording"] if diff == "easy" else [],
+        "indicators": _v12_indicators(diff, False, True),
+        "why_risky": "This is a training phishing email because it pushes the employee toward a sensitive action through an untrusted channel or non-official domain.",
+        "learning_tip": "Verify the domain and official workflow before opening links or attachments.",
+        "risk_level": "High" if diff == "hard" else "Medium" if diff == "medium" else "Low",
+        "is_phishing": True,
+    }
+
+
+def _v12_finalize_result(result, role, index, language, difficulty, is_phishing, assessment=False):
+    try:
+        result = _v10_fix_result(result, role, index, language, difficulty, is_phishing, assessment)
+    except Exception:
+        pass
+    try:
+        result = _v11_postprocess_advanced(result, difficulty)
+    except Exception:
+        pass
+    if not isinstance(result, dict):
+        result = _v12_fallback_email(role, index, language, difficulty, is_phishing, assessment)
+    # Fill any missing core fields without rejecting the email.
+    fb = _v12_fallback_email(role, index, language, difficulty, is_phishing, assessment)
+    for k, v in fb.items():
+        if k not in result or result.get(k) in (None, "", []):
+            if k in ("attachment", "suspicious_link", "suspicious_text") and not is_phishing:
+                result[k] = ""
+            else:
+                result[k] = v
+    result["is_phishing"] = bool(is_phishing)
+    if not is_phishing:
+        result["risk_level"] = "Safe"
+    try:
+        result = clean_result(result, language == "Arabic")
+    except Exception:
+        pass
+    return result
+
+
+def _v12_generate_api(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    """Stable API-first generator. Never returns {"error": ...} to the UI."""
+    is_ar = language == "Arabic"
+    last_issues = []
+    provider = st.session_state.get("ai_provider", "openai")
+    attempts = 3 if provider not in {"gemini", "anthropic"} else 4
+
+    for attempt in range(attempts):
+        try:
+            prompt = _v11_prompt(role, index + attempt * 101, language, difficulty, is_phishing, assessment)
+            if last_issues:
+                prompt += build_retry_guidance(last_issues, is_ar)
+            data = call_ai(prompt, max_tokens=3600)
+            result = _v10_parse_or_none(data)
+            if isinstance(result, dict) and "error" not in result:
+                result = _v12_finalize_result(result, role, index + attempt * 101, language, difficulty, is_phishing, assessment)
+                try:
+                    evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=bool(is_phishing))
+                except Exception:
+                    pass
+                return result
+            last_issues = ["Provider returned invalid JSON or empty content. Regenerate valid JSON only."]
+        except Exception as e:
+            try:
+                _store_debug("v12_generate_api", str(e))
+            except Exception:
+                pass
+            last_issues = ["Transient provider/formatting issue. Regenerate valid JSON only."]
+
+    # Guaranteed no-error fallback for participant-facing pages.
+    result = _v12_fallback_email(role, index, language, difficulty, is_phishing, assessment)
+    result = _v12_finalize_result(result, role, index, language, difficulty, is_phishing, assessment)
+    try:
+        evaluate_and_log_auto_scores(result, _enhanced_diff(difficulty), language, is_phishing=bool(is_phishing))
+    except Exception:
+        pass
+    return result
+
+
+def generate_email(role, index, language, difficulty="medium"):
+    return _v12_generate_api(role, index, language, difficulty, True, assessment=False)
+
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    return _v12_generate_api(role, index, language, difficulty, bool(is_phishing), assessment=True)
+
+
+def generate_other_email(index, language, difficulty):
+    return generate_email("Other", index, language, difficulty)
+
+
+def generate_other_assess_email(index, is_phishing, language, difficulty):
+    return generate_assess_email("Other", index, is_phishing, language, difficulty)
+
+# =============================================================
+# END FINAL STABLE PATCH v12
+# =============================================================
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
