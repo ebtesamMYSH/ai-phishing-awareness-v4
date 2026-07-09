@@ -9319,14 +9319,19 @@ def _v10_fix_result(result, role, index, language, difficulty, is_phishing, asse
     is_ar = language == "Arabic"
     if not isinstance(result, dict):
         return None
-    result = normalize_learning_analysis(result) if "indicators" in result else result
+    # Resolve role_type first so normalize_learning_analysis gets all required args
+    try:
+        role_type, sc, sub, person = _v5_pick_full_card(role, index, assessment)
+    except Exception:
+        role_type, sc, sub, person = role, None, None, ("", "")
+    result = normalize_learning_analysis(result, role_type, diff, is_ar) if "indicators" in result else result
     result = clean_result(result, is_ar)
     # ensure required identity fields are present
     try:
-        role_type, sc, sub, person = _v5_pick_full_card(role, index, assessment)
         result["to"] = person[1]
         result.setdefault("subrole", sub)
-        result.setdefault("scenario_id", f"api-v10:{role_type}:{sc.get('source_id','SC')}:{diff}:{index}:{random.randint(1000,9999)}")
+        if sc:
+            result.setdefault("scenario_id", f"api-v10:{role_type}:{sc.get('source_id','SC')}:{diff}:{index}:{random.randint(1000,9999)}")
     except Exception:
         pass
     result["is_phishing"] = bool(is_phishing)
