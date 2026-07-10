@@ -3480,14 +3480,15 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
             </div>'''
 
         st.markdown(step_label("1", t("Select your preferred language","اختر اللغة المفضلة")), unsafe_allow_html=True)
-        cur_lang  = (st.session_state.get("language") or "")
+        cur_lang     = (st.session_state.get("language") or "")
+        lang_chosen0 = st.session_state.get("lang_explicitly_chosen", False)
         col1,col2 = st.columns(2)
         with col1:
             st.button("English", key="english", on_click=set_language, args=("English",),
-                       use_container_width=True, type=("primary" if cur_lang == "English" else "secondary"))
+                       use_container_width=True, type=("primary" if lang_chosen0 and cur_lang == "English" else "secondary"))
         with col2:
             st.button("العربية", key="arabic",  on_click=set_language, args=("Arabic",),
-                       use_container_width=True, type=("primary" if cur_lang == "Arabic" else "secondary"))
+                       use_container_width=True, type=("primary" if lang_chosen0 and cur_lang == "Arabic" else "secondary"))
 
         st.markdown(step_label("2", t("Select your role","اختر دورك الوظيفي")), unsafe_allow_html=True)
         opts = [t("Choose your role","اختر دورك الوظيفي"),t("Clinical","سريري"),t("Admin / Management","إداري / إدارة"),t("IT / Informatics","تقنية المعلومات / المعلوماتية"),t("Other","أخرى")]
@@ -3542,7 +3543,7 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
 
         for i,(dk,lbl) in enumerate(ordered_display):
             with diff_cols[i]:
-                is_sel  = current_diff == dk
+                is_sel  = current_diff == dk and st.session_state.get("diff_explicitly_chosen", False)
                 if st.button(lbl, key=f"diff_{dk}", use_container_width=True,
                              type=("primary" if is_sel else "secondary")):
                     st.session_state["difficulty"] = dk
