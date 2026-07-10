@@ -3354,8 +3354,8 @@ def page_home():
 .stButton>button{{width:100%;min-height:48px;background:rgba(15,23,42,.78);color:#EAF4FF;border:1px solid rgba(37,99,235,.55);border-radius:12px;font-weight:800;direction:{dir_attr};}}
 .stButton>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7);color:white;border-color:#1EA7FF !important;}}
 .stButton>button:focus,.stButton>button:focus-visible,.stButton>button:focus:not(:hover){{outline:none !important;box-shadow:none !important;}}
-.start-btn>button{{min-height:56px !important;background:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.65) !important;font-size:1.05rem !important;font-weight:900 !important;border-radius:14px !important;}}
-.start-btn>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border-color:#1EA7FF !important;}}
+.start-btn>button,.start-btn button[kind="primary"]{{min-height:56px !important;background:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.65) !important;font-size:1.05rem !important;font-weight:900 !important;border-radius:14px !important;box-shadow:none !important;}}
+.start-btn>button:hover,.start-btn button[kind="primary"]:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border-color:#1EA7FF !important;}}
 div[data-baseweb="select"] *{{color:#EAF4FF!important;-webkit-text-fill-color:#EAF4FF!important;}}
 div[data-baseweb="select"] > div{{background:rgba(15,23,42,.82)!important;border:1px solid rgba(37,99,235,.65)!important;border-radius:12px!important;}}
 div[data-baseweb="popover"] *{{color:#EAF4FF!important;-webkit-text-fill-color:#EAF4FF!important;}}
@@ -3370,9 +3370,10 @@ div[data-baseweb="select"] input{{color:white !important;caret-color:white;-webk
 div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:{dir_attr} !important;}}
 .footer-bar{{margin-top:2rem;padding:1.5rem 0;border-top:1px solid rgba(37,99,235,.35);display:flex;justify-content:space-between;align-items:center;color:#7DD3FC;font-size:.95rem;direction:{dir_attr};}}
 .footer-side{{display:flex;align-items:center;gap:.8rem;}}
-.diff-btn>button{{width:100% !important;min-height:52px !important;border-radius:14px !important;font-weight:800 !important;font-size:.95rem !important;transition:.2s ease !important;background:rgba(2,6,23,.55) !important;border:2px solid rgba(37,99,235,.35) !important;color:#94A3B8 !important;}}
-.diff-btn>button:hover{{background:rgba(11,79,168,.25) !important;border-color:#1EA7FF !important;color:#FFFFFF !important;}}
-.diff-btn-sel>button{{background:linear-gradient(135deg,#0B4FA8,#0284C7) !important;border:2px solid #1EA7FF !important;color:#FFFFFF !important;box-shadow:0 0 18px rgba(30,167,255,.3) !important;opacity:1 !important;cursor:default !important;pointer-events:none !important;}}
+button[kind="secondary"]{{width:100% !important;min-height:52px !important;border-radius:14px !important;font-weight:800 !important;font-size:.95rem !important;transition:.2s ease !important;background:rgba(2,6,23,.55) !important;border:2px solid rgba(37,99,235,.35) !important;color:#94A3B8 !important;}}
+button[kind="secondary"]:hover{{background:rgba(11,79,168,.25) !important;border-color:#1EA7FF !important;color:#FFFFFF !important;}}
+button[kind="primary"]{{width:100% !important;min-height:52px !important;border-radius:14px !important;font-weight:800 !important;font-size:.95rem !important;background:linear-gradient(135deg,#0B4FA8,#0284C7) !important;border:2px solid #1EA7FF !important;color:#FFFFFF !important;box-shadow:0 0 18px rgba(30,167,255,.3) !important;opacity:1 !important;}}
+button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gradient(135deg,#0B4FA8,#0284C7) !important;border:2px solid #1EA7FF !important;color:#FFFFFF !important;}}
 @media(max-width:950px){{.hero-grid{{grid-template-columns:1fr;}}.features-grid{{grid-template-columns:1fr;}}.footer-bar{{flex-direction:column;gap:1rem;text-align:center;}}}}
 </style>""", unsafe_allow_html=True)
 
@@ -3480,22 +3481,13 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
 
         st.markdown(step_label("1", t("Select your preferred language","اختر اللغة المفضلة")), unsafe_allow_html=True)
         cur_lang  = (st.session_state.get("language") or "")
-        en_cls = "lang-btn-sel" if cur_lang == "English" else "lang-btn"
-        ar_cls = "lang-btn-sel" if cur_lang == "Arabic"  else "lang-btn"
-        st.markdown(f"""<style>
-.lang-btn button {{background:rgba(15,23,42,.78) !important;border:1px solid rgba(37,99,235,.55) !important;color:#EAF4FF !important;}}
-.lang-btn-sel button {{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border:2px solid #1EA7FF !important;color:white !important;box-shadow:0 0 14px rgba(30,167,255,.35) !important;}}
-.lang-btn-sel button:hover,.lang-btn-sel button:focus,.lang-btn-sel button:active {{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border:2px solid #1EA7FF !important;color:white !important;}}
-</style>""", unsafe_allow_html=True)
         col1,col2 = st.columns(2)
         with col1:
-            st.markdown(f'<div class="{en_cls}">', unsafe_allow_html=True)
-            st.button("English", key="english", on_click=set_language, args=("English",), use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.button("English", key="english", on_click=set_language, args=("English",),
+                       use_container_width=True, type=("primary" if cur_lang == "English" else "secondary"))
         with col2:
-            st.markdown(f'<div class="{ar_cls}">', unsafe_allow_html=True)
-            st.button("العربية", key="arabic",  on_click=set_language, args=("Arabic",), use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.button("العربية", key="arabic",  on_click=set_language, args=("Arabic",),
+                       use_container_width=True, type=("primary" if cur_lang == "Arabic" else "secondary"))
 
         st.markdown(step_label("2", t("Select your role","اختر دورك الوظيفي")), unsafe_allow_html=True)
         opts = [t("Choose your role","اختر دورك الوظيفي"),t("Clinical","سريري"),t("Admin / Management","إداري / إدارة"),t("IT / Informatics","تقنية المعلومات / المعلوماتية"),t("Other","أخرى")]
@@ -3551,13 +3543,11 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
         for i,(dk,lbl) in enumerate(ordered_display):
             with diff_cols[i]:
                 is_sel  = current_diff == dk
-                css_cls = "diff-btn diff-btn-sel" if is_sel else "diff-btn"
-                st.markdown(f'<div class="{css_cls}">', unsafe_allow_html=True)
-                if st.button(lbl, key=f"diff_{dk}", use_container_width=True):
+                if st.button(lbl, key=f"diff_{dk}", use_container_width=True,
+                             type=("primary" if is_sel else "secondary")):
                     st.session_state["difficulty"] = dk
                     st.session_state["diff_explicitly_chosen"] = True
                     st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
 
         if st.query_params.get("mode") == "researcher":
             st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
@@ -3574,16 +3564,14 @@ div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:
             for i, (pk, plbl) in enumerate(prov_items):
                 with prov_cols[i % 2]:
                     is_psel = cur_provider == pk
-                    pcss = "diff-btn diff-btn-sel" if is_psel else "diff-btn"
-                    st.markdown(f'<div class="{pcss}">', unsafe_allow_html=True)
-                    if st.button(plbl, key=f"prov_{pk}", use_container_width=True):
+                    if st.button(plbl, key=f"prov_{pk}", use_container_width=True,
+                                 type=("primary" if is_psel else "secondary")):
                         set_active_provider(pk)
                         st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size:.72rem;color:#64748B;margin-top:.3rem;direction:{dir_attr};">Active: <b style="color:#F59E0B;">{provider_options.get(cur_provider,"")}</b></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="start-btn" style="margin-top:.8rem;">',unsafe_allow_html=True)
-        if st.button(t("Start Personalised Training","ابدأ التدريب المخصص"),key="start_training", use_container_width=True):
+        if st.button(t("Start Personalised Training","ابدأ التدريب المخصص"),key="start_training", use_container_width=True, type="primary"):
             fr = other_role.strip() if sel==opts[-1] else sel
             lang_chosen = st.session_state.get("lang_explicitly_chosen", False)
             diff_chosen = st.session_state.get("diff_explicitly_chosen", False)
