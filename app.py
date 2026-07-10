@@ -3703,17 +3703,27 @@ def page_learning():
     with col_tutor:
         indicators    = email.get("indicators",[])
         indicators_html = ""
-        for ind in indicators:
+        for pos, ind in enumerate(indicators, 1):
+            # Backward compatibility: providers/fallbacks may occasionally
+            # return a plain string instead of the expected dictionary.
+            if isinstance(ind, dict):
+                ind_number = ind.get("number") or pos
+                ind_title = ind.get("title") or ind.get("name") or ""
+                ind_description = ind.get("description") or ind.get("detail") or ""
+            else:
+                ind_number = pos
+                ind_title = str(ind or "")
+                ind_description = ""
             row_dir = 'rtl' if is_arabic else 'ltr'
             pad     = 'padding-right:2rem;' if is_arabic else 'padding-left:2rem;'
             ta2     = 'right' if is_arabic else 'left'
             indicators_html += f"""
 <div style="margin-bottom:1rem;">
   <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.3rem;direction:{row_dir};">
-    <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#DC2626;color:white;font-size:.75rem;font-weight:800;flex-shrink:0;">{(ind.get('number') or '')}</span>
-    <span style="font-weight:700;color:#E2E8F0;font-size:.95rem;">{(ind.get('title') or '')}</span>
+    <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#DC2626;color:white;font-size:.75rem;font-weight:800;flex-shrink:0;">{ind_number}</span>
+    <span style="font-weight:700;color:#E2E8F0;font-size:.95rem;">{html_lib.escape(str(ind_title))}</span>
   </div>
-  <div style="color:#94A3B8;font-size:.9rem;line-height:1.65;{pad};direction:{row_dir};text-align:{ta2};">{(ind.get('description') or '')}</div>
+  <div style="color:#94A3B8;font-size:.9rem;line-height:1.65;{pad};direction:{row_dir};text-align:{ta2};">{html_lib.escape(str(ind_description))}</div>
 </div>"""
 
         st.markdown(f"""
@@ -10601,21 +10611,60 @@ def _v15_subject(topic_en, topic_ar, dept_en, dept_ar, difficulty, language, ind
 
 
 def _v15_indicators(difficulty, attack, has_link=True, has_attachment=False, has_qr=False, language="English"):
+    """Return renderer-safe indicator dictionaries.
+
+    The UI expects each indicator to contain number/title/description.
+    Earlier v15 returned plain strings, which caused AttributeError when the
+    learning page called ind.get(...).
+    """
     ar = language == "Arabic"
+
     if difficulty == "easy":
-        return (["نطاق مرسل مزيف وواضح", "طلب مباشر لكلمة المرور أو الرمز", "تهديد أو استعجال قوي", "رابط خارجي ظاهر"] if ar else
-                ["Obvious fake sender domain", "Direct password/PIN/OTP request", "Strong urgency or threat", "Visible external link"])
-    if difficulty == "medium":
-        vals = ["نطاق غير رسمي لكنه يبدو قريبًا", "مهلة زمنية معقولة", "طلب دخول أو مراجعة عبر بوابة خارجية"] if ar else ["Non-official but plausible domain", "Moderate deadline", "External review or sign-in path"]
+        items = ([
+            ("نطاق مرسل مزيف وواضح", "عنوان المرسل لا يستخدم نطاق المستشفى الرسمي."),
+            ("طلب مباشر لبيانات الدخول", "الرسالة تطلب كلمة المرور أو رقم PIN أو رمز OTP مباشرة."),
+            ("استعجال أو تهديد قوي", "تضغط الرسالة للتصرف اليوم أو خلال ساعات."),
+            ("رابط خارجي ظاهر", "الرابط يقود إلى نطاق غير تابع للمستشفى."),
+        ] if ar else [
+            ("Obvious fake sender domain", "The sender does not use the official hospital domain."),
+            ("Direct credential request", "The message asks for a password, PIN, OTP, or login details."),
+            ("Strong urgency or threat", "The email pressures the user to act today or within hours."),
+            ("Visible external link", "The link points to a non-official external domain."),
+        ])
+    elif difficulty == "medium":
+        items = ([
+            ("نطاق غير رسمي لكنه مقنع", "النطاق قريب من الاسم الرسمي لكنه ليس تابعًا للمستشفى."),
+            ("مهلة زمنية معقولة", "الإلحاح أقل وضوحًا ويستخدم مهلة مثل 24 إلى 72 ساعة."),
+            ("مسار مراجعة أو دخول خارجي", "يتم توجيه المستخدم إلى بوابة تبدو مهنية لكنها خارجية."),
+        ] if ar else [
+            ("Plausible but unofficial domain", "The domain resembles an official service but is not hospital-owned."),
+            ("Moderate deadline", "The pressure is subtle and uses a believable 24-72 hour window."),
+            ("External review or sign-in path", "The user is sent to a professional-looking external portal."),
+        ])
         if has_attachment:
-            vals.append("مرفق غير متوقع" if ar else "Unexpected attachment")
-        return vals[:4]
-    vals = ["اختلاف بسيط في النطاق أو مسار الرابط", "سياق داخلي مقنع يحتاج تحققًا"] if ar else ["Subtle domain or link mismatch", "Plausible internal workflow context"]
-    if has_qr:
-        vals.append("رمز QR يتجاوز فحص الرابط المعتاد" if ar else "QR code bypasses normal link checking")
-    elif has_attachment:
-        vals.append("مرفق مرتبط بسير عمل داخلي" if ar else "Workflow-related attachment")
-    return vals[:3]
+            items.append(("مرفق غير متوقع", "المرفق لم يُطلب عبر قناة داخلية موثوقة.") if ar else
+                         ("Unexpected attachment", "The attachment was not requested through a trusted internal channel."))
+        items = items[:4]
+    else:
+        items = ([
+            ("اختلاف طفيف في النطاق أو الرابط", "الاختلاف صغير وقد لا يُلاحظ دون فحص دقيق."),
+            ("سياق داخلي مقنع", "الرسالة تستخدم تفاصيل عمل واقعية لزيادة المصداقية."),
+        ] if ar else [
+            ("Subtle domain or link mismatch", "The difference is small and requires careful inspection."),
+            ("Plausible internal workflow context", "The message uses realistic internal details to appear legitimate."),
+        ])
+        if has_qr:
+            items.append(("رمز QR يتجاوز فحص الرابط", "رمز QR يخفي الوجهة الفعلية عن المستخدم.") if ar else
+                         ("QR code bypasses normal link checking", "The QR code hides the destination from normal visual inspection."))
+        elif has_attachment:
+            items.append(("مرفق مرتبط بسير عمل داخلي", "اسم المرفق وسياقه يبدوان واقعيين رغم أن المصدر غير موثوق.") if ar else
+                         ("Workflow-related attachment", "The filename and context look realistic even though the source is untrusted."))
+        items = items[:3]
+
+    return [
+        {"number": i + 1, "title": title, "description": description}
+        for i, (title, description) in enumerate(items)
+    ]
 
 
 def _v15_attack_label(attack, language):
