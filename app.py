@@ -3352,18 +3352,21 @@ def page_home():
 .section-label{{font-weight:800;color:white;margin-bottom:.5rem;direction:{dir_attr};text-align:{text_align};}}
 [data-testid="column"]{{direction:{dir_attr};}}
 .stButton>button{{width:100%;min-height:48px;background:rgba(15,23,42,.78);color:#EAF4FF;border:1px solid rgba(37,99,235,.55);border-radius:12px;font-weight:800;direction:{dir_attr};}}
-.stButton>button:hover,.stButton>button:focus{{background:linear-gradient(90deg,#0B4FA8,#0284C7);color:white;border-color:#1EA7FF !important;}}
+.stButton>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7);color:white;border-color:#1EA7FF !important;}}
+.stButton>button:focus,.stButton>button:focus-visible,.stButton>button:focus:not(:hover){{outline:none !important;box-shadow:none !important;}}
 .start-btn>button{{min-height:56px !important;background:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.65) !important;font-size:1.05rem !important;font-weight:900 !important;border-radius:14px !important;}}
 .start-btn>button:hover{{background:linear-gradient(90deg,#0B4FA8,#0284C7) !important;border-color:#1EA7FF !important;}}
-div[data-baseweb="select"] *{{color:#EAF4FF!important;}}
+div[data-baseweb="select"] *{{color:#EAF4FF!important;-webkit-text-fill-color:#EAF4FF!important;}}
 div[data-baseweb="select"] > div{{background:rgba(15,23,42,.82)!important;border:1px solid rgba(37,99,235,.65)!important;border-radius:12px!important;}}
-div[data-baseweb="popover"] *{{color:#EAF4FF!important;}}
+div[data-baseweb="popover"] *{{color:#EAF4FF!important;-webkit-text-fill-color:#EAF4FF!important;}}
 .stSelectbox>div>div,.stTextInput>div>div>input{{background-color:rgba(15,23,42,.88) !important;color:white !important;border:1px solid rgba(37,99,235,.55) !important;border-radius:12px !important;min-height:48px;direction:{dir_attr};text-align:{text_align};}}
-div[data-baseweb="select"] span{{color:white !important;}}
-div[data-baseweb="single-value"]{{color:white !important;}}
-div[data-baseweb="select"] [data-value]{{color:white !important;}}
-.stSelectbox div[class*="ValueContainer"] span{{color:white !important;}}
-div[data-baseweb="select"] input{{color:white !important;caret-color:white;}}
+div[data-baseweb="select"] span{{color:white !important;-webkit-text-fill-color:white!important;}}
+div[data-baseweb="single-value"]{{color:white !important;-webkit-text-fill-color:white!important;}}
+div[data-baseweb="select"] [data-value]{{color:white !important;-webkit-text-fill-color:white!important;}}
+.stSelectbox div[class*="ValueContainer"] span,
+.stSelectbox div[class*="singleValue"],
+.stSelectbox div[class*="placeholder"]{{color:white !important;-webkit-text-fill-color:white!important;opacity:1!important;}}
+div[data-baseweb="select"] input{{color:white !important;caret-color:white;-webkit-text-fill-color:white!important;}}
 div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:{dir_attr} !important;}}
 .footer-bar{{margin-top:2rem;padding:1.5rem 0;border-top:1px solid rgba(37,99,235,.35);display:flex;justify-content:space-between;align-items:center;color:#7DD3FC;font-size:.95rem;direction:{dir_attr};}}
 .footer-side{{display:flex;align-items:center;gap:.8rem;}}
@@ -4197,18 +4200,15 @@ button[kind="primary"]:hover{{
 }}
 .stTextInput input::placeholder{{color:#6B7280!important;}}
 .stTextInput>div>div,
-.stTextInput div[data-baseweb="base-input"]{{
-    background:transparent!important;
-    background-color:transparent!important;
-    border:none!important;
-    box-shadow:none!important;
-}}
+.stTextInput div[data-baseweb="base-input"],
 .stTextInput div[data-baseweb="input"]{{
     background:rgba(15,23,42,.80)!important;
     border:2px solid rgba(148,163,184,.75)!important;
     border-radius:12px!important;
     box-shadow:0 0 0 3px rgba(148,163,184,.08)!important;
 }}
+.stTextInput>div>div:focus-within,
+.stTextInput div[data-baseweb="base-input"]:focus-within,
 .stTextInput div[data-baseweb="input"]:focus-within{{
     border:2px solid #60A5FA!important;
     box-shadow:0 0 0 3px rgba(96,165,250,.20)!important;
@@ -7378,6 +7378,25 @@ def _v18_rng(index, role_type, difficulty, phase):
     return random.Random(seed)
 
 
+def _v18_no_repeat_choice(items, memory_key, rng=None):
+    """FIXED: shared, session-guaranteed anti-repeat picker. Streamlit's
+    st.session_state always works within a browser session (unlike writing
+    to a file next to the script, which silently fails on read-only/ephemeral
+    deployments such as Streamlit Community Cloud — see the note on
+    _v18_pick_blueprint below). Avoids repeating a value seen recently in
+    THIS session before falling back to allowing repeats once every option
+    has been used.
+    """
+    recent = st.session_state.get(memory_key, [])
+    pool = [x for x in items if x not in recent]
+    if not pool:
+        pool = list(items)
+        recent = []
+    choice = (rng or random).choice(pool)
+    st.session_state[memory_key] = (recent + [choice])[-(max(1, len(items) - 1)):]
+    return choice
+
+
 def _v18_pick_blueprint(role, index, language, difficulty, phase, is_phishing=True):
     difficulty = str(difficulty or "medium").lower()
     if difficulty not in ("easy", "medium", "hard"):
@@ -7385,8 +7404,26 @@ def _v18_pick_blueprint(role, index, language, difficulty, phase, is_phishing=Tr
     role_type = _v18_effective_role(role, index, phase)
     rng = _v18_rng(index, role_type, difficulty, phase)
     bank = V18_ROLE_BANKS[role_type][difficulty]
+
+    # FIXED (root cause of repeated scenarios/domains across a 6-example
+    # batch): this used to rely ONLY on a JSON file written next to the
+    # script (scenario_history_v18.json) to avoid repeats. On Streamlit
+    # Community Cloud that directory is frequently read-only or reset on
+    # restart, so _v18_save_history() was failing silently every time
+    # (wrapped in try/except: pass) and _v18_load_history() always came
+    # back empty — meaning the "used" set was ALWAYS empty and every pick
+    # was fully random with no memory at all. That is exactly why the same
+    # domain and the same scenario could appear two or three times in one
+    # six-example session. We now track "used" primarily in
+    # st.session_state (guaranteed to work, scoped to this cycle), and keep
+    # the on-disk file only as a secondary best-effort layer for repeat
+    # visits across sessions on setups where the disk is actually writable.
+    cycle_key = f"v18_used_signatures_{st.session_state.get('v18_cycle_id', 0)}"
+    used_session = set(st.session_state.get(cycle_key, []))
     history = _v18_load_history()
-    used = {x.get("signature") for x in history[-600:] if isinstance(x, dict)}
+    used_file = {x.get("signature") for x in history[-600:] if isinstance(x, dict)}
+    used = used_session | used_file
+
     candidates = []
     for area, topic in bank:
         for attack in V18_ATTACKS[difficulty]:
@@ -7396,11 +7433,18 @@ def _v18_pick_blueprint(role, index, language, difficulty, phase, is_phishing=Tr
     rng.shuffle(candidates)
     chosen = next((c for c in candidates if c[0] not in used), candidates[0])
     sig, area, topic, attack, structure = chosen
+
+    st.session_state[cycle_key] = list(used_session | {sig})
     history.append({"signature": sig, "role": role_type, "difficulty": difficulty, "phase": phase})
     _v18_save_history(history)
-    domain = rng.choice(V18_DOMAINS[difficulty])
-    prefix = rng.choice(V18_SUBJECT_PREFIX[difficulty])
-    display_time = rng.choice(V18_TIME_OPTIONS[difficulty])
+
+    # FIXED: domain / subject prefix / display time previously had NO
+    # anti-repeat protection at all (plain rng.choice every time) — with
+    # pools of only 6 options and 6 examples per session, repeats were
+    # statistically expected, not a fluke.
+    domain = _v18_no_repeat_choice(V18_DOMAINS[difficulty], f"v18_recent_domain_{difficulty}_{st.session_state.get('v18_cycle_id', 0)}", rng)
+    prefix = _v18_no_repeat_choice(V18_SUBJECT_PREFIX[difficulty], f"v18_recent_prefix_{difficulty}_{st.session_state.get('v18_cycle_id', 0)}", rng)
+    display_time = _v18_no_repeat_choice(V18_TIME_OPTIONS[difficulty], f"v18_recent_time_{difficulty}_{st.session_state.get('v18_cycle_id', 0)}", rng)
     return {
         "signature": sig, "role_type": role_type, "difficulty": difficulty,
         "area": area, "topic": topic, "attack": attack, "structure": structure,
@@ -7422,7 +7466,9 @@ def _v18_sender(area, domain, difficulty, rng):
     local_easy = ["support", "alerts", "verify", "account-update", "secure-login", "staff-support"]
     local_med = ["notifications", "workflow", "service-desk", "no-reply", "department-updates", "portal"]
     local_hard = ["operations", "governance", "office", "coordinator", "secretariat", "systems"]
-    local = rng.choice(local_easy if difficulty == "easy" else local_med if difficulty == "medium" else local_hard)
+    pool = local_easy if difficulty == "easy" else local_med if difficulty == "medium" else local_hard
+    # FIXED: same missing anti-repeat issue as domain/prefix/time above.
+    local = _v18_no_repeat_choice(pool, f"v18_recent_sender_{difficulty}_{st.session_state.get('v18_cycle_id', 0)}", rng)
     return f"{area} <{local}@{domain}>"
 
 
@@ -7435,10 +7481,24 @@ def _v18_link(bp, index):
     return f"http://{bp['domain']}/{slug}/{100+index}"
 
 
+# FIXED: the easy-difficulty greeting pool used to have only 3 fixed
+# strings, AND (see _v18_enforce below) the enforcement step forced the
+# body's first line to be exactly the first of those 3 strings almost every
+# time — which is why every screenshot showed "Dear Staff," no matter what.
+# The pool is now bigger, and both the deterministic path (_v18_greeting)
+# and the AI-enforcement path pull from the SAME pool using the SAME
+# session-scoped anti-repeat memory, so they can no longer disagree or
+# collapse onto one value.
+V18_EASY_GREETINGS_EN = ["Dear Staff,", "Dear Healthcare Team,", "Dear Employee,", "Dear Colleague,", "Dear Team Member,", "Hello Staff,"]
+V18_EASY_GREETINGS_AR = ["عزيزي الموظف،", "فريق العمل العزيز،", "الزملاء الأعزاء،", "عزيزي الزميل،", "أعضاء الفريق الأعزاء،", "مرحباً بكم،"]
+
+
 def _v18_greeting(bp, person, rng):
     is_ar = bp["language"] == "Arabic"
     if bp["difficulty"] == "easy":
-        return rng.choice(["عزيزي الموظف،", "فريق العمل العزيز،", "الزملاء الأعزاء،"] if is_ar else ["Dear Staff,", "Dear Healthcare Team,", "Dear Employee,"])
+        pool = V18_EASY_GREETINGS_AR if is_ar else V18_EASY_GREETINGS_EN
+        key = f"v18_recent_greeting_easy_{bp['language']}_{st.session_state.get('v18_cycle_id', 0)}"
+        return _v18_no_repeat_choice(pool, key, rng)
     if bp["difficulty"] == "medium":
         return f"عزيزي فريق {bp['area']}،" if is_ar else f"Dear {bp['area']} Team,"
     name = person.get("ar") if is_ar else person.get("en")
@@ -7700,8 +7760,9 @@ def _v18_strip_and_place_link(body, link, is_phishing):
     correct controlled one:
       1) Remove every raw http(s)/www URL the model wrote on its own.
       2) Fill in the {{LINK}} placeholder if the model used it.
-      3) Otherwise insert the single controlled link once, right before the
-         signature block (or at the end if no signature is detected).
+      3) Otherwise insert the single controlled link once, at a position
+         that varies (see _v18_place_link_fallback) instead of always
+         landing in the exact same spot right before the signature.
     """
     text = str(body or "")
     text = _V18_URL_RE.sub("", text)
@@ -7716,18 +7777,42 @@ def _v18_strip_and_place_link(body, link, is_phishing):
     if "{LINK}" in text:
         return text.replace("{LINK}", link)
 
-    # No placeholder came back — insert the link once, just before the
-    # signature line if we can find one, otherwise at the very end.
+    return _v18_place_link_fallback(text, link)
+
+
+_V18_LINK_ACTION_WORDS = (
+    "verify", "confirm", "click", "provide", "update", "reactivate", "sign in",
+    "log in", "review", "complete", "restore", "reset",
+    "تحقق", "أكّد", "أكد", "قدّم", "حدّث", "أعد تفعيل", "سجّل الدخول", "راجع", "أكمل",
+)
+
+
+def _v18_place_link_fallback(text, link):
+    """FIXED: previously the link, whenever the model skipped the
+    {{LINK}} placeholder, always landed in the exact same spot (right
+    before the signature) in every single email — a monotony that stood
+    out just as much as an outright duplicate. It now rotates, once per
+    session, between three natural positions so consecutive examples don't
+    all look identical."""
     lines = text.split("\n")
-    sig_idx = None
     sig_markers = ("regards", "sincerely", "thank you", "best,", "support",
                    "مع التحية", "تحياتي", "مع الشكر", "شكرًا", "وتفضلوا", "مع التقدير")
-    for i, ln in enumerate(lines):
-        low = ln.strip().lower()
-        if low and any(m in low for m in sig_markers):
-            sig_idx = i
-            break
-    if sig_idx is not None:
+    sig_idx = next((i for i, ln in enumerate(lines)
+                     if ln.strip() and any(m in ln.strip().lower() for m in sig_markers)), None)
+    action_idx = next((i for i, ln in enumerate(lines)
+                        if ln.strip() and any(w in ln.lower() for w in _V18_LINK_ACTION_WORDS)), None)
+
+    strategies = ["before_signature", "own_line_end"]
+    if action_idx is not None:
+        strategies.append("after_action_sentence")
+
+    key = f"v18_recent_link_position_{st.session_state.get('v18_cycle_id', 0)}"
+    strategy = _v18_no_repeat_choice(strategies, key)
+
+    if strategy == "after_action_sentence" and action_idx is not None:
+        lines[action_idx:action_idx + 1] = [lines[action_idx].rstrip(), "", link]
+        return "\n".join(lines).strip()
+    if strategy == "before_signature" and sig_idx is not None:
         lines[sig_idx:sig_idx] = [link, ""]
         return "\n".join(lines).strip()
     return text.rstrip() + "\n\n" + link
@@ -7751,9 +7836,19 @@ def _v18_enforce(result, seed, bp):
         result["body"] = re.sub(r"\[QR[^\]]*\]", "", str(result.get("body", "")), flags=re.I)
         lines = str(result.get("body", "")).splitlines()
         if lines:
-            allowed = ["عزيزي الموظف،", "فريق العمل العزيز،", "الزملاء الأعزاء،"] if bp["language"] == "Arabic" else ["Dear Staff,", "Dear Healthcare Team,", "Dear Employee,"]
-            if not any(lines[0].strip().lower() == x.lower() for x in allowed):
-                lines[0] = allowed[0]
+            # FIXED (root cause of every email showing "Dear Staff,"): this
+            # used to compare against only 3 fixed strings and, since an
+            # AI paraphrase essentially never matches one of them verbatim,
+            # it silently overwrote line 1 with allowed[0] on almost every
+            # single call — collapsing all greeting diversity to one value.
+            # We now draw from the same expanded, session-deduped pool used
+            # by the deterministic path (_v18_greeting), so a forced
+            # rewrite still lands on a fresh, varied greeting instead of
+            # always the same one.
+            pool = V18_EASY_GREETINGS_AR if bp["language"] == "Arabic" else V18_EASY_GREETINGS_EN
+            if not any(lines[0].strip().lower() == x.lower() for x in pool):
+                key = f"v18_recent_greeting_easy_{bp['language']}_{st.session_state.get('v18_cycle_id', 0)}"
+                lines[0] = _v18_no_repeat_choice(pool, key)
             result["body"] = "\n".join(lines)
     if bp["difficulty"] == "medium":
         result["body"] = re.sub(r"\[QR[^\]]*\]", "", str(result.get("body", "")), flags=re.I)
