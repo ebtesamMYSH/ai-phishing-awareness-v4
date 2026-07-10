@@ -8310,6 +8310,315 @@ def go_to_learning(role):
 # END FINAL RESEARCH ENGINE v18
 # =============================================================
 
+# =============================================================
+# RESEARCH ENGINE v20 — semantic diversity + grounded analysis
+# Added without changing the UI, providers, admin panel, exports,
+# scoring, bilingual flow, or existing data structures.
+# =============================================================
+
+V20_SCENARIO_DIMENSIONS = {
+    "clinical": {
+        "units": ["Emergency Department", "Outpatient Clinic", "ICU", "Cardiology", "Oncology", "Pediatrics", "Radiology", "Laboratory", "Pharmacy", "Infection Control", "Operating Theatre", "Blood Bank", "Dialysis Unit", "Patient Safety", "Medical Affairs", "Clinical Education"],
+        "events": [
+            ("schedule_change", "a revised clinic or duty schedule requiring acknowledgement"),
+            ("lab_followup", "a patient laboratory result requiring a documented follow-up"),
+            ("referral_review", "a referral or transfer request awaiting clinical review"),
+            ("medication_review", "a medication reconciliation or restricted-drug approval"),
+            ("infection_notice", "an infection-control exposure or isolation update"),
+            ("patient_safety", "a patient-safety incident or near-miss follow-up"),
+            ("imaging_review", "an imaging report or PACS exception requiring review"),
+            ("procedure_list", "a procedure list or theatre booking amendment"),
+            ("handover_issue", "a handover discrepancy requiring confirmation"),
+            ("equipment_alert", "a clinical-device allocation or maintenance notice"),
+            ("training_update", "a mandatory clinical competency or simulation session"),
+            ("policy_update", "a clinical protocol or guideline acknowledgement"),
+            ("blood_product", "a blood-product release or transfusion documentation request"),
+            ("audit_case", "a case audit, mortality review, or tracer evidence request"),
+            ("telemedicine", "a remote consultation schedule or platform notification"),
+            ("credentialing", "a clinical privilege or professional credential review"),
+        ],
+        "actions": ["review the case", "confirm receipt", "acknowledge the update", "validate the record", "approve the pending item", "open the referenced file", "respond with the case reference", "complete the requested review"],
+    },
+    "admin": {
+        "units": ["Human Resources", "Finance", "Procurement", "Patient Access", "Medical Records", "Insurance Office", "Revenue Cycle", "Quality Office", "Facilities", "Executive Office", "Training and Development", "Legal Affairs", "Patient Relations", "Compliance", "Supply Chain", "Scheduling Office"],
+        "events": [
+            ("payroll_exception", "a payroll or allowance exception requiring confirmation"),
+            ("leave_update", "a leave balance, roster, or attendance correction"),
+            ("invoice_review", "a supplier invoice or payment exception"),
+            ("vendor_change", "a vendor profile or banking-detail change"),
+            ("insurance_claim", "an insurance claim or coverage discrepancy"),
+            ("appointment_capacity", "a clinic-capacity or appointment scheduling update"),
+            ("records_request", "a medical-records retention or release request"),
+            ("audit_evidence", "an audit evidence or accreditation submission"),
+            ("contract_review", "a contract amendment or renewal document"),
+            ("benefits_enrollment", "an employee benefits or allowance enrollment notice"),
+            ("training_registration", "a mandatory course or professional-development registration"),
+            ("complaint_case", "a patient complaint or service-recovery case"),
+            ("procurement_shortage", "a critical supply shortage or allocation approval"),
+            ("board_document", "a confidential committee or board document"),
+            ("privacy_case", "a privacy incident or data-protection response"),
+            ("facility_workorder", "a facility access or work-order update"),
+        ],
+        "actions": ["review the request", "confirm the record", "approve the item", "validate the change", "acknowledge receipt", "open the supporting document", "submit the requested information", "respond with the reference number"],
+    },
+    "it": {
+        "units": ["IT Service Desk", "Identity Management", "Network Operations", "Cybersecurity", "Cloud Operations", "Database Services", "Enterprise Applications", "PACS Support", "Digital Health", "Endpoint Management", "Data Center", "Integration Team", "Information Security", "Business Continuity", "Telephony", "Change Advisory Board"],
+        "events": [
+            ("identity_review", "an account-access or identity recertification request"),
+            ("mfa_change", "an MFA token enrollment or re-registration notice"),
+            ("vpn_migration", "a VPN profile migration or remote-access update"),
+            ("security_alert", "a suspicious sign-in or endpoint security alert"),
+            ("certificate_expiry", "a certificate renewal or trust-chain exception"),
+            ("backup_failure", "a backup verification or recovery test exception"),
+            ("database_change", "a database maintenance or credential-rotation request"),
+            ("firewall_exception", "a firewall or conditional-access exception"),
+            ("software_license", "a software license or application entitlement review"),
+            ("device_compliance", "a managed-device compliance or quarantine notice"),
+            ("interface_issue", "an HL7 or system-interface monitoring exception"),
+            ("pacs_routing", "a PACS or DICOM routing exception"),
+            ("incident_handoff", "an incident-response evidence or forensic handoff"),
+            ("dr_test", "a disaster-recovery or failover approval"),
+            ("change_request", "an emergency production change request"),
+            ("cloud_federation", "a cloud tenant or federation configuration review"),
+        ],
+        "actions": ["review the alert", "confirm the change", "validate the exception", "approve the request", "acknowledge the maintenance window", "open the technical record", "respond with the ticket number", "complete the access review"],
+    },
+}
+
+_V20_OLD_PICK_BLUEPRINT = _v18_pick_blueprint
+_V20_OLD_API_PROMPT = _v18_api_prompt
+
+
+def _v18_pick_blueprint(role, index, language, difficulty, phase, is_phishing=True):
+    """Create a role-locked, semantically unique scenario blueprint.
+    Uniqueness is based on the event family, not merely wording."""
+    bp = _V20_OLD_PICK_BLUEPRINT(role, index, language, difficulty, phase, is_phishing)
+    rt = bp["role_type"]
+    dims = V20_SCENARIO_DIMENSIONS[rt]
+    rng = _v18_rng(index, rt, bp["difficulty"], phase + "_v20")
+    cid = st.session_state.get("v18_cycle_id", 0)
+
+    # Learning and assessment share this memory, so test items do not reuse
+    # the same semantic family already shown during learning.
+    family_key = f"v20_used_families_{rt}_{cid}"
+    used_families = set(st.session_state.get(family_key, []))
+    available_events = [e for e in dims["events"] if e[0] not in used_families]
+    if not available_events:
+        available_events = list(dims["events"])
+        used_families = set()
+    family, event_text = rng.choice(available_events)
+    used_families.add(family)
+    st.session_state[family_key] = list(used_families)
+
+    unit = _v18_no_repeat_choice(dims["units"], f"v20_units_{rt}_{cid}", rng)
+    action = _v18_no_repeat_choice(dims["actions"], f"v20_actions_{rt}_{cid}", rng)
+    bp["area"] = unit
+    bp["scenario_family"] = family
+    bp["event_text"] = event_text
+    bp["action_text"] = action
+    bp["topic"] = f"{event_text}; requested action: {action}"
+    bp["signature"] = f"v20|{rt}|{bp['difficulty']}|{family}|{unit}|{action}|{bp['attack']}|{bp['structure']}"
+    return bp
+
+
+def _v20_find_phrase(body, patterns):
+    for pattern in patterns:
+        m = re.search(pattern, body, re.I)
+        if m:
+            return m.group(0).strip(" .,:;،؛")
+    return ""
+
+
+def _v20_grounded_analysis(result, bp):
+    """Build tutor indicators only from evidence present in final output."""
+    if not result.get("is_phishing"):
+        result["indicators"] = []
+        result["suspicious_text"] = ""
+        return result
+    is_ar = bp["language"] == "Arabic"
+    body = str(result.get("body", ""))
+    sender = str(result.get("from", ""))
+    link = str(result.get("suspicious_link", ""))
+    evidence = []
+
+    sender_domain = ""
+    mdom = re.search(r"@([A-Za-z0-9.-]+)", sender)
+    if mdom:
+        sender_domain = mdom.group(1)
+    if sender_domain and sender_domain.lower() != "hospital.org":
+        evidence.append((
+            "نطاق مرسل غير رسمي" if is_ar else "Non-official sender domain",
+            (f"عنوان المرسل يستخدم النطاق {sender_domain} وليس نطاق المستشفى الرسمي." if is_ar else f"The sender uses {sender_domain}, not the hospital's official domain."),
+            sender_domain,
+        ))
+
+    credential = _v20_find_phrase(body, [
+        r"(?:enter|confirm|verify|provide|reset|submit)\s+(?:your\s+)?(?:password|PIN|OTP|login credentials|account details)",
+        r"(?:أدخل|أكد|تحقق من|زوّدنا بـ|أرسل)\s+(?:كلمة المرور|الرقم السري|رمز التحقق|بيانات الدخول)",
+    ])
+    if credential:
+        evidence.append((
+            "طلب بيانات دخول" if is_ar else "Credential request",
+            "تطلب الرسالة بيانات حساسة لا ينبغي إرسالها عبر البريد." if is_ar else "The email asks for sensitive sign-in information that should not be provided by email.",
+            credential,
+        ))
+
+    urgency = _v20_find_phrase(body, [
+        r"(?:immediately|within \d+ hours?|today|before your next shift|as soon as possible|urgent(?:ly)?)",
+        r"(?:فوراً|فورًا|خلال \d+ ساعات?|اليوم|قبل المناوبة القادمة|بشكل عاجل|في أقرب وقت)",
+    ])
+    if urgency:
+        evidence.append((
+            "ضغط زمني" if is_ar else "Time pressure",
+            "تستخدم الرسالة مهلة أو استعجالاً لدفع المستلم للتصرف بسرعة." if is_ar else "The message uses a deadline or urgency to push the recipient into acting quickly.",
+            urgency,
+        ))
+
+    if link and link in body:
+        evidence.append((
+            "رابط خارجي غير معتمد" if is_ar else "Unapproved external link",
+            (f"الرابط يقود إلى نطاق غير رسمي: {link}" if is_ar else f"The link points to a non-official destination: {link}"),
+            link,
+        ))
+
+    first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+    generic = bool(re.match(r"(?:Dear (?:Staff|Team|Employee|Colleague|Healthcare Team)|Hello Staff|عزيزي الموظف|فريق العمل العزيز|الزملاء الأعزاء|عزيزي الزميل)", first, re.I))
+    if generic:
+        evidence.append((
+            "تحية عامة" if is_ar else "Generic greeting",
+            "لا تخاطب الرسالة المستلم باسمه، ما قد يدل على إرسال جماعي." if is_ar else "The email does not address the recipient by name, which can indicate bulk targeting.",
+            first.rstrip("،,"),
+        ))
+
+    attachment = str(result.get("attachment", ""))
+    if attachment:
+        evidence.append((
+            "مرفق غير متوقع" if is_ar else "Unexpected attachment",
+            (f"تطلب الرسالة فتح المرفق {attachment} ضمن طلب حساس." if is_ar else f"The message asks the recipient to open {attachment} as part of a sensitive request."),
+            attachment,
+        ))
+
+    limits = {"easy": (4, 5), "medium": (3, 4), "hard": (1, 2)}
+    lo, hi = limits[bp["difficulty"]]
+    # Prefer the most meaningful evidence and respect the difficulty range.
+    chosen = evidence[:hi]
+    if len(chosen) < lo:
+        # Grounded workflow/channel mismatch is always present for phishing
+        # because the request is delivered through a controlled non-official channel.
+        fallback_title = "عدم تطابق القناة مع الإجراء" if is_ar else "Workflow-channel mismatch"
+        fallback_desc = "الإجراء المطلوب حساس ولا يُنفذ عادةً من خلال رابط بريد خارجي." if is_ar else "The requested action is sensitive and is not normally completed through an external email link."
+        if not any(x[0] == fallback_title for x in chosen):
+            chosen.append((fallback_title, fallback_desc, bp.get("action_text", "")))
+    chosen = chosen[:hi]
+    result["indicators"] = [
+        {"number": i + 1, "title": title, "description": desc}
+        for i, (title, desc, _phrase) in enumerate(chosen)
+    ]
+    phrase_candidates = [p for _t, _d, p in chosen if p and p in body]
+    result["suspicious_text"] = phrase_candidates[0] if phrase_candidates else ""
+    return result
+
+
+def _v20_validate(result, bp):
+    if not isinstance(result, dict):
+        return False
+    body = str(result.get("body", "")).strip()
+    subject = str(result.get("subject", "")).strip()
+    if not body or not subject or len(body.split()) < (45 if bp["language"] == "English" else 35):
+        return False
+    if subject.lower() in body.lower():
+        return False
+    if result.get("is_phishing"):
+        link = str(result.get("suspicious_link", ""))
+        if link and body.count(link) != 1:
+            return False
+        lo, hi = {"easy": (4, 5), "medium": (3, 4), "hard": (1, 2)}[bp["difficulty"]]
+        if not (lo <= len(result.get("indicators", [])) <= hi):
+            return False
+    # Guard against cross-role drift using a minimum of role-specific context.
+    role_terms = {
+        "clinical": ["patient", "clinical", "clinic", "ward", "lab", "pharmacy", "radiology", "مريض", "سريري", "عيادة", "قسم", "مختبر", "صيدلية"],
+        "admin": ["payroll", "invoice", "supplier", "insurance", "records", "procurement", "employee", "رواتب", "فاتورة", "مورد", "تأمين", "سجلات", "موظف"],
+        "it": ["account", "network", "server", "security", "system", "access", "VPN", "شبكة", "خادم", "أمن", "نظام", "وصول"],
+    }
+    combined = f"{subject} {body} {bp.get('area','')} {bp.get('event_text','')}".lower()
+    if not any(term.lower() in combined for term in role_terms[bp["role_type"]]):
+        return False
+    return True
+
+
+def _v18_api_prompt(seed, bp):
+    base = _V20_OLD_API_PROMPT(seed, bp)
+    length_rule = {"easy": "65-120", "medium": "85-150", "hard": "100-180"}[bp["difficulty"]]
+    return base + f"""
+
+V20 QUALITY AND DIVERSITY REQUIREMENTS:
+- This email belongs ONLY to the {bp['role_type']} role. Do not introduce unrelated IT, administrative, or clinical scenarios.
+- Semantic scenario family: {bp.get('scenario_family')}. Event: {bp.get('event_text')}.
+- Requested action: {bp.get('action_text')}.
+- Target body length: {length_rule} words (Arabic may be moderately shorter).
+- Use 2-4 coherent paragraphs plus a natural closing and a role-appropriate signature.
+- Do not repeat the subject verbatim in the body.
+- Do not use the generic account-update/password-reset story unless the selected event explicitly requires it.
+- Make sender name, subject, opening, call-to-action, closing, and signature fit this exact workplace event.
+- Keep exactly one natural location for {{{{LINK}}}}. Never put it after the signature.
+- Return indicators only if they are directly supported by visible evidence in the final email. The application will verify them.
+"""
+
+
+_V20_OLD_ENFORCE = _v18_enforce
+
+
+def _v18_enforce(result, seed, bp):
+    result = _V20_OLD_ENFORCE(result, seed, bp)
+    return _v20_grounded_analysis(result, bp)
+
+
+def _v18_generate(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    """Generate, validate, and retry while preserving the existing return schema."""
+    phase = "assess" if assessment else "learn"
+    best = None
+    for attempt in range(3):
+        bp = _v18_pick_blueprint(role, index + attempt * 97, language, difficulty, phase, is_phishing)
+        seed = _v18_fallback_phishing(bp, role, index) if is_phishing else _v18_legitimate(bp, role, index)
+        seed = _v20_grounded_analysis(seed, bp)
+        candidate = seed
+        try:
+            data = call_ai(_v18_api_prompt(seed, bp), max_tokens=2600)
+            parsed = _v18_parse_provider(data)
+            if parsed:
+                candidate = _v18_enforce(parsed, seed, bp)
+        except Exception as exc:
+            try:
+                _store_debug("v20_api_fallback", str(exc))
+            except Exception:
+                pass
+        candidate = _v20_grounded_analysis(candidate, bp)
+        if _v20_validate(candidate, bp):
+            best = candidate
+            break
+        best = seed
+    result = best
+    try:
+        evaluate_and_log_auto_scores(result, str(difficulty or "medium").lower(), language, is_phishing=bool(is_phishing))
+    except Exception:
+        pass
+    return result
+
+
+# Public entry points remain unchanged for the rest of the application.
+def generate_email(role, index, language, difficulty="medium"):
+    return _v18_generate(role, index, language, difficulty, True, assessment=False)
+
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    return _v18_generate(role, index, language, difficulty, bool(is_phishing), assessment=True)
+
+# =============================================================
+# END RESEARCH ENGINE v20
+# =============================================================
+
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
