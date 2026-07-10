@@ -7323,6 +7323,354 @@ V18_DOMAINS = {
     "hard": ["hospitalorg-support.com", "m365-hospital.org", "sharepoint-hospital.net", "hospital-docs.co", "secure-hospitaloffice.com", "hospital-cloud.org"],
 }
 
+# =============================================================
+# LIBRARY-DRIVEN DIVERSITY SYSTEM v19
+# -------------------------------------------------------------
+# Design agreed with the researcher: instead of handing the API a
+# finished seed sentence and asking it to "reword it" (which kept
+# collapsing onto the same handful of shapes), each generated email
+# is now assembled from FIVE independent seed libraries — subject,
+# opening angle, content angle (V18_ROLE_BANKS, already existed),
+# urgency reason, and the existing sender/recipient/signature pools.
+# Every library is split by role_type x difficulty (a strict grid —
+# picking for "clinical/easy" can never reach into "it/hard"), and
+# every pick is drawn through the session-scoped anti-repeat helper
+# (_v18_no_repeat_choice) so the SAME user never sees the same seed
+# twice in one session. The API receives the seeds as creative
+# DIRECTION (not literal text) and is instructed to write the actual
+# subject/body wording itself, constrained by V19_DIFFICULTY_CONTRACT
+# below — so the AI still does the real writing (per the project's
+# core idea), it just starts from a much richer, role-and-difficulty
+# -correct starting point instead of one fixed template per cell.
+# =============================================================
+
+# Full difficulty contract (matches the researcher's own table):
+# link visibility, greeting type, language register, how directly
+# credentials are requested, the urgency style, indicator-count
+# range, attachment policy, QR policy, MS365/Outlook usage, and how
+# close the fake login page is to the real one. Used both to build
+# the API prompt's rules section and to validate/repair the result.
+V19_DIFFICULTY_CONTRACT = {
+    "easy": {
+        "link_style": "very obvious fake link (unrelated or misspelled domain)",
+        "greeting": "generic (\"Dear Staff\" style, no name)",
+        "language": "direct and simple",
+        "credential_request": "direct — asks for the password/PIN/OTP outright",
+        "urgency_style": "blunt words like \"Immediately\" or \"Today\"",
+        "indicator_range": (4, 5),
+        "attachment": "never",
+        "qr": "never",
+        "ms365_outlook": "never",
+        "login_page_realism": "simple, does not resemble the real system",
+    },
+    "medium": {
+        "link_style": "looks fairly official, close to the real domain",
+        "greeting": "role/department based (e.g. \"Dear Radiology Team\")",
+        "language": "more professional",
+        "credential_request": "asks the user to sign in / verify — not a bare password request",
+        "urgency_style": "a reasonable deadline, not a bare command",
+        "indicator_range": (3, 4),
+        "attachment": "sometimes a plain PDF",
+        "qr": "never",
+        "ms365_outlook": "never",
+        "login_page_realism": "resembles the real system's look",
+    },
+    "hard": {
+        "link_style": "very close to the official one, may use a shortener",
+        "greeting": "the real person's name",
+        "language": "very natural, reads like an internal message",
+        "credential_request": "review/approve a document instead of a direct login",
+        "urgency_style": "a logical business reason (audit, policy, patient safety), not a threat",
+        "indicator_range": (1, 2),
+        "attachment": "PDF, Excel, or SharePoint depending on the scenario",
+        "qr": "sometimes, when the scenario calls for it",
+        "ms365_outlook": "sometimes",
+        "login_page_realism": "near-identical copy of the real one",
+    },
+}
+
+# --- Opening-angle seeds: the DIRECTION for the first 1-2 sentences,
+# tailored per role (clinical/admin/it) AND per difficulty. These are
+# not final sentences — the API rewrites them into real prose in the
+# requested language; the deterministic fallback path turns them into
+# a simple sentence directly when the API is unavailable.
+V19_OPENING_SEEDS = {
+    "clinical": {
+        "easy": [
+            "a routine system check flagged a problem with the account",
+            "access was automatically paused pending a quick check",
+            "the mobile app logged an unusual sign-in attempt",
+            "a scheduled maintenance step needs the user's confirmation",
+            "the account was flagged for a missing verification step",
+        ],
+        "medium": [
+            "a scheduled review of clinical system access identified an item needing confirmation",
+            "the department's monthly access audit found an outstanding item",
+            "a recent system upgrade requires staff to reconfirm their access",
+            "clinical governance requested a routine credential check for this unit",
+            "the on-call roster system flagged an inconsistency that needs review",
+        ],
+        "hard": [
+            "following up on the item discussed at this week's unit meeting",
+            "the accreditation team asked for confirmation on this file before the tracer visit",
+            "sharing the file we discussed for your sign-off before the committee meets",
+            "a minor exception was logged during the last audit cycle and needs your input",
+            "the case reference from the last handover still needs a confirmation from your side",
+        ],
+    },
+    "admin": {
+        "easy": [
+            "the payroll system flagged an incomplete profile step",
+            "a routine HR check found a missing confirmation on file",
+            "the leave-management app needs a quick account check",
+            "the directory sync job flagged an outdated profile entry",
+            "a scheduled account cleanup needs the user to confirm details",
+        ],
+        "medium": [
+            "the finance team's quarterly access review found an item needing confirmation",
+            "a recent policy update requires staff to reconfirm their account details",
+            "the procurement portal migration needs a short confirmation from your side",
+            "HR's routine audit flagged an outstanding item on this account",
+            "the department's compliance check found a pending action item",
+        ],
+        "hard": [
+            "following up on the file shared during this week's management meeting",
+            "internal audit asked for a quick confirmation before closing this item",
+            "sharing the document we discussed for your review before the board pack is finalised",
+            "a minor exception surfaced during the procurement review and needs your input",
+            "the finance exception noted last week still needs a confirmation from your office",
+        ],
+    },
+    "it": {
+        "easy": [
+            "the security system flagged an unusual sign-in on the account",
+            "a routine password-policy check found an expired credential",
+            "the VPN service logged a failed authentication attempt",
+            "the helpdesk queue has a pending action item on this account",
+            "the mailbox quota system flagged the account for review",
+        ],
+        "medium": [
+            "the quarterly access-recertification review found an item needing confirmation",
+            "a scheduled identity-management migration requires staff to reconfirm access",
+            "the security team's routine review flagged an outstanding item on this account",
+            "a recent policy change requires re-authentication for privileged accounts",
+            "the monitoring system logged an anomaly that needs a quick confirmation",
+        ],
+        "hard": [
+            "following up on the change request discussed in this week's CAB meeting",
+            "security operations asked for confirmation before closing this ticket",
+            "sharing the access-review file we discussed for your sign-off",
+            "a minor exception was logged during the last security audit and needs your input",
+            "the incident reference from last week still needs a confirmation from your side",
+        ],
+    },
+}
+
+# --- Urgency-reason seeds: mirrors the researcher's own contract —
+# Easy is a blunt command word, Medium is a believable deadline,
+# Hard is a logical business reason (never a bare threat).
+V19_URGENCY_SEEDS = {
+    "clinical": {
+        "easy": ["immediately", "today", "within the hour", "before your next shift"],
+        "medium": ["within 24 hours", "before Thursday's shift handover", "by the end of the business day", "before the next audit cycle"],
+        "hard": ["ahead of the accreditation tracer visit", "per the patient-safety review timeline", "before the committee finalises this cycle's file", "as part of the routine governance schedule"],
+    },
+    "admin": {
+        "easy": ["immediately", "today", "within the hour", "before close of business"],
+        "medium": ["within 24 hours", "before the next payroll run", "by the end of the business day", "before the quarterly close"],
+        "hard": ["ahead of the internal audit deadline", "per this quarter's compliance timeline", "before the board pack is finalised", "as part of the routine procurement schedule"],
+    },
+    "it": {
+        "easy": ["immediately", "today", "within the hour", "before your account locks"],
+        "medium": ["within 24 hours", "before the scheduled migration window", "by the end of the business day", "before the next recertification cycle"],
+        "hard": ["ahead of the change-advisory-board deadline", "per this quarter's security review timeline", "before the ticket is auto-closed", "as part of the routine access-audit schedule"],
+    },
+}
+
+# --- Subject-line templates: kept difficulty-specific rather than a
+# 3x3x3 grid, since the {area}/{topic} substitution (already fully
+# role-specific via V18_ROLE_BANKS) is what actually varies the
+# wording per role; the TEMPLATE SHAPE only needs to vary by
+# difficulty (easy = blunt, medium = professional, hard = internal).
+V19_SUBJECT_TEMPLATES = {
+    "easy": [
+        "Immediate action needed: {topic}",
+        "Your {topic} is on hold",
+        "We could not verify your {topic}",
+        "{topic} — action required today",
+        "Reminder: {topic} pending",
+        "Access alert: {topic}",
+    ],
+    "medium": [
+        "{area}: {topic} requires your review",
+        "Update on {topic} — {area}",
+        "Follow-up needed: {topic}",
+        "{area} notice regarding {topic}",
+        "Please confirm: {topic}",
+        "Workflow change — {topic}",
+    ],
+    "hard": [
+        "Re: {topic}",
+        "{topic} — evidence requested",
+        "Follow-up on our {area} discussion",
+        "{area}: outstanding item — {topic}",
+        "For your review: {topic}",
+        "{topic} — sign-off needed",
+    ],
+}
+
+# Arabic urgency phrases for the deterministic fallback path (used
+# when the API is unavailable and the language is Arabic). Kept
+# role-shared to control scope, but still difficulty-correct: Easy is
+# a blunt command, Medium a believable deadline, Hard a logical
+# business reason rather than a threat.
+V19_URGENCY_SEEDS_AR = {
+    "easy": ["فورًا", "اليوم", "خلال الساعة القادمة", "قبل نهاية الدوام"],
+    "medium": ["خلال 24 ساعة", "قبل نهاية يوم العمل", "قبل نهاية الأسبوع", "قبل دورة المراجعة القادمة"],
+    "hard": ["قبل زيارة الاعتماد القادمة", "ضمن الجدول الزمني لمراجعة السلامة", "قبل إغلاق الملف من اللجنة", "ضمن الجدول الدوري المعتاد للحوكمة"],
+}
+
+# Arabic subject-line templates (fallback path). NOTE: {topic}/{area}
+# still come from V18_ROLE_BANKS, which is English-only, so the topic
+# text itself stays in English inside the Arabic sentence — the same
+# accepted trade-off already used throughout the Arabic body templates
+# below. Fully bilingual role banks would remove this, but that is a
+# separate, larger content task.
+V19_SUBJECT_TEMPLATES_AR = {
+    "easy": [
+        "إجراء فوري مطلوب: {topic}",
+        "حسابك بخصوص {topic} معلّق",
+        "تعذر التحقق من {topic}",
+        "{topic} — مطلوب إجراء اليوم",
+        "تذكير: {topic} بانتظار الإجراء",
+    ],
+    "medium": [
+        "{area}: {topic} بحاجة لمراجعتكم",
+        "تحديث بخصوص {topic} — {area}",
+        "متابعة مطلوبة: {topic}",
+        "إشعار من {area} بخصوص {topic}",
+        "يرجى التأكيد: {topic}",
+    ],
+    "hard": [
+        "رد: {topic}",
+        "{topic} — مطلوب دليل",
+        "متابعة لنقاشنا في {area}",
+        "{area}: بند معلّق — {topic}",
+        "للمراجعة: {topic}",
+    ],
+}
+
+# FIXED: why_risky / learning_tip used to be ONE hardcoded sentence per
+# language, reused verbatim on every single fallback email — exactly
+# the repetition the researcher flagged in the "AI Tutor Analysis"
+# panel across otherwise-different emails. Each difficulty now has its
+# own small pool, picked with the same anti-repeat helper as everything
+# else.
+V19_WHY_RISKY_EN = {
+    "easy": [
+        "This training phishing email uses an obviously unofficial domain and a direct credential request to pressure a quick click.",
+        "The message combines a fake sender domain with blunt urgency, a classic pattern used to rush the reader past normal checks.",
+        "This is a simulated phishing email: the sender domain, the direct data request, and the same-day deadline are all textbook red flags.",
+        "The generic greeting, the obvious domain, and the direct password request together make this an easy-to-spot simulated phish.",
+        "This training email relies on fear of losing access rather than a believable scenario — a common beginner-level tactic.",
+        "Nothing here matches how the real hospital system communicates: the domain, the urgency, and the direct request all stand out.",
+    ],
+    "medium": [
+        "This training phishing email uses role-specific context and a plausible-but-unofficial domain to make the request feel routine.",
+        "The message mimics a normal workflow request, which is what makes it more convincing than an obvious scam attempt.",
+        "This simulated email relies on a believable deadline and department-style wording rather than an outright threat.",
+        "The professional tone and department framing are designed to lower the reader's guard compared to a blunt phishing attempt.",
+        "This training email avoids asking for a password directly, relying instead on a sign-in page to capture credentials.",
+        "The domain looks close to legitimate, which is exactly what makes medium-difficulty phishing harder to catch at a glance.",
+    ],
+    "hard": [
+        "This training phishing email is deliberately realistic: the channel and destination are the only things that differ from the real internal process.",
+        "The message uses credible internal context and a near-official domain, which is what makes advanced phishing hard to catch.",
+        "This simulated email mirrors a genuine internal request closely — the sender's channel is the main giveaway here.",
+        "The personalised greeting and internal framing make this training email nearly indistinguishable from a real message.",
+        "This is designed to test attention to detail: the request itself is plausible, and only the destination is wrong.",
+        "The logical business reason given here (audit, policy, or safety) is what makes advanced phishing convincing rather than alarming.",
+    ],
+}
+V19_WHY_RISKY_AR = {
+    "easy": [
+        "هذه رسالة تصيد تدريبية تستخدم نطاقاً غير رسمي واضحاً وطلباً مباشراً للبيانات للضغط على المستخدم للتصرف بسرعة.",
+        "تجمع الرسالة بين نطاق مرسل مزيف وإلحاح مباشر، وهو نمط كلاسيكي يُستخدم لتجاوز الفحص الطبيعي للرسالة.",
+        "هذه رسالة تصيد تدريبية: نطاق المرسل والطلب المباشر للبيانات والمهلة الزمنية لنفس اليوم كلها مؤشرات واضحة.",
+        "التحية العامة والنطاق الواضح والطلب المباشر لكلمة المرور تجعل هذه الرسالة سهلة الاكتشاف كتصيد تدريبي.",
+        "تعتمد هذه الرسالة التدريبية على الخوف من فقدان الوصول بدل سيناريو مقنع، وهو أسلوب شائع بالمستوى المبتدئ.",
+        "لا شيء هنا يطابق طريقة تواصل النظام الحقيقي بالمستشفى: النطاق والإلحاح والطلب المباشر كلها بارزة.",
+    ],
+    "medium": [
+        "تستخدم هذه الرسالة التدريبية سياقاً مرتبطاً بالوظيفة ونطاقاً يبدو مقبولاً لكنه غير رسمي، مما يجعل الطلب يبدو روتينياً.",
+        "تحاكي الرسالة طلب عمل اعتيادي، وهذا بالضبط ما يجعلها أكثر إقناعاً من محاولة احتيال واضحة.",
+        "تعتمد هذه الرسالة التدريبية على مهلة زمنية معقولة وصياغة شبيهة بمراسلات القسم بدل التهديد المباشر.",
+        "النبرة المهنية والإطار القسمي مصممان لتقليل حذر القارئ مقارنة بمحاولة تصيد مباشرة وواضحة.",
+        "تتجنب هذه الرسالة التدريبية طلب كلمة المرور مباشرة، وتعتمد بدلاً من ذلك على صفحة تسجيل دخول لالتقاط البيانات.",
+        "النطاق يبدو قريباً من الرسمي، وهذا بالضبط ما يجعل تصيد المستوى المتوسط أصعب اكتشافاً من النظرة الأولى.",
+    ],
+    "hard": [
+        "هذه رسالة تصيد تدريبية واقعية عمداً: الفرق الوحيد عن الإجراء الداخلي الحقيقي هو القناة والوجهة.",
+        "تستخدم الرسالة سياقاً داخلياً موثوقاً ونطاقاً قريباً جداً من الرسمي، وهذا ما يصعّب اكتشاف التصيد المتقدم.",
+        "تحاكي هذه الرسالة التدريبية طلباً داخلياً حقيقياً بدقة عالية — قناة المرسل هي المؤشر الأساسي هنا.",
+        "التحية الشخصية والإطار الداخلي يجعلان هذه الرسالة التدريبية شبه مطابقة لرسالة حقيقية.",
+        "صُممت هذه الرسالة لاختبار الانتباه للتفاصيل: الطلب نفسه معقول، والوجهة فقط هي الخاطئة.",
+        "السبب المنطقي المذكور هنا (تدقيق، سياسة، أو سلامة) هو ما يجعل التصيد المتقدم مقنعاً بدل مثير للريبة.",
+    ],
+}
+V19_LEARNING_TIP_EN = {
+    "easy": [
+        "Verify the request through official channels and avoid using links in unexpected messages.",
+        "Check the sender's domain carefully before clicking anything, and never enter your password from an email link.",
+        "When a message pressures you to act 'today' or 'immediately', pause and verify through a known official channel first.",
+        "Legitimate systems rarely ask for your password directly by email — treat any such request as suspicious.",
+        "If an email creates panic about losing access, that pressure itself is a warning sign worth pausing on.",
+        "Compare the sender's address letter by letter with the real hospital domain before trusting the message.",
+    ],
+    "medium": [
+        "Even professional-looking requests should be verified directly with the department before you act on them.",
+        "A plausible deadline is not proof of legitimacy — confirm unusual requests through the official directory.",
+        "Hover over links before clicking, and compare the domain carefully against the organization's real one.",
+        "A sign-in page reached through an email link should never be trusted over the official bookmarked portal.",
+        "Department-style wording can still be faked — call the department directly if a request feels unusual.",
+        "Take a moment to check whether this kind of request is normally made by email at all before acting.",
+    ],
+    "hard": [
+        "Realistic internal wording is not enough — always confirm the channel matches how that request is normally made.",
+        "For sensitive requests, verify directly with the person or department through a known number or system, not by replying to the email.",
+        "The more convincing a message looks, the more important it is to double-check the actual link destination.",
+        "A logical-sounding business reason (audit, policy, safety) is not proof of legitimacy on its own.",
+        "If a message references a real meeting or file, confirm it through that same channel rather than the email link.",
+        "Advanced phishing relies on trust in context — when in doubt, verify out-of-band rather than by replying.",
+    ],
+}
+V19_LEARNING_TIP_AR = {
+    "easy": [
+        "تحقق من الطلب عبر القنوات الرسمية ولا تستخدم الروابط الواردة في الرسائل غير المتوقعة.",
+        "تفحّص نطاق المرسل بعناية قبل الضغط على أي شيء، ولا تُدخل كلمة المرور أبداً من رابط داخل بريد إلكتروني.",
+        "عندما تضغط عليك الرسالة للتصرف \"اليوم\" أو \"فوراً\"، توقف وتحقق عبر قناة رسمية معروفة أولاً.",
+        "الأنظمة الشرعية نادراً ما تطلب كلمة المرور مباشرة عبر البريد — تعامل مع أي طلب كهذا بحذر.",
+        "لو رسالة تسبب لك قلقاً من فقدان الوصول، هذا الضغط بحد ذاته إشارة تستحق التوقف عندها.",
+        "قارن عنوان المرسل حرفاً بحرف مع نطاق المستشفى الحقيقي قبل الوثوق بالرسالة.",
+    ],
+    "medium": [
+        "حتى الطلبات التي تبدو مهنية يجب التحقق منها مباشرة مع القسم قبل تنفيذها.",
+        "المهلة الزمنية المعقولة ليست دليلاً على الشرعية — تحقق من الطلبات غير المعتادة عبر الدليل الرسمي.",
+        "مرّر المؤشر فوق الرابط قبل الضغط عليه، وقارن النطاق بعناية مع نطاق الجهة الحقيقي.",
+        "صفحة تسجيل الدخول المفتوحة من رابط بريد إلكتروني لا يجب الوثوق بها أبداً مقارنة بالبوابة الرسمية المحفوظة.",
+        "الصياغة الشبيهة بمراسلات القسم يمكن تقليدها — اتصل بالقسم مباشرة لو الطلب بدا غير معتاد.",
+        "خذ لحظة للتفكير هل هذا النوع من الطلبات يتم عادة عبر البريد الإلكتروني أصلاً قبل التصرف.",
+    ],
+    "hard": [
+        "الصياغة الداخلية الواقعية لا تكفي — تأكد دائماً أن القناة تطابق الطريقة المعتادة لهذا النوع من الطلبات.",
+        "بالنسبة للطلبات الحساسة، تحقق مباشرة مع الشخص أو القسم عبر رقم أو نظام معروف، لا بالرد على البريد.",
+        "كلما بدت الرسالة مقنعة أكثر، زادت أهمية التحقق من وجهة الرابط الفعلية.",
+        "السبب المنطقي الظاهري (تدقيق، سياسة، سلامة) ليس دليلاً كافياً على الشرعية بمفرده.",
+        "لو الرسالة تشير لاجتماع أو ملف حقيقي، تحقق منه عبر نفس القناة بدل رابط البريد.",
+        "التصيد المتقدم يعتمد على الثقة بالسياق — عند الشك، تحقق من قناة أخرى بدل الرد على الرسالة.",
+    ],
+}
+
 
 def _v18_load_history():
     try:
@@ -7434,10 +7782,29 @@ def _v18_pick_blueprint(role, index, language, difficulty, phase, is_phishing=Tr
     domain = _v18_no_repeat_choice(V18_DOMAINS[difficulty], f"v18_recent_domain_{difficulty}_{st.session_state.get('v18_cycle_id', 0)}", rng)
     prefix = _v18_no_repeat_choice(V18_SUBJECT_PREFIX[difficulty], f"v18_recent_prefix_{difficulty}_{st.session_state.get('v18_cycle_id', 0)}", rng)
     display_time = _v18_no_repeat_choice(V18_TIME_OPTIONS[difficulty], f"v18_recent_time_{difficulty}_{st.session_state.get('v18_cycle_id', 0)}", rng)
+
+    # v19 library-driven seeds — each pick is strictly scoped to
+    # role_type x difficulty (a separate list per cell, never mixed
+    # across roles) and anti-repeat protected within this session.
+    cid = st.session_state.get('v18_cycle_id', 0)
+    subject_template = _v18_no_repeat_choice(
+        V19_SUBJECT_TEMPLATES[difficulty], f"v19_recent_subject_{difficulty}_{cid}", rng)
+    subject_template_ar = _v18_no_repeat_choice(
+        V19_SUBJECT_TEMPLATES_AR[difficulty], f"v19_recent_subject_ar_{difficulty}_{cid}", rng)
+    opening_seed = _v18_no_repeat_choice(
+        V19_OPENING_SEEDS[role_type][difficulty], f"v19_recent_opening_{role_type}_{difficulty}_{cid}", rng)
+    urgency_seed = _v18_no_repeat_choice(
+        V19_URGENCY_SEEDS[role_type][difficulty], f"v19_recent_urgency_{role_type}_{difficulty}_{cid}", rng)
+    urgency_seed_ar = _v18_no_repeat_choice(
+        V19_URGENCY_SEEDS_AR[difficulty], f"v19_recent_urgency_ar_{difficulty}_{cid}", rng)
+
     return {
         "signature": sig, "role_type": role_type, "difficulty": difficulty,
         "area": area, "topic": topic, "attack": attack, "structure": structure,
         "domain": domain, "subject_prefix": prefix, "display_time": display_time,
+        "subject_template": subject_template, "subject_template_ar": subject_template_ar,
+        "opening_seed": opening_seed,
+        "urgency_seed": urgency_seed, "urgency_seed_ar": urgency_seed_ar,
         "language": language, "is_phishing": bool(is_phishing), "phase": phase,
     }
 
@@ -7498,28 +7865,40 @@ def _v18_indicator_objects(bp, link, is_phishing=True):
     is_ar = bp["language"] == "Arabic"
     if not is_phishing:
         return []
+    # Indicator COUNT now varies within the contracted range (easy 4-5,
+    # medium 3-4, hard 1-2) instead of always being the same fixed
+    # number every time, per the researcher's difficulty table. The
+    # coin flip is seeded off this email's own signature so it's
+    # reproducible for a given seed but varies across different emails.
+    extra = random.Random(bp.get("signature", "") + "_indicator_count").random() < 0.5
     if bp["difficulty"] == "easy":
         rows = [
             ("نطاق مرسل مزيف وواضح", "المرسل لا يستخدم نطاق المستشفى الرسمي."),
             ("طلب مباشر لبيانات الدخول", "تطلب الرسالة كلمة المرور أو الرمز أو بيانات الحساب مباشرة."),
             ("إلحاح أو تهديد واضح", "تضغط الرسالة للتصرف اليوم أو خلال ساعات."),
             ("رابط خارجي ظاهر", f"الرابط يقود إلى نطاق غير رسمي: {link}"),
+            ("تحية عامة غير شخصية", "الرسالة لا تخاطبك باسمك، بل بصيغة عامة تدل على إرسال جماعي."),
         ] if is_ar else [
             ("Obvious fake sender domain", "The sender does not use the hospital's official domain."),
             ("Direct credential request", "The message directly asks for a password, PIN, OTP, or login details."),
             ("Strong urgency or threat", "The email pressures the user to act today or within hours."),
             ("Visible external link", f"The link points to a non-official domain: {link}"),
+            ("Generic, impersonal greeting", "The message does not address you by name, suggesting a mass mailing."),
         ]
+        rows = rows[:4] + (rows[4:5] if extra else [])
     elif bp["difficulty"] == "medium":
         rows = [
             ("نطاق يبدو رسميًا لكنه غير مطابق", "النطاق قريب من نطاق المستشفى لكنه ليس النطاق المعتمد."),
             ("طلب غير معتاد ضمن سير العمل", "الطلب يبدو مهنيًا لكنه يطلب إجراءً لا يتم عادة عبر البريد."),
             ("مهلة زمنية مقنعة", "تستخدم الرسالة موعدًا معقولًا للضغط دون تهديد مباشر."),
+            ("رابط لا يطابق الوجهة المتوقعة", "الرابط الظاهر لا يقود لنفس النظام الذي تتحدث عنه الرسالة."),
         ] if is_ar else [
             ("Plausible but incorrect domain", "The domain looks professional but does not match the approved hospital domain."),
             ("Unusual workflow request", "The request sounds legitimate but asks for an action not normally completed by email."),
             ("Plausible deadline pressure", "The message uses a believable deadline rather than an obvious threat."),
+            ("Link destination mismatch", "The visible link does not point to the same system the email refers to."),
         ]
+        rows = rows[:3] + (rows[3:4] if extra else [])
     else:
         rows = [
             ("اختلاف دقيق في القناة", "الطلب مهني جدًا لكن القناة أو الرابط لا يطابقان الإجراء الداخلي المعتاد."),
@@ -7528,6 +7907,7 @@ def _v18_indicator_objects(bp, link, is_phishing=True):
             ("Subtle channel mismatch", "The message is highly realistic, but the channel or destination differs from the normal internal process."),
             ("Sensitive request in a convincing context", "The email uses credible internal context to encourage a sensitive action."),
         ]
+        rows = rows[:1] if not extra else rows[:2]
     return [{"number": i+1, "title": t, "description": d} for i, (t, d) in enumerate(rows)]
 
 
@@ -7538,8 +7918,7 @@ def _v18_fallback_phishing(bp, role, index):
     link = _v18_link(bp, index)
     sender = _v18_sender(bp["area"], bp["domain"], bp["difficulty"], rng)
     is_ar = bp["language"] == "Arabic"
-    prefix = bp["subject_prefix"]
-    subject = f"{prefix} {bp['topic']}"
+    subject = (bp["subject_template_ar"] if is_ar else bp["subject_template"]).format(area=bp["area"], topic=bp["topic"])
     area, topic = bp["area"], bp["topic"]
     structure = bp["structure"]
 
@@ -7576,7 +7955,7 @@ def _v18_fallback_phishing(bp, role, index):
         # research design ("different writing structures") whenever the
         # deterministic fallback was used instead of the API. Each structure
         # now has its own distinct opening/framing/closing.
-        deadline = rng.choice(["within 24 hours", "before Thursday", "by the end of the next business day", "before the scheduled review"])
+        deadline = bp["urgency_seed_ar"] if is_ar else bp["urgency_seed"]
         if is_ar:
             variants = {
                 "context_request_deadline": f"{greeting}\n\nيرجى مراجعة {topic} الخاصة بقسم {area}. أظهر التحديث الأخير وجود عنصر يحتاج إلى تأكيد قبل اكتمال سير العمل.\n\nاستخدم بوابة المراجعة التالية وأكمل التحقق {deadline}:\n{link}\n\nلأي استفسار، تواصل مع القسم عبر القنوات الرسمية.\n\nمع التحية،\n{area}",
@@ -7637,8 +8016,13 @@ def _v18_fallback_phishing(bp, role, index):
 
     suspicious_text = "" if not body else next((x for x in ["verify your password today", "confirm your staff PIN immediately", "within 24 hours", "please review the item"] if x.lower() in body.lower()), "review the request")
     indicators = _v18_indicator_objects(bp, link, True)
-    why = ("هذه رسالة تصيد تدريبية تستخدم سياقًا مرتبطًا بالوظيفة مع قناة غير رسمية لإقناع الموظف بتنفيذ إجراء حساس." if is_ar else "This training phishing email uses role-specific context and an unofficial channel to persuade the employee to complete a sensitive action.")
-    tip = ("تحقق من الطلب عبر القنوات الرسمية ولا تستخدم الروابط الواردة في الرسائل غير المتوقعة." if is_ar else "Verify the request through official channels and avoid using links in unexpected messages.")
+    cid = st.session_state.get('v18_cycle_id', 0)
+    why = _v18_no_repeat_choice(
+        (V19_WHY_RISKY_AR if is_ar else V19_WHY_RISKY_EN)[bp["difficulty"]],
+        f"v19_recent_why_{bp['difficulty']}_{is_ar}_{cid}")
+    tip = _v18_no_repeat_choice(
+        (V19_LEARNING_TIP_AR if is_ar else V19_LEARNING_TIP_EN)[bp["difficulty"]],
+        f"v19_recent_tip_{bp['difficulty']}_{is_ar}_{cid}")
     return {
         "email_type": topic, "attack_type": attack_type, "from": sender,
         "to": person.get("email", "employee@hospital.org"), "subject": subject,
@@ -7678,11 +8062,15 @@ def _v18_legitimate(bp, role, index):
 def _v18_api_prompt(seed, bp):
     is_ar = bp["language"] == "Arabic"
     language_rule = "Write every natural-language field in Arabic." if is_ar else "Write every natural-language field in English."
+    contract = V19_DIFFICULTY_CONTRACT[bp["difficulty"]]
+    lo, hi = contract["indicator_range"]
+    indicator_desc = f"exactly {lo}" if lo == hi else f"between {lo} and {hi}"
+    subject_hint = bp["subject_template"].format(area=bp["area"], topic=bp["topic"])
     return f"""
 You are generating one email for a PhD phishing-awareness experiment in a Saudi hospital.
 {language_rule}
-Return valid JSON only. Preserve the exact scenario, role, difficulty, recipient, sender domain, attachment, indicator count, and display_time from the seed.
-Do not copy the seed wording. Rewrite the body and subject with a genuinely different structure and phrasing.
+Return valid JSON only. Preserve the exact scenario, role, difficulty, recipient, sender domain, attachment, and display_time from the seed.
+Do not copy the seed wording. Write the subject and body yourself, from scratch, using the creative direction below — do not just reword the seed's fallback sentences.
 
 CRITICAL LINK RULE — read carefully:
 - Do NOT write out any URL or link text yourself, anywhere in the body. Do NOT invent, shorten, paraphrase, or repeat a link.
@@ -7696,12 +8084,24 @@ Department/context: {bp['area']} — {bp['topic']}
 Attack channel: {bp['attack']}
 Required structure style: {bp['structure']}
 
-Difficulty contract:
-- easy: generic greeting, obvious fake domain, direct password/PIN/OTP request, strong same-day urgency, visible link, exactly 4 indicators, no attachment, no QR.
-- medium: department greeting, professional language, plausible deadline, no direct password request, exactly 3 indicators, no QR, PDF only when seed includes it.
-- hard: personal greeting, highly realistic internal context, subtle pressure, exactly 2 indicators, optional SharePoint/Microsoft365/PDF/Excel/QR as specified by seed.
+Creative direction (use these as inspiration, put them in your own words — do not quote them verbatim):
+- Subject line idea: "{subject_hint}" — you may adjust the wording, but keep it about {bp['topic']}.
+- Opening idea: the email should open around this situation — {bp['opening_seed']}.
+- Urgency/deadline idea: frame the time pressure around — {bp['urgency_seed']}.
 
-Seed JSON:
+Difficulty contract for "{bp['difficulty']}" (follow every point):
+- Link appearance: {contract['link_style']}.
+- Greeting: {contract['greeting']}.
+- Language register: {contract['language']}.
+- How credentials are requested: {contract['credential_request']}.
+- Urgency style: {contract['urgency_style']}.
+- Number of red-flag indicators: {indicator_desc}.
+- Attachment: {contract['attachment']}.
+- QR code: {contract['qr']}.
+- Microsoft 365 / Outlook branding: {contract['ms365_outlook']}.
+- Fake login page realism: {contract['login_page_realism']}.
+
+Seed JSON (for protected fields only — do not copy its wording):
 {json.dumps(seed, ensure_ascii=False)}
 """
 
