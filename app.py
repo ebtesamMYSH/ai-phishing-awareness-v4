@@ -7632,8 +7632,15 @@ def _v18_api_prompt(seed, bp):
     return f"""
 You are generating one email for a PhD phishing-awareness experiment in a Saudi hospital.
 {language_rule}
-Return valid JSON only. Preserve the exact scenario, role, difficulty, recipient, sender domain, link, attachment, indicator count, and display_time from the seed.
+Return valid JSON only. Preserve the exact scenario, role, difficulty, recipient, sender domain, attachment, indicator count, and display_time from the seed.
 Do not copy the seed wording. Rewrite the body and subject with a genuinely different structure and phrasing.
+
+CRITICAL LINK RULE — read carefully:
+- Do NOT write out any URL or link text yourself, anywhere in the body. Do NOT invent, shorten, paraphrase, or repeat a link.
+- Instead, put the exact placeholder token {{{{LINK}}}} (literally these characters, once) at the single point in the body where a link would naturally appear.
+- The system will replace {{{{LINK}}}} with the real controlled link after you respond. If the email is not phishing (legitimate), omit {{{{LINK}}}} entirely.
+- A body containing any raw "http" text, or more than one {{{{LINK}}}} token, is invalid.
+
 Role: {bp['role_type']}
 Difficulty: {bp['difficulty']}
 Department/context: {bp['area']} — {bp['topic']}
@@ -7678,6 +7685,54 @@ def _v18_parse_provider(data):
         return None
 
 
+_V18_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
+
+
+def _v18_strip_and_place_link(body, link, is_phishing):
+    """FIXED (root cause of the duplicate/conflicting-link bug): the model
+    was asked to 'preserve the seed link' but LLMs routinely ignore that and
+    write out their own plausible-looking URL inline instead. _v18_enforce
+    then compared the seed link against the body with an exact substring
+    check; since the AI's invented link never matched byte-for-byte, the
+    real link got appended a second time — leaving TWO different fake links
+    in the same email (one AI-invented and unstyled, one correct and
+    highlighted). This function guarantees exactly one link, always the
+    correct controlled one:
+      1) Remove every raw http(s)/www URL the model wrote on its own.
+      2) Fill in the {{LINK}} placeholder if the model used it.
+      3) Otherwise insert the single controlled link once, right before the
+         signature block (or at the end if no signature is detected).
+    """
+    text = str(body or "")
+    text = _V18_URL_RE.sub("", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)          # trailing spaces left by a removed URL
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()  # collapse blank-line gaps left behind
+
+    if not is_phishing or not link:
+        return text.replace("{{LINK}}", "").replace("{LINK}", "").strip()
+
+    if "{{LINK}}" in text:
+        return text.replace("{{LINK}}", link)
+    if "{LINK}" in text:
+        return text.replace("{LINK}", link)
+
+    # No placeholder came back — insert the link once, just before the
+    # signature line if we can find one, otherwise at the very end.
+    lines = text.split("\n")
+    sig_idx = None
+    sig_markers = ("regards", "sincerely", "thank you", "best,", "support",
+                   "مع التحية", "تحياتي", "مع الشكر", "شكرًا", "وتفضلوا", "مع التقدير")
+    for i, ln in enumerate(lines):
+        low = ln.strip().lower()
+        if low and any(m in low for m in sig_markers):
+            sig_idx = i
+            break
+    if sig_idx is not None:
+        lines[sig_idx:sig_idx] = [link, ""]
+        return "\n".join(lines).strip()
+    return text.rstrip() + "\n\n" + link
+
+
 def _v18_enforce(result, seed, bp):
     if not isinstance(result, dict):
         return seed
@@ -7704,10 +7759,11 @@ def _v18_enforce(result, seed, bp):
         result["body"] = re.sub(r"\[QR[^\]]*\]", "", str(result.get("body", "")), flags=re.I)
         if str(result.get("attachment", "")).lower().endswith((".xlsx", ".xls", ".docx")):
             result["attachment"] = ""
-    # Always keep the controlled link visible when phishing and link-based.
+    # FIXED: exactly one link, always the correct controlled one — see
+    # _v18_strip_and_place_link docstring above for why this replaced the
+    # old naive "append if missing" substring check.
     link = seed.get("suspicious_link", "")
-    if seed.get("is_phishing") and link and link not in str(result.get("body", "")):
-        result["body"] = str(result.get("body", "")).rstrip() + "\n\n" + link
+    result["body"] = _v18_strip_and_place_link(result.get("body", ""), link, bool(seed.get("is_phishing")))
     try:
         result = clean_result(result, bp["language"] == "Arabic")
     except Exception:
