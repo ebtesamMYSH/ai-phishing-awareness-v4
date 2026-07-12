@@ -9040,6 +9040,250 @@ def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
 # =============================================================
 
 
+# =============================================================
+# RULE-GUIDED PHISHING SCENARIO ENGINE v31
+# Diversity writer: varied rhetorical structures, natural legitimate
+# messages, and strict evidence-linked tutor analysis.
+# =============================================================
+
+V31_PHISHING_STYLES = [
+    "brief_alert", "case_followup", "manager_escalation", "service_notice",
+    "deadline_reminder", "workflow_exception", "handover_request", "record_release"
+]
+V31_LEGIT_STYLES = [
+    "informational_update", "meeting_followup", "record_correction", "schedule_note",
+    "quality_review", "colleague_request", "policy_notice", "case_handover"
+]
+V31_BANNED_PHRASES = [
+    "has received a notification concerning",
+    "prevent disruption to the related clinical workflow",
+    "close the notification",
+    "use the following link to complete the action",
+    "this message does not request a password",
+    "contains no external sign-in link",
+]
+
+
+def _v31_pick(items, salt=0):
+    # SystemRandom keeps sessions fresh; salt avoids repeated adjacent choices.
+    if not items:
+        return None
+    return items[(_V30_RNG.randrange(len(items)) + int(salt or 0)) % len(items)]
+
+
+def _v31_subject(plan, urgency, style):
+    obj = plan["object"].title()
+    area = plan["area"]
+    easy = {
+        "brief_alert": [f"Action Required Today: {obj}", f"Urgent Review: {obj}"],
+        "case_followup": [f"Final Reminder — {obj}", f"{obj}: Response Needed Today"],
+        "manager_escalation": [f"Escalated: {obj} Awaiting Your Response", f"Immediate Attention Requested — {obj}"],
+        "service_notice": [f"Access Notice for {obj}", f"Service Alert: {obj}"],
+        "deadline_reminder": [f"Deadline Today: {obj}", f"{obj} Will Expire {urgency.title()}"],
+        "workflow_exception": [f"Workflow Exception: {obj}", f"Unresolved {obj} Requires Action"],
+        "handover_request": [f"Shift Handover Item: {obj}", f"Before Your Next Shift — {obj}"],
+        "record_release": [f"Release Pending: {obj}", f"Confirm Receipt of {obj}"],
+    }
+    medium = [f"{obj} Review Window", f"Follow-up Required: {obj}", f"{area} Update — {obj}"]
+    hard = [f"{obj} Follow-up", f"Re: {obj}", f"{area} — {obj}"]
+    if plan["difficulty"] == "easy":
+        return _v31_pick(easy.get(style, easy["brief_alert"]))
+    return _v31_pick(medium if plan["difficulty"] == "medium" else hard)
+
+
+def _v31_easy_phishing(plan, role, index, style):
+    lang = plan["language"]; ar = lang == "Arabic"
+    recipient = _v30_recipient(role, index, lang, plan["phase"])
+    domain = _v30_domain("easy")
+    link = _v30_link(plan, domain)
+    mailbox = _v31_pick(["alerts", "workflow", "review", "updates", "coordination"], index)
+    sender = f'{plan["sender"]} <{mailbox}@{domain}>'
+    urgency = _v31_pick(["today", "immediately", "within the next hour", "before your next shift"], index)
+    subject = _v31_subject(plan, urgency, style)
+    greeting = _v31_pick(V30_GENERIC_GREETINGS[lang], index)
+    credential = _v31_pick([
+        "enter your password", "confirm your staff PIN", "submit your login credentials",
+        "verify your account details", "provide your verification code"
+    ], index)
+    obj = plan["object"]; action = plan["action"]; area = plan["area"]
+
+    if ar:
+        templates = {
+            "brief_alert": f"{greeting}،\n\nتعذر إكمال متابعة {obj} في {area}. يلزم {credential} {urgency} لفتح السجل ومراجعة التفاصيل.\n\nرابط المتابعة: {link}\n\nسيؤدي عدم الإجراء في الوقت المحدد إلى تعليق الوصول مؤقتًا.\n\nمع التحية،\n{plan['signature']}",
+            "case_followup": f"{greeting}،\n\nهذه متابعة أخيرة بشأن {obj}. ما زالت الخطوة المطلوبة غير مكتملة، ويجب {credential} {urgency} حتى تتمكن من {action}.\n\nافتح الحالة من هنا: {link}\n\nإذا لم يتم الرد، ستُعاد الحالة تلقائيًا وقد يتوقف الوصول.\n\n{plan['signature']}",
+            "manager_escalation": f"{greeting}،\n\nتم تصعيد {obj} إلى {plan['sender']} لعدم وجود رد. أكمل التحقق عبر {credential} {urgency}.\n\nمتابعة الطلب: {link}\n\nالتأخير قد يؤدي إلى تعليق حسابك عن هذا المسار.\n\nشكرًا،\n{plan['signature']}",
+            "service_notice": f"{greeting}،\n\nتم إيقاف الوصول إلى {obj} مؤقتًا أثناء تحديث الخدمة. لاستعادة الوصول، يرجى {credential} {urgency}.\n\nاستعادة الخدمة: {link}\n\nلن تتمكن من فتح السجل حتى تكتمل الخطوة.\n\n{plan['signature']}",
+            "deadline_reminder": f"{greeting}،\n\nتنتهي مهلة {obj} {urgency}. استخدم {credential} لإبقاء الطلب فعالًا ثم {action}.\n\nإكمال الطلب: {link}\n\nسيتم إلغاء الوصول بعد انتهاء المهلة.\n\nمع التقدير،\n{plan['signature']}",
+            "workflow_exception": f"{greeting}،\n\nرصد النظام استثناءً في {obj}. لتصحيح الحالة، يجب {credential} {urgency} ثم إعادة فتح العنصر.\n\nبوابة التصحيح: {link}\n\nقد يؤدي تجاهل الاستثناء إلى تعليق صلاحياتك.\n\n{plan['signature']}",
+            "handover_request": f"{greeting}،\n\nيوجد عنصر تسليم متعلق بـ {obj} قبل مناوبتك القادمة. يرجى {credential} لعرضه وتأكيد الاستلام.\n\nعرض عنصر التسليم: {link}\n\nعدم التأكيد قد يمنع الوصول أثناء المناوبة.\n\n{plan['signature']}",
+            "record_release": f"{greeting}،\n\nأصبح {obj} جاهزًا للإصدار، لكن يلزم تأكيد هويتك أولًا. يرجى {credential} {urgency}.\n\nفتح السجل: {link}\n\nسيتم سحب السجل إذا لم يُستكمل الإجراء.\n\n{plan['signature']}",
+        }
+        body = templates[style]
+        urgency_ev = next((x for x in ["فورًا", "اليوم", "خلال الساعة القادمة", "قبل مناوبتك القادمة"] if x in body or x in subject), urgency)
+        indicators = [
+            _v30_indicator(1,"domain","نطاق مرسل غير رسمي",f"عنوان المرسل يستخدم النطاق {domain} وليس نطاق المستشفى الرسمي.",domain,"from"),
+            _v30_indicator(2,"urgency","استعجال أو تهديد واضح","تستخدم الرسالة مهلة قصيرة أو عاقبة على الوصول لدفع المستلم إلى التصرف بسرعة.",urgency_ev,"subject" if urgency_ev in subject else "body"),
+            _v30_indicator(3,"credential","طلب مباشر لبيانات الدخول","تطلب الرسالة كلمة مرور أو رقمًا سريًا أو رمز تحقق مباشرة.",credential,"body"),
+            _v30_indicator(4,"link","رابط خارجي ظاهر",f"الرابط يقود إلى النطاق غير الرسمي {domain}.",link,"link"),
+            _v30_indicator(5,"greeting","تحية عامة","لا تستخدم الرسالة اسم المستلم، ما قد يشير إلى استهداف جماعي.",greeting,"greeting"),
+        ]
+        why = "تجمع الرسالة بين نطاق غير رسمي وطلب مباشر لبيانات الدخول ورابط خارجي وضغط زمني؛ وهي مؤشرات واضحة على التصيد للمستوى المبتدئ."
+        tip = "لا تدخل كلمة مرور أو رمز موظف من رابط وصل عبر البريد. افتح النظام الرسمي مباشرة وتحقق من الطلب عبر قناة موثوقة."
+    else:
+        templates = {
+            "brief_alert": f"{greeting},\n\nA review item for {obj} could not be completed in {area}. Please {credential} {urgency} to open the record and review the details.\n\nOpen the review item: {link}\n\nIf the step is not completed, access may be suspended temporarily.\n\nRegards,\n{plan['signature']}",
+            "case_followup": f"{greeting},\n\nThis is a final follow-up regarding {obj}. The requested step is still outstanding. Please {credential} {urgency} so you can {action}.\n\nView the case: {link}\n\nAn unanswered request will be returned to the queue and may restrict access.\n\n{plan['signature']}",
+            "manager_escalation": f"{greeting},\n\n{obj.title()} has been escalated to {plan['sender']} because no response was recorded. Complete verification by {credential} {urgency}.\n\nReview the escalation: {link}\n\nDelays may suspend your access to this workflow.\n\nThank you,\n{plan['signature']}",
+            "service_notice": f"{greeting},\n\nAccess to {obj} was paused during a service update. To restore it, please {credential} {urgency}.\n\nRestore access: {link}\n\nThe record will remain unavailable until the step is completed.\n\n{plan['signature']}",
+            "deadline_reminder": f"{greeting},\n\nThe response window for {obj} ends {urgency}. Use the portal to {credential}, then {action}.\n\nComplete the request: {link}\n\nAccess will be withdrawn after the deadline.\n\nRegards,\n{plan['signature']}",
+            "workflow_exception": f"{greeting},\n\nThe system flagged an exception against {obj}. To clear it, you must {credential} {urgency} and reopen the item.\n\nResolve the exception: {link}\n\nIgnoring the exception may suspend your permissions.\n\n{plan['signature']}",
+            "handover_request": f"{greeting},\n\nA handover item linked to {obj} is waiting before your next shift. Please {credential} to view it and acknowledge receipt.\n\nOpen the handover item: {link}\n\nFailure to acknowledge it may block access during the shift.\n\n{plan['signature']}",
+            "record_release": f"{greeting},\n\n{obj.title()} is ready for release, but identity confirmation is required first. Please {credential} {urgency}.\n\nOpen the record: {link}\n\nThe item will be withdrawn if the action is not completed.\n\n{plan['signature']}",
+        }
+        body = templates[style]
+        urgency_ev = next((x for x in ["today", "immediately", "within the next hour", "before your next shift"] if x in body.lower() or x in subject.lower()), urgency)
+        indicators = [
+            _v30_indicator(1,"domain","Non-official sender domain",f"The sender uses {domain}, not the hospital's official domain.",domain,"from"),
+            _v30_indicator(2,"urgency","Strong urgency or threat","The message uses a short deadline or an access consequence to pressure the recipient.",urgency_ev,"subject" if urgency_ev.lower() in subject.lower() else "body"),
+            _v30_indicator(3,"credential","Direct credential request","The message directly asks for a password, staff PIN, login credentials, or verification code.",credential,"body"),
+            _v30_indicator(4,"link","Visible external link",f"The link points to the non-official domain {domain}.",link,"link"),
+            _v30_indicator(5,"greeting","Generic greeting","The message does not address the recipient by name, which may indicate bulk targeting.",greeting,"greeting"),
+        ]
+        why = "The message combines a non-official domain, a direct credential request, an external link, and strong time pressure—clear beginner-level phishing indicators."
+        tip = "Never enter a password, staff PIN, or verification code through an unexpected email link. Open the official system directly or verify the request through a trusted channel."
+
+    return {"from":sender,"to":recipient,"subject":subject,"body":body,"attachment":"",
+            "suspicious_link":link,"suspicious_text":credential,"indicators":indicators,
+            "why_risky":why,"learning_tip":tip,"is_phishing":True,"email_type":"Phishing",
+            "attack_type":"Credential harvesting","risk_level":"easy","scenario_id":plan["fingerprint"],
+            "scenario_meta":dict(plan, writer_style=style),"display_time":_v31_pick(["Today, 8:15 AM","Today, 10:42 AM","Monday, 2:31 PM","Yesterday, 4:05 PM","Thursday, 9:18 AM"], index)}
+
+
+def _v31_compose_phishing(plan, role, index):
+    # Easy is fully rewritten with eight distinct rhetorical structures.
+    if plan["difficulty"] == "easy":
+        used_key = f"v31_{plan['phase']}_phish_styles"
+        used = st.session_state.setdefault(used_key, [])
+        options = [s for s in V31_PHISHING_STYLES if s not in used] or list(V31_PHISHING_STYLES)
+        style = _v31_pick(options, index)
+        used.append(style)
+        return _v31_easy_phishing(plan, role, index, style)
+    # Medium/Hard keep the v30 difficulty mechanics, but their plan structure
+    # already rotates and they are not the source of the current easy-template issue.
+    result = _v30_compose_phishing(plan, role, index)
+    result.setdefault("scenario_meta", {})["writer_style"] = plan.get("structure")
+    return result
+
+
+def _v31_legit_subject(plan, style):
+    obj = plan["object"].title(); area = plan["area"]
+    bank = {
+        "informational_update": [f"{obj} — Information Update", f"Update: {obj}"],
+        "meeting_followup": [f"Follow-up Before the {area} Meeting", f"{obj} for Thursday's Review"],
+        "record_correction": [f"Correction Needed: {obj}", f"Please Check the {obj} Record"],
+        "schedule_note": [f"Schedule Note — {obj}", f"Timing Update for {obj}"],
+        "quality_review": [f"Quality Review: {obj}", f"{obj} Audit Follow-up"],
+        "colleague_request": [f"Could You Review {obj}?", f"Quick Check on {obj}"],
+        "policy_notice": [f"{area} Guidance Update", f"Policy Note: {obj}"],
+        "case_handover": [f"Handover Note: {obj}", f"{obj} for the Incoming Team"],
+    }
+    return _v31_pick(bank[style])
+
+
+def _v31_compose_legitimate(plan, role, index):
+    lang = plan["language"]; ar = lang == "Arabic"
+    recipient = _v30_recipient(role,index,lang,plan["phase"]); person = _v30_display_name(recipient)
+    used_key = f"v31_{plan['phase']}_legit_styles"
+    used = st.session_state.setdefault(used_key, [])
+    options = [s for s in V31_LEGIT_STYLES if s not in used] or list(V31_LEGIT_STYLES)
+    style = _v31_pick(options, index); used.append(style)
+    sender_mailbox = _v31_pick(["notifications","coordination","quality","clinical.ops","records"], index)
+    sender = f'{plan["sender"]} <{sender_mailbox}@hospital.org>'
+    subject = _v31_legit_subject(plan, style) if not ar else f"تحديث: {plan['object']}"
+    obj=plan["object"]; action=plan["action"]; area=plan["area"]; signature=plan["signature"]
+
+    if ar:
+        templates = {
+            "informational_update": f"عزيزي {person}،\n\nتم تحديث {obj} في {area}. يمكنك {action} من خلال النظام الداخلي عند توفر الوقت.\n\nمع التحية،\n{signature}",
+            "meeting_followup": f"عزيزي {person}،\n\nنجهز لمراجعة {obj} في اجتماع {area} القادم. يرجى إضافة ملاحظتك في مساحة العمل الداخلية قبل نهاية يوم الأربعاء.\n\nشكرًا،\n{signature}",
+            "record_correction": f"عزيزي {person}،\n\nلاحظنا اختلافًا بسيطًا في سجل {obj}. هل يمكنك مراجعة الحقل الأخير وتصحيحه من خلال النظام المعتاد؟\n\nمع التقدير،\n{signature}",
+            "schedule_note": f"عزيزي {person}،\n\nتم تعديل توقيت {obj}. سيظهر الموعد الجديد في الجدول الداخلي خلال هذا اليوم. يرجى الرد فقط إذا تعارض مع مناوبتك.\n\n{signature}",
+            "quality_review": f"عزيزي {person}،\n\nأصبحت خلاصة مراجعة الجودة الخاصة بـ {obj} متاحة في مساحة {area}. توجد ملاحظتان تحتاجان تعليق القسم قبل الاجتماع القادم.\n\nمع التحية،\n{signature}",
+            "colleague_request": f"مرحبًا {person}،\n\nهل تستطيع مراجعة {obj} عندما تسمح المناوبة؟ أضفت ملاحظة في السجل الداخلي توضح النقطة المطلوبة.\n\nشكرًا،\n{signature}",
+            "policy_notice": f"عزيزي {person}،\n\nنُشرت النسخة المحدثة من إرشادات {obj} في مكتبة السياسات الداخلية. سيبدأ تطبيقها الأسبوع القادم، وسنناقش التغيير في اجتماع الفريق.\n\n{signature}",
+            "case_handover": f"عزيزي {person}،\n\nأضفت ملخص تسليم يتعلق بـ {obj} للفريق القادم. يرجى مراجعته في السجل السريري وإضافة أي نقطة ناقصة قبل نهاية المناوبة.\n\nمع التحية،\n{signature}",
+        }
+        body=templates[style]; tip="الرسالة تستخدم نطاق المستشفى الرسمي وسياقًا مهنيًا طبيعيًا وتوجّه إلى قناة داخلية معروفة."
+    else:
+        templates = {
+            "informational_update": f"Dear {person},\n\nThe {obj} record has been updated in {area}. You can {action} it through the usual internal workspace when convenient.\n\nKind regards,\n{signature}",
+            "meeting_followup": f"Dear {person},\n\nWe are preparing the {obj} item for the next {area} meeting. Please add your comment in the internal workspace by Wednesday afternoon.\n\nThank you,\n{signature}",
+            "record_correction": f"Dear {person},\n\nWe noticed a minor discrepancy in the {obj} record. Could you check the final field and correct it in the usual system?\n\nBest regards,\n{signature}",
+            "schedule_note": f"Dear {person},\n\nThe timing for {obj} has changed. The revised slot will appear in the internal schedule later today. Please reply only if it conflicts with your shift.\n\nRegards,\n{signature}",
+            "quality_review": f"Dear {person},\n\nThe quality-review summary for {obj} is now available in the {area} workspace. Two observations need the department's comments before the next meeting.\n\nKind regards,\n{signature}",
+            "colleague_request": f"Hello {person},\n\nCould you review {obj} when the shift allows? I added a note in the internal record showing the point that needs confirmation.\n\nThanks,\n{signature}",
+            "policy_notice": f"Dear {person},\n\nThe revised guidance for {obj} has been published in the internal policy library. It takes effect next week, and the change will be covered at the team briefing.\n\nRegards,\n{signature}",
+            "case_handover": f"Dear {person},\n\nI added a handover summary for {obj} for the incoming team. Please review it in the clinical record and add anything missing before the end of the shift.\n\nKind regards,\n{signature}",
+        }
+        body=templates[style]; tip="The message uses the official hospital domain, a natural workplace context, and a known internal workflow without asking for sensitive information."
+
+    return {"from":sender,"to":recipient,"subject":subject,"body":body,"attachment":"",
+            "suspicious_link":"","suspicious_text":"","indicators":[],"why_risky":"","learning_tip":tip,
+            "is_phishing":False,"email_type":"Legitimate","attack_type":"None","risk_level":plan["difficulty"],
+            "scenario_id":plan["fingerprint"],"scenario_meta":dict(plan, writer_style=style),
+            "display_time":_v31_pick(["Today, 9:05 AM","Tuesday, 11:20 AM","Yesterday, 3:40 PM","Thursday, 1:15 PM"],index)}
+
+
+def _v31_validate(result, plan):
+    if not isinstance(result, dict): return False
+    body=str(result.get("body", "")); subject=str(result.get("subject", "")); sender=str(result.get("from", ""))
+    if not all([body.strip(), subject.strip(), sender.strip()]): return False
+    if subject.lower() in body.lower(): return False
+    if any(p in body.lower() for p in V31_BANNED_PHRASES): return False
+    if plan["role_type"] not in ("clinical","admin","it"): return False
+    if plan["family_id"] not in {f["id"] for f in V30_KNOWLEDGE[plan["role_type"]]}: return False
+    if result.get("is_phishing"):
+        count=len(result.get("indicators",[]))
+        ranges={"easy":(4,5),"medium":(3,4),"hard":(1,2)}
+        lo,hi=ranges[plan["difficulty"]]
+        if not (lo <= count <= hi): return False
+        fields={"from":sender,"subject":subject,"body":body,"greeting":body,"link":body,"attachment":str(result.get("attachment", ""))}
+        for ind in result.get("indicators",[]):
+            ev=str(ind.get("evidence", "")); target=ind.get("target")
+            if not ev or ev.lower() not in fields.get(target, "").lower(): return False
+    else:
+        if not sender.lower().endswith("@hospital.org>"): return False
+        if re.search(r"password|staff pin|login credentials|verification code",body,re.I): return False
+        if result.get("suspicious_link") or result.get("indicators"): return False
+    if plan["signature"].lower() not in body.lower(): return False
+    return True
+
+
+def _v31_generate(role,index,language,difficulty="medium",is_phishing=True,assessment=False):
+    phase="assess" if assessment else "learn"
+    for attempt in range(4):
+        plan=_v30_plan(role,index + attempt*1009,language,difficulty,phase,is_phishing)
+        result=_v31_compose_phishing(plan,role,index) if is_phishing else _v31_compose_legitimate(plan,role,index)
+        if _v31_validate(result,plan):
+            try: evaluate_and_log_auto_scores(result,str(difficulty or "medium").lower(),language,is_phishing=bool(is_phishing))
+            except Exception: pass
+            return result
+    # Last-resort compatible output, but normally unreachable.
+    return result
+
+
+def generate_email(role,index,language,difficulty="medium"):
+    return _v31_generate(role,index,language,difficulty,True,False)
+
+
+def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
+    return _v31_generate(role,index,language,difficulty,bool(is_phishing),True)
+
+# =============================================================
+# END RULE-GUIDED ENGINE v31
+# =============================================================
+
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
