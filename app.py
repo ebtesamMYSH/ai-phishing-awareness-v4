@@ -8660,6 +8660,386 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
 # =============================================================
 
 
+# =============================================================
+# RULE-GUIDED PHISHING SCENARIO ENGINE v30
+# Knowledge base -> planner -> difficulty contract -> composer -> validator
+# This block intentionally overrides the legacy generate_email entry points.
+# =============================================================
+import hashlib as _v30_hashlib
+import time as _v30_time
+
+_V30_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenario_history_v30.json")
+_V30_RNG = random.SystemRandom()
+
+V30_DIFFICULTY = {
+    "easy": {
+        "indicator_count": 5, "generic_greeting": True, "personal_greeting": False,
+        "direct_credentials": True, "urgency": "strong", "domain_style": "obvious",
+        "allowed_channels": ("link",), "attachments": False, "qr": False,
+        "body_words": (70, 125),
+    },
+    "medium": {
+        "indicator_count": 3, "generic_greeting": False, "personal_greeting": False,
+        "direct_credentials": False, "urgency": "moderate", "domain_style": "similar",
+        "allowed_channels": ("button", "link", "pdf"), "attachments": "sometimes", "qr": False,
+        "body_words": (85, 145),
+    },
+    "hard": {
+        "indicator_count": 2, "generic_greeting": False, "personal_greeting": True,
+        "direct_credentials": False, "urgency": "logical", "domain_style": "near",
+        "allowed_channels": ("button", "pdf", "xlsx", "sharepoint", "m365", "qr"),
+        "attachments": "allowed", "qr": "allowed", "body_words": (95, 165),
+    },
+}
+
+# Each family is a coherent workplace workflow. Sender identities and actions are
+# tied to the family so Pharmacy can never sign an Infection Control message, etc.
+V30_KNOWLEDGE = {
+    "clinical": [
+        {"id":"lab_critical","area":"Laboratory Services","event":"a critical laboratory result requiring documented follow-up","objects":["potassium result","blood culture result","coagulation result","troponin result","specimen rejection notice"],"actions":["review the result","acknowledge the finding","open the case record"],"senders":["Laboratory Results Desk","Clinical Laboratory Services"],"signatures":["Laboratory Results Team","Clinical Laboratory Services"]},
+        {"id":"referral","area":"Referral Coordination","event":"a specialist referral awaiting clinical review","objects":["cardiology referral","oncology referral","neurology referral","urgent outpatient referral","inter-facility transfer request"],"actions":["review the referral","confirm clinical acceptance","open the referral record"],"senders":["Referral Coordination Unit","Patient Flow Office"],"signatures":["Referral Coordination Team","Patient Flow Office"]},
+        {"id":"radiology","area":"Radiology","event":"a diagnostic imaging report awaiting review","objects":["CT report","MRI report","ultrasound report","critical imaging addendum","contrast safety checklist"],"actions":["review the report","acknowledge the addendum","open the imaging record"],"senders":["Radiology Reporting Office","Diagnostic Imaging Services"],"signatures":["Radiology Reporting Team","Diagnostic Imaging Services"]},
+        {"id":"medication","area":"Pharmacy","event":"a medication-safety item requiring clinical review","objects":["high-alert medication review","medication reconciliation exception","formulary substitution notice","antimicrobial approval","dose clarification request"],"actions":["review the medication item","acknowledge the safety notice","open the medication record"],"senders":["Medication Safety Office","Clinical Pharmacy Services"],"signatures":["Medication Safety Team","Clinical Pharmacy Services"]},
+        {"id":"infection","area":"Infection Prevention","event":"an infection-control notification requiring acknowledgement","objects":["isolation precaution update","exposure follow-up","outbreak advisory","hand-hygiene audit finding","screening protocol update"],"actions":["review the notice","acknowledge the update","open the exposure record"],"senders":["Infection Prevention and Control","Occupational Health Infection Desk"],"signatures":["Infection Prevention Team","Occupational Health"]},
+        {"id":"patient_safety","area":"Patient Safety","event":"a patient-safety case awaiting documented review","objects":["near-miss report","medication variance","fall-risk incident","handover concern","clinical escalation record"],"actions":["review the case","acknowledge the incident","open the safety record"],"senders":["Patient Safety Office","Clinical Governance Unit"],"signatures":["Patient Safety Team","Clinical Governance"]},
+        {"id":"schedule","area":"Clinical Operations","event":"a clinical schedule change requiring confirmation","objects":["operating theatre list","on-call rota","clinic coverage schedule","weekend duty roster","procedure-room allocation"],"actions":["review the revised schedule","confirm availability","open the duty roster"],"senders":["Clinical Operations Office","Medical Workforce Scheduling"],"signatures":["Clinical Operations","Medical Workforce Team"]},
+        {"id":"blood_bank","area":"Blood Bank","event":"a transfusion workflow item requiring clinical action","objects":["crossmatch request","blood-product release","transfusion reaction follow-up","massive transfusion checklist","blood availability notice"],"actions":["review the transfusion item","acknowledge the request","open the blood-bank record"],"senders":["Transfusion Services","Blood Bank Coordination"],"signatures":["Transfusion Services Team","Blood Bank"]},
+        {"id":"discharge","area":"Health Information Management","event":"a discharge-documentation item awaiting completion","objects":["discharge summary","clinical coding query","unsigned progress note","incomplete medication list","pending follow-up plan"],"actions":["review the documentation","complete the acknowledgement","open the patient record"],"senders":["Clinical Documentation Office","Health Information Management"],"signatures":["Clinical Documentation Team","Health Information Management"]},
+        {"id":"education","area":"Clinical Education","event":"a mandatory clinical learning item requiring completion","objects":["annual competency assessment","resuscitation update","medication-safety module","infection-control module","patient-identification refresher"],"actions":["open the learning item","confirm completion","review the assigned module"],"senders":["Clinical Education Department","Professional Development Unit"],"signatures":["Clinical Education Team","Professional Development"]},
+        {"id":"equipment","area":"Biomedical Engineering","event":"a medical-device notice requiring acknowledgement","objects":["infusion pump advisory","patient monitor update","ventilator safety notice","defibrillator inspection","glucose meter recall"],"actions":["review the device notice","acknowledge the advisory","open the equipment record"],"senders":["Biomedical Engineering","Medical Device Safety Desk"],"signatures":["Biomedical Engineering Team","Medical Device Safety"]},
+        {"id":"telehealth","area":"Virtual Care","event":"a remote-consultation item awaiting clinician review","objects":["telemedicine appointment","remote monitoring alert","virtual clinic handover","video consultation note","home-care escalation"],"actions":["review the virtual-care item","open the consultation record","confirm the handover"],"senders":["Virtual Care Coordination","Telehealth Operations"],"signatures":["Virtual Care Team","Telehealth Operations"]},
+    ],
+    "admin": [
+        {"id":"insurance","area":"Insurance Coordination","event":"an insurance case awaiting administrative review","objects":["coverage exception","claim rejection","pre-authorization request","policy eligibility update","reimbursement query"],"actions":["review the case","open the claim record","confirm the administrative response"],"senders":["Insurance Coordination Unit","Revenue Cycle Office"],"signatures":["Insurance Coordination","Revenue Cycle Team"]},
+        {"id":"billing","area":"Patient Billing","event":"a billing item requiring reconciliation","objects":["invoice discrepancy","unposted payment","billing adjustment","patient account exception","coding-related charge query"],"actions":["review the billing item","open the account record","acknowledge the discrepancy"],"senders":["Patient Billing Office","Revenue Integrity Unit"],"signatures":["Patient Billing Team","Revenue Integrity"]},
+        {"id":"procurement","area":"Procurement","event":"a supplier transaction awaiting review","objects":["purchase order amendment","supplier invoice","contract renewal","delivery discrepancy","quotation approval"],"actions":["review the transaction","open the procurement record","confirm receipt"],"senders":["Medical Procurement Office","Supply Chain Management"],"signatures":["Procurement Team","Supply Chain Management"]},
+        {"id":"appointments","area":"Patient Access","event":"an appointment workflow item requiring action","objects":["clinic overbooking notice","appointment rescheduling batch","waiting-list release","referral booking exception","patient registration correction"],"actions":["review the booking item","open the scheduling record","acknowledge the change"],"senders":["Patient Access Services","Appointment Coordination"],"signatures":["Patient Access Team","Appointment Coordination"]},
+        {"id":"hr","area":"Human Resources","event":"an employee administration item requiring review","objects":["leave balance correction","benefits enrollment","contract detail update","attendance exception","staff credential renewal"],"actions":["review the employee item","open the HR record","confirm the update"],"senders":["Human Resources Services","Employee Relations Office"],"signatures":["Human Resources","Employee Relations"]},
+        {"id":"payroll","area":"Payroll","event":"a payroll exception requiring confirmation","objects":["salary payment exception","IBAN verification case","allowance adjustment","overtime reconciliation","end-of-service calculation"],"actions":["review the payroll item","open the payment record","confirm the correction"],"senders":["Payroll Services","Compensation and Benefits"],"signatures":["Payroll Team","Compensation and Benefits"]},
+        {"id":"records","area":"Medical Records Administration","event":"an administrative patient-record item awaiting review","objects":["release-of-information request","record merge exception","demographic correction","archiving notice","document indexing query"],"actions":["review the records item","open the administrative record","acknowledge the request"],"senders":["Medical Records Administration","Health Information Services"],"signatures":["Medical Records Team","Health Information Services"]},
+        {"id":"facilities","area":"Facilities Management","event":"a facilities service item requiring coordination","objects":["access badge review","maintenance closure","office relocation","parking permit update","building access exception"],"actions":["review the service notice","open the facilities request","confirm the arrangement"],"senders":["Facilities Management","Workplace Services"],"signatures":["Facilities Team","Workplace Services"]},
+    ],
+    "it": [
+        {"id":"vpn","area":"Network Services","event":"a remote-access service item requiring technical review","objects":["VPN certificate update","remote access exception","gateway maintenance","privileged access review","secure tunnel migration"],"actions":["review the service item","open the network ticket","acknowledge the change"],"senders":["Network Operations Centre","Infrastructure Services"],"signatures":["Network Operations","Infrastructure Services"]},
+        {"id":"identity","area":"Identity and Access Management","event":"an identity-governance item awaiting review","objects":["privileged role recertification","inactive account review","MFA registration exception","service-account ownership","access entitlement review"],"actions":["review the access item","open the IAM case","acknowledge the entitlement"],"senders":["Identity and Access Management","Cybersecurity Operations"],"signatures":["IAM Team","Cybersecurity Operations"]},
+        {"id":"server","area":"Infrastructure Operations","event":"a server operation item requiring action","objects":["storage threshold alert","backup verification","patch maintenance window","cluster failover review","virtual machine ownership"],"actions":["review the infrastructure item","open the operations ticket","acknowledge the maintenance"],"senders":["Infrastructure Operations","Data Centre Services"],"signatures":["Infrastructure Operations","Data Centre Services"]},
+        {"id":"security","area":"Cybersecurity","event":"a security case awaiting technical review","objects":["endpoint detection alert","firewall rule exception","vulnerability remediation","phishing investigation","certificate anomaly"],"actions":["review the security case","open the incident ticket","acknowledge the finding"],"senders":["Security Operations Centre","Cybersecurity Governance"],"signatures":["Security Operations","Cybersecurity Governance"]},
+        {"id":"database","area":"Database Services","event":"a database service item requiring confirmation","objects":["backup integrity check","replication lag alert","schema change request","database account review","restore-test result"],"actions":["review the database item","open the service ticket","acknowledge the change"],"senders":["Database Administration","Enterprise Applications"],"signatures":["Database Services","Enterprise Applications"]},
+        {"id":"application","area":"Clinical Applications","event":"an enterprise application item awaiting review","objects":["EMR interface error","application release note","license allocation","integration exception","production change request"],"actions":["review the application item","open the change record","acknowledge the release"],"senders":["Clinical Applications Support","Enterprise Systems"],"signatures":["Clinical Applications","Enterprise Systems"]},
+        {"id":"cloud","area":"Cloud and Backup Services","event":"a cloud service item requiring technical review","objects":["backup retention exception","cloud access review","storage policy update","recovery test","subscription renewal"],"actions":["review the cloud item","open the service record","acknowledge the policy"],"senders":["Cloud Platform Operations","Backup and Recovery Services"],"signatures":["Cloud Operations","Backup and Recovery"]},
+        {"id":"helpdesk","area":"IT Service Desk","event":"a support case requiring technician action","objects":["escalated service ticket","remote support request","device enrollment case","software deployment issue","asset handover"],"actions":["review the support case","open the ticket","acknowledge the assignment"],"senders":["IT Service Desk","End User Computing"],"signatures":["IT Service Desk","End User Computing"]},
+    ],
+}
+
+
+# Extra workflow families ensure that 6 learning + 10 assessment items can use
+# different semantic families in one full cycle, not merely different wording.
+V30_KNOWLEDGE["clinical"].extend([
+    {"id":"emergency","area":"Emergency Medicine","event":"an emergency-care workflow item requiring review","objects":["triage escalation","observation-unit handover","trauma pathway exception","emergency discharge follow-up","critical-care transfer note"],"actions":["review the emergency record","acknowledge the handover","open the escalation note"],"senders":["Emergency Operations Desk","Acute Care Coordination"],"signatures":["Emergency Operations","Acute Care Coordination"]},
+    {"id":"surgery","area":"Surgical Services","event":"a perioperative item awaiting clinical review","objects":["surgical consent exception","theatre list amendment","pre-operative checklist","post-operative handover","implant traceability record"],"actions":["review the surgical item","acknowledge the amendment","open the perioperative record"],"senders":["Surgical Services Office","Perioperative Coordination"],"signatures":["Surgical Services","Perioperative Coordination"]},
+    {"id":"maternity","area":"Maternity Services","event":"a maternal-care item requiring follow-up","objects":["antenatal risk review","labour ward handover","newborn screening result","postnatal follow-up","fetal monitoring addendum"],"actions":["review the maternity item","acknowledge the handover","open the maternal record"],"senders":["Maternity Coordination","Women’s Health Services"],"signatures":["Maternity Services","Women’s Health Services"]},
+    {"id":"dialysis","area":"Renal Services","event":"a renal-care workflow item requiring review","objects":["dialysis schedule change","vascular access note","renal medication review","dialysis adequacy result","transplant clinic follow-up"],"actions":["review the renal item","acknowledge the update","open the dialysis record"],"senders":["Renal Services Coordination","Dialysis Unit Office"],"signatures":["Renal Services","Dialysis Unit"]},
+    {"id":"respiratory","area":"Respiratory Care","event":"a respiratory-care item awaiting acknowledgement","objects":["ventilator setting review","oxygen therapy order","pulmonary function report","respiratory isolation note","home oxygen assessment"],"actions":["review the respiratory item","acknowledge the order","open the care record"],"senders":["Respiratory Care Services","Pulmonary Coordination"],"signatures":["Respiratory Care","Pulmonary Services"]},
+    {"id":"rehabilitation","area":"Rehabilitation Services","event":"a rehabilitation plan requiring clinical review","objects":["physiotherapy plan","occupational therapy assessment","mobility risk update","speech therapy note","discharge rehabilitation plan"],"actions":["review the rehabilitation plan","acknowledge the assessment","open the therapy record"],"senders":["Rehabilitation Coordination","Allied Health Services"],"signatures":["Rehabilitation Services","Allied Health Services"]},
+    {"id":"vaccination","area":"Occupational Health","event":"a workforce-health item requiring follow-up","objects":["vaccination record","fitness-to-work review","exposure assessment","screening result","immunity status update"],"actions":["review the occupational-health item","acknowledge the notice","open the staff-health record"],"senders":["Occupational Health Services","Employee Health Clinic"],"signatures":["Occupational Health","Employee Health Clinic"]},
+    {"id":"pathology","area":"Anatomic Pathology","event":"a pathology workflow item awaiting review","objects":["histopathology addendum","specimen discrepancy","cytology report","tumour board pathology note","biopsy tracking exception"],"actions":["review the pathology item","acknowledge the addendum","open the specimen record"],"senders":["Anatomic Pathology Services","Specimen Coordination Desk"],"signatures":["Anatomic Pathology","Specimen Coordination"]},
+    {"id":"nutrition","area":"Clinical Nutrition","event":"a nutrition-care item requiring review","objects":["enteral feeding plan","nutrition risk assessment","diet order exception","parenteral nutrition review","allergy-related meal update"],"actions":["review the nutrition item","acknowledge the plan","open the nutrition record"],"senders":["Clinical Nutrition Services","Dietetic Coordination"],"signatures":["Clinical Nutrition","Dietetic Services"]},
+    {"id":"oncology","area":"Oncology Services","event":"an oncology-care item requiring clinical follow-up","objects":["chemotherapy protocol review","tumour board decision","infusion schedule change","treatment consent note","oncology follow-up plan"],"actions":["review the oncology item","acknowledge the plan","open the treatment record"],"senders":["Oncology Care Coordination","Cancer Centre Operations"],"signatures":["Oncology Services","Cancer Centre Operations"]},
+])
+
+V30_KNOWLEDGE["admin"].extend([
+    {"id":"quality_admin","area":"Quality Administration","event":"a quality-governance item requiring administrative follow-up","objects":["accreditation evidence request","policy publication record","committee action log","audit document index","quality dashboard exception"],"actions":["review the quality item","open the evidence record","acknowledge the request"],"senders":["Quality Management Office","Accreditation Coordination"],"signatures":["Quality Management","Accreditation Coordination"]},
+    {"id":"legal","area":"Legal Affairs","event":"a legal-administration item awaiting review","objects":["contract clarification","records preservation notice","consent-form revision","legal correspondence log","regulatory response draft"],"actions":["review the legal item","open the case record","acknowledge the notice"],"senders":["Legal Affairs Office","Compliance Administration"],"signatures":["Legal Affairs","Compliance Administration"]},
+    {"id":"training_admin","area":"Learning and Development","event":"an employee-learning administration item requiring action","objects":["course enrollment","attendance correction","certificate record","training nomination","orientation schedule"],"actions":["review the training item","open the learning record","confirm the nomination"],"senders":["Learning and Development","Workforce Development"],"signatures":["Learning and Development","Workforce Development"]},
+    {"id":"executive","area":"Executive Office","event":"an executive-administration item requiring coordination","objects":["committee briefing pack","leadership meeting action","executive correspondence","board document review","departmental status request"],"actions":["review the executive item","open the briefing record","acknowledge the action"],"senders":["Executive Office","Corporate Affairs"],"signatures":["Executive Office","Corporate Affairs"]},
+    {"id":"communications","area":"Corporate Communications","event":"a communications item awaiting administrative review","objects":["public notice draft","staff announcement","media enquiry log","campaign approval","website content update"],"actions":["review the communication","open the approval record","acknowledge the draft"],"senders":["Corporate Communications","Public Affairs Office"],"signatures":["Corporate Communications","Public Affairs"]},
+    {"id":"transport","area":"Transport Services","event":"a logistics item requiring coordination","objects":["patient transport schedule","fleet booking exception","courier route change","ambulance transfer log","vehicle access permit"],"actions":["review the logistics item","open the transport record","confirm the arrangement"],"senders":["Transport Services","Logistics Coordination"],"signatures":["Transport Services","Logistics Coordination"]},
+    {"id":"housing","area":"Staff Services","event":"a staff-services item requiring administrative review","objects":["housing allocation","staff shuttle request","uniform issue","employee ID replacement","staff accommodation maintenance"],"actions":["review the staff-service item","open the request record","confirm the arrangement"],"senders":["Staff Services Office","Employee Experience"],"signatures":["Staff Services","Employee Experience"]},
+    {"id":"inventory","area":"Warehouse Operations","event":"an inventory item requiring reconciliation","objects":["stock discrepancy","expiry review","goods receipt exception","inventory transfer","consignment count"],"actions":["review the inventory item","open the stock record","acknowledge the discrepancy"],"senders":["Warehouse Operations","Materials Management"],"signatures":["Warehouse Operations","Materials Management"]},
+])
+
+V30_KNOWLEDGE["it"].extend([
+    {"id":"integration","area":"Integration Services","event":"an interface workflow item requiring technical review","objects":["HL7 queue exception","API certificate update","interface mapping change","message-routing alert","integration endpoint review"],"actions":["review the integration item","open the interface ticket","acknowledge the change"],"senders":["Integration Services","Interoperability Team"],"signatures":["Integration Services","Interoperability Team"]},
+    {"id":"endpoint","area":"Endpoint Management","event":"a managed-device item awaiting review","objects":["device compliance exception","encryption status alert","software deployment","laptop ownership review","mobile device enrollment"],"actions":["review the endpoint item","open the device record","acknowledge the deployment"],"senders":["Endpoint Management","Digital Workplace Operations"],"signatures":["Endpoint Management","Digital Workplace"]},
+    {"id":"telecom","area":"Unified Communications","event":"a communications-platform item requiring technical review","objects":["call routing change","contact centre queue","Teams voice migration","extension ownership review","video conference gateway"],"actions":["review the communications item","open the service request","acknowledge the change"],"senders":["Unified Communications","Telecommunications Services"],"signatures":["Unified Communications","Telecommunications Services"]},
+    {"id":"pacs","area":"Imaging Informatics","event":"an imaging-system item requiring technical review","objects":["PACS archive alert","modality worklist exception","DICOM routing change","image retention policy","viewer access review"],"actions":["review the imaging-system item","open the PACS ticket","acknowledge the change"],"senders":["Imaging Informatics","PACS Support"],"signatures":["Imaging Informatics","PACS Support"]},
+    {"id":"analytics","area":"Data and Analytics","event":"a data-platform item awaiting review","objects":["dashboard refresh failure","data-quality exception","report ownership review","analytics workspace access","scheduled extract alert"],"actions":["review the data item","open the analytics ticket","acknowledge the exception"],"senders":["Data and Analytics","Business Intelligence Services"],"signatures":["Data and Analytics","Business Intelligence"]},
+    {"id":"change","area":"IT Change Management","event":"a production-change item requiring technical approval","objects":["emergency change request","maintenance window","rollback plan","change collision alert","post-implementation review"],"actions":["review the change item","open the change record","acknowledge the schedule"],"senders":["IT Change Management","Technology Governance"],"signatures":["IT Change Management","Technology Governance"]},
+    {"id":"vendor_it","area":"Technology Vendor Management","event":"a vendor-support item requiring technical coordination","objects":["support entitlement renewal","vendor remote session","license true-up","maintenance agreement","technical escalation"],"actions":["review the vendor item","open the support record","acknowledge the request"],"senders":["Technology Vendor Management","IT Commercial Services"],"signatures":["Technology Vendor Management","IT Commercial Services"]},
+    {"id":"continuity","area":"IT Service Continuity","event":"a resilience item requiring technical review","objects":["disaster recovery exercise","business continuity dependency","recovery time validation","failover test","critical service inventory"],"actions":["review the continuity item","open the resilience record","acknowledge the test"],"senders":["IT Service Continuity","Technology Resilience Office"],"signatures":["IT Service Continuity","Technology Resilience"]},
+])
+
+V30_STRUCTURES = ["context-action-deadline", "notice-background-action", "case-summary-request", "follow-up-reference-action", "service-impact-action", "policy-context-response", "handover-context-review", "exception-summary-resolution"]
+V30_GENERIC_GREETINGS = {"English":["Dear Staff Member","Hello Clinical Team","Dear Healthcare Employee","Attention Clinical Staff","Dear Colleague"], "Arabic":["عزيزي الموظف","فريق العمل السريري","عزيزي الممارس الصحي","إلى الزملاء السريريين","عزيزي الزميل"]}
+V30_DEPARTMENT_GREETINGS = {"English":["Dear {area} Team","Hello {area} Colleague","To the {area} Team"], "Arabic":["فريق {area} العزيز","الزميل في {area}","إلى فريق {area}"]}
+V30_FIRST_NAMES = ["Sarah Almutairi","Ahmed Alotaibi","Noura Alshamri","Fahad Aldosari","Mona Alharbi","Khalid Alanazi","Lama Alqahtani","Faisal Alzahrani"]
+
+V30_OBVIOUS_DOMAINS = ["secure-staff-check.net","hospital-access-alert.co","portal-confirm-now.net","clinical-update-login.org","staff-verify-center.com"]
+V30_SIMILAR_DOMAINS = ["hospital-portal.org","hospital-services.net","moh-clinical.org","hospital-workflow.com","staff-hospital.org"]
+V30_NEAR_DOMAINS = ["hospitaI.org","hospital-sso.org","hospital365.org","hospital-sharepoint.org","hospital-sa.org"]
+
+
+def _v30_load_history():
+    try:
+        with open(_V30_HISTORY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _v30_save_history(rows):
+    try:
+        with open(_V30_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(rows[-12000:], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _v30_role_type(role):
+    return ROLE_MAP.get(role, ROLE_MAP["Clinical"])[2]
+
+
+def _v30_session_init(phase, index):
+    key = f"v30_{phase}_used"
+    if index == 0 or key not in st.session_state:
+        st.session_state[key] = {"fingerprints": [], "families": [], "structures": [], "senders": [], "objects": [], "channels": []}
+    return st.session_state[key]
+
+
+def _v30_fingerprint(plan):
+    raw = "|".join(str(plan.get(k,"")) for k in ["role_type","difficulty","family_id","object","action","structure","channel","sender","indicator_pattern"])
+    return _v30_hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _v30_plan(role, index, language, difficulty, phase, is_phishing):
+    role_type = _v30_role_type(role)
+    if role_type == "other":
+        role_type = _V30_RNG.choice(["clinical","admin","it"])
+    difficulty = str(difficulty or "medium").lower()
+    if difficulty not in V30_DIFFICULTY: difficulty = "medium"
+    used = _v30_session_init(phase, index)
+    history_fps = {r.get("fingerprint") for r in _v30_load_history()[-8000:] if isinstance(r, dict)}
+    learning_families = set(st.session_state.get("v30_learn_used", {}).get("families", [])) if phase == "assess" else set()
+    families = V30_KNOWLEDGE[role_type]
+    candidates = [f for f in families if f["id"] not in used["families"] and f["id"] not in learning_families]
+    if not candidates:
+        candidates = [f for f in families if f["id"] not in learning_families] or families
+
+    for _ in range(250):
+        fam = _V30_RNG.choice(candidates)
+        obj = _V30_RNG.choice(fam["objects"])
+        action = _V30_RNG.choice(fam["actions"])
+        sender = _V30_RNG.choice(fam["senders"])
+        signature = fam["signatures"][fam["senders"].index(sender) % len(fam["signatures"])]
+        structure_opts = [x for x in V30_STRUCTURES if x not in used["structures"]] or V30_STRUCTURES
+        structure = _V30_RNG.choice(structure_opts)
+        channel_opts = list(V30_DIFFICULTY[difficulty]["allowed_channels"])
+        channel = _V30_RNG.choice([x for x in channel_opts if x not in used["channels"]] or channel_opts)
+        plan = {"role_type":role_type,"difficulty":difficulty,"language":language,"phase":phase,
+                "family_id":fam["id"],"area":fam["area"],"event":fam["event"],"object":obj,
+                "action":action,"sender":sender,"signature":signature,"structure":structure,
+                "channel":channel,"is_phishing":bool(is_phishing)}
+        plan["indicator_pattern"] = {"easy":"domain+urgency+credential+link+greeting","medium":"domain+workflow+channel","hard":"identity+channel"}[difficulty]
+        fp = _v30_fingerprint(plan)
+        if fp not in used["fingerprints"] and fp not in history_fps and obj not in used["objects"] and sender not in used["senders"]:
+            plan["fingerprint"] = fp
+            break
+    else:
+        plan["fingerprint"] = _v30_fingerprint(plan) + str(_V30_RNG.randrange(1000,9999))
+
+    for k, val in [("fingerprints",plan["fingerprint"]),("families",plan["family_id"]),("structures",plan["structure"]),("senders",plan["sender"]),("objects",plan["object"]),("channels",plan["channel"])]:
+        used[k].append(val)
+    hist = _v30_load_history(); hist.append({"timestamp":_v30_time.time(),"fingerprint":plan["fingerprint"],"role":role_type,"difficulty":difficulty,"family":plan["family_id"],"object":obj,"phase":phase}); _v30_save_history(hist)
+    return plan
+
+
+def _v30_recipient(role, index, language, phase):
+    try: return get_recipient(role, index, language, phase="assess" if phase=="assess" else "learn")
+    except Exception: return "employee@hospital.org"
+
+
+def _v30_display_name(email):
+    local = (email or "employee").split("@")[0].replace("."," ").replace("_"," ")
+    parts = [p for p in local.split() if len(p)>1 and p.lower() not in {"dr","n","m","t","ph","s"}]
+    return " ".join(p.capitalize() for p in parts[-2:]) or _V30_RNG.choice(V30_FIRST_NAMES)
+
+
+def _v30_domain(difficulty):
+    return _V30_RNG.choice({"easy":V30_OBVIOUS_DOMAINS,"medium":V30_SIMILAR_DOMAINS,"hard":V30_NEAR_DOMAINS}[difficulty])
+
+
+def _v30_subject(plan, urgency_phrase):
+    obj = plan["object"].title()
+    if plan.get("language") == "Arabic":
+        easy = [f"عاجل: إجراء مطلوب اليوم بشأن {obj}", f"مراجعة فورية مطلوبة: {obj}", f"إشعار أخير: متابعة {obj}", f"إجراء مطلوب اليوم — {obj}"]
+        medium = [f"متابعة مطلوبة: {obj}", f"إشعار سير عمل — {obj}", f"فترة مراجعة {obj}", f"بانتظار التأكيد: {obj}"]
+        hard = [f"{obj} — تحديث المرجع", f"متابعة بشأن {obj}", f"ملاحظة مراجعة: {obj}", f"بخصوص {obj}"]
+    else:
+        easy = [f"Urgent: {obj} Requires Action Today", f"Immediate Review Required: {obj}", f"Final Notice: {obj} Access Pending", f"Action Needed Today — {obj}"]
+        medium = [f"Follow-up Required: {obj}", f"Workflow Notice — {obj}", f"Review Window for {obj}", f"Pending Confirmation: {obj}"]
+        hard = [f"{obj} — Reference Update", f"Follow-up on {obj}", f"Review note: {obj}", f"Regarding {obj}"]
+    return _V30_RNG.choice({"easy":easy,"medium":medium,"hard":hard}[plan["difficulty"]])
+
+
+def _v30_link(plan, domain):
+    short = re.sub(r"[^a-z0-9]+","-",plan["family_id"].lower()).strip("-")
+    token = _V30_RNG.randrange(1000,9999)
+    return f"http://{domain}/{short}/{token}"
+
+
+def _v30_indicator(number, key, title, description, evidence, target):
+    return {"number":number,"key":key,"title":title,"description":description,"evidence":evidence,"target":target}
+
+
+def _v30_compose_phishing(plan, role, index):
+    lang = plan["language"]; ar = lang == "Arabic"; diff = plan["difficulty"]
+    recipient = _v30_recipient(role,index,lang,plan["phase"]); person = _v30_display_name(recipient)
+    domain = _v30_domain(diff); link = _v30_link(plan,domain)
+    mailbox = _V30_RNG.choice(["alerts","workflow","notifications","case-review","service-desk"])
+    sender = f'{plan["sender"]} <{mailbox}@{domain}>'
+    urgency = _V30_RNG.choice(["today","immediately","within the next hour","before your next shift"])
+    subject = _v30_subject(plan, urgency)
+
+    if diff == "easy":
+        greeting = _V30_RNG.choice(V30_GENERIC_GREETINGS[lang])
+        credential = _V30_RNG.choice(["enter your password","confirm your staff PIN","submit your login credentials","verify your account details"])
+        if ar:
+            cred_map={"enter your password":"أدخل كلمة المرور","confirm your staff PIN":"أكد الرقم السري للموظف","submit your login credentials":"أرسل بيانات الدخول","verify your account details":"تحقق من بيانات حسابك"}; credential=cred_map[credential]
+            body = f"{greeting}،\n\nورد إلى {plan['area']} إشعار بخصوص {plan['object']}، ويتطلب الإجراء متابعة سريعة حتى لا يتوقف سير العمل. يرجى {credential} {('فورًا' if urgency=='immediately' else 'اليوم')} لإتاحة {plan['action']} وإغلاق التنبيه.\n\nاستخدم الرابط التالي لإكمال الإجراء: {link}\n\nعدم الاستجابة {('خلال الساعة القادمة' if 'hour' in urgency else 'قبل المناوبة القادمة')} قد يؤدي إلى تعليق الوصول مؤقتًا.\n\nشكرًا لتعاونك،\n{plan['signature']}"
+            indicators=[
+                _v30_indicator(1,"domain","نطاق مرسل غير رسمي",f"عنوان المرسل يستخدم النطاق {domain} وليس نطاق المستشفى الرسمي.",domain,"from"),
+                _v30_indicator(2,"urgency","استعجال أو تهديد واضح","يستخدم العنوان والنص مهلة قصيرة لدفع المستلم إلى التصرف دون تحقق.",next(x for x in ["فورًا","اليوم","خلال الساعة القادمة","قبل المناوبة القادمة"] if x in subject+body),"subject" if any(x in subject for x in ["عاجل","فوري","اليوم"]) else "body"),
+                _v30_indicator(3,"credential","طلب مباشر لبيانات الدخول","تطلب الرسالة كلمة مرور أو رقمًا سريًا أو بيانات حساب مباشرة.",credential,"body"),
+                _v30_indicator(4,"link","رابط خارجي واضح",f"الرابط يقود إلى النطاق غير الرسمي {domain}.",link,"link"),
+                _v30_indicator(5,"greeting","تحية عامة","لا تخاطب الرسالة المستلم باسمه، ما قد يدل على إرسال جماعي.",greeting,"greeting"),
+            ]
+            why="تجمع الرسالة بين نطاق غير رسمي وطلب مباشر لبيانات الدخول ورابط خارجي مع ضغط زمني واضح، وهي مؤشرات أساسية على التصيد."
+            tip="لا تُدخل كلمة المرور أو الرقم السري عبر رابط وارد في بريد مفاجئ. افتح النظام الرسمي مباشرة أو تواصل مع القسم عبر قناة موثوقة."
+        else:
+            body = f"{greeting},\n\n{plan['area']} has received a notification concerning {plan['object']}. The item requires prompt follow-up to prevent disruption to the related clinical workflow. Please {credential} {urgency} so you can {plan['action']} and close the notification.\n\nUse the following link to complete the action: {link}\n\nFailure to respond {('within the next hour' if 'hour' in urgency else 'before your next shift')} may result in temporary access suspension.\n\nThank you for your cooperation,\n{plan['signature']}"
+            urgency_ev = next(x for x in ["Urgent","Immediate","Today","today","immediately","within the next hour","before your next shift"] if x in subject+body)
+            indicators=[
+                _v30_indicator(1,"domain","Non-official sender domain",f"The sender uses {domain}, not the hospital's official domain.",domain,"from"),
+                _v30_indicator(2,"urgency","Strong urgency or threat","The message uses an immediate deadline or access consequence to pressure the recipient.",urgency_ev,"subject" if urgency_ev in subject else "body"),
+                _v30_indicator(3,"credential","Direct credential request","The email directly asks for a password, staff PIN, or login credentials.",credential,"body"),
+                _v30_indicator(4,"link","Visible external link",f"The link points to the non-official domain {domain}.",link,"link"),
+                _v30_indicator(5,"greeting","Generic greeting","The message does not address the recipient by name, which may indicate bulk targeting.",greeting,"greeting"),
+            ]
+            why="The email combines a non-official domain, a direct credential request, an external link, and strong time pressure—clear beginner-level phishing indicators."
+            tip="Never enter a password or staff PIN through an unexpected email link. Open the official system directly or verify the request through a trusted channel."
+        attachment=""
+    elif diff == "medium":
+        greeting = _V30_RNG.choice(V30_DEPARTMENT_GREETINGS[lang]).format(area=plan["area"])
+        deadline = _V30_RNG.choice(["within 24 hours","by tomorrow afternoon","before the current review window closes"])
+        if ar:
+            dmap={"within 24 hours":"خلال 24 ساعة","by tomorrow afternoon":"قبل ظهر الغد","before the current review window closes":"قبل إغلاق فترة المراجعة الحالية"}; deadline=dmap[deadline]
+            cta=f"سجّل الدخول إلى بوابة المتابعة لمراجعة {plan['object']}"; label="فتح سجل المتابعة"
+            body=f"{greeting}،\n\nتجري {plan['area']} مراجعة دورية للطلبات المفتوحة، وقد ظهر {plan['object']} ضمن العناصر التي تحتاج إلى متابعة. يرجى {plan['action']} {deadline} حتى يبقى السجل ضمن مسار العمل الحالي.\n\n{cta}: [{label}]({link})\n\nإذا لم تكن مسؤولًا عن هذا العنصر، يرجى إعادة توجيه الإشعار إلى المنسق المعتمد.\n\nمع التحية،\n{plan['signature']}"
+            indicators=[
+                _v30_indicator(1,"domain","نطاق مشابه لكنه غير رسمي",f"النطاق {domain} يبدو قريبًا من جهة رسمية لكنه ليس hospital.org.",domain,"from"),
+                _v30_indicator(2,"workflow","طلب تسجيل دخول خارج مسار العمل المعتاد","تطلب الرسالة فتح بوابة خارجية بدل استخدام النظام الداخلي المعروف.",cta,"body"),
+                _v30_indicator(3,"link","رابط بوابة غير معتمدة",f"زر المتابعة يقود إلى {domain}، وهو نطاق غير رسمي.",link,"link"),
+            ]; why="تبدو الرسالة مهنية ومرتبطة بالعمل، لكن نطاق البوابة غير رسمي وطريقة تسجيل الدخول لا تتبع المسار المعتاد."; tip="افتح النظام من الاختصار الرسمي أو المفضلة، ولا تعتمد على زر تسجيل دخول داخل بريد غير متوقع."
+        else:
+            cta=f"Sign in to the review portal to {plan['action']}"; label="Open review record"
+            body=f"{greeting},\n\n{plan['area']} is completing a routine review of open workflow items. {plan['object'].title()} has been listed for follow-up. Please {plan['action']} {deadline} so the record remains in the current workflow queue.\n\n{cta}: [{label}]({link})\n\nIf this item is not assigned to you, forward the notice to the approved coordinator rather than entering case details by email.\n\nRegards,\n{plan['signature']}"
+            indicators=[
+                _v30_indicator(1,"domain","Look-alike sender domain",f"The domain {domain} resembles a workplace service but is not hospital.org.",domain,"from"),
+                _v30_indicator(2,"workflow","Unusual external sign-in workflow","The email directs the recipient to sign in through an emailed portal instead of the known internal system.",cta,"body"),
+                _v30_indicator(3,"link","Unapproved portal link",f"The review button resolves to the non-official domain {domain}.",link,"link"),
+            ]; why="The message is professionally written and job-relevant, but the look-alike domain and external sign-in workflow are inconsistent with approved hospital practice."; tip="Navigate to the official system independently. Do not use an emailed sign-in button unless the destination has been verified."
+        attachment=""
+    else:
+        greeting = (f"Dear {person}" if not ar else f"عزيزي {person}")
+        # hard uses subtle channel/identity issue; no direct credentials or artificial deadline
+        channel=plan["channel"]
+        attachment=""
+        if channel in ("pdf","xlsx"):
+            ext = ".pdf" if channel=="pdf" else ".xlsx"; attachment=re.sub(r"[^a-z0-9]+","_",plan["family_id"])+f"_{_V30_RNG.randrange(10,99)}{ext}"
+        if ar:
+            body=f"{greeting}،\n\nأرسل لك متابعة بخصوص {plan['object']} التي نوقشت ضمن {plan['area']}. أضفت مرجع الحالة حتى تتمكن من {plan['action']} عند توفر الوقت، ثم تدوين الملاحظة في السجل المعتاد.\n\n"
+            if attachment: body += f"ستجد التفاصيل في المرفق {attachment}. يرجى مطابقته مع رقم الحالة في النظام قبل اعتماده.\n\n"
+            else: body += f"مرجع المتابعة متاح هنا: [عرض مرجع الحالة]({link})\n\n"
+            body += f"لا توجد حاجة لإرسال أي معلومات حساسة عبر البريد.\n\nمع التقدير،\n{plan['signature']}"
+            indicators=[_v30_indicator(1,"domain","اختلاف دقيق في هوية النطاق",f"النطاق {domain} قريب بصريًا من النطاق الرسمي لكنه مختلف.",domain,"from")]
+            if attachment: indicators.append(_v30_indicator(2,"attachment","مرفق غير متوقع","يجب التحقق من المرفق عبر النظام الداخلي قبل فتحه، حتى لو بدا السياق واقعيًا.",attachment,"attachment"))
+            else: indicators.append(_v30_indicator(2,"link","رابط خارجي خفي",f"نص الرابط يبدو مهنيًا لكن وجهته هي {domain}.",link,"link"))
+            why="السياق واللغة طبيعيان جدًا، لكن هناك اختلافًا دقيقًا في هوية النطاق وقناة خارجية غير متوقعة. هذه مؤشرات متقدمة تتطلب التحقق من التفاصيل."; tip="في الرسائل الواقعية، ركّز على النطاق الفعلي ومسار العمل، وليس على جودة اللغة أو معرفة المرسل بالسياق."
+        else:
+            body=f"{greeting},\n\nI am following up on {plan['object']}, which was discussed through {plan['area']}. I included the case reference so you can {plan['action']} when convenient and record the outcome in the usual system.\n\n"
+            if attachment: body += f"The supporting detail is in {attachment}. Please match it against the case number in the internal system before relying on it.\n\n"
+            else: body += f"The reference is available here: [View case reference]({link})\n\n"
+            body += f"No sensitive information needs to be sent by email.\n\nKind regards,\n{plan['signature']}"
+            indicators=[_v30_indicator(1,"domain","Subtle domain discrepancy",f"The domain {domain} is visually close to the official domain but is not identical.",domain,"from")]
+            if attachment: indicators.append(_v30_indicator(2,"attachment","Unexpected contextual attachment","The attachment should be verified in the internal system before it is opened, despite the realistic context.",attachment,"attachment"))
+            else: indicators.append(_v30_indicator(2,"link","Hidden external destination",f"The professional-looking link text resolves to {domain}.",link,"link"))
+            why="The message is natural and context-aware, but a subtle domain discrepancy and an unexpected external channel indicate a sophisticated phishing attempt."; tip="For realistic emails, inspect the exact domain and verify the workflow independently; polished language is not proof of legitimacy."
+
+    return {"from":sender,"to":recipient,"subject":subject,"body":body,"attachment":attachment,
+            "suspicious_link":link if not attachment else (link if diff!="hard" else ""),"suspicious_text":next((i["evidence"] for i in indicators if i["target"]=="body"),""),
+            "indicators":indicators,"why_risky":why,"learning_tip":tip,"is_phishing":True,
+            "email_type":"Phishing","attack_type":{"easy":"Credential harvesting","medium":"Look-alike portal","hard":"Contextual spear phishing"}[diff],
+            "risk_level":diff,"scenario_id":plan["fingerprint"],"scenario_meta":plan,"display_time":_V30_RNG.choice(["Today, 8:15 AM","Today, 10:42 AM","Monday, 2:31 PM","Yesterday, 4:05 PM","Thursday, 9:18 AM"])}
+
+
+def _v30_compose_legitimate(plan, role, index):
+    lang=plan["language"]; ar=lang=="Arabic"; recipient=_v30_recipient(role,index,lang,plan["phase"]); person=_v30_display_name(recipient)
+    sender=f'{plan["sender"]} <notifications@hospital.org>'; subject=f'{plan["object"].title()} — Information Notice'
+    if ar:
+        greeting=f"عزيزي {person}"; body=f"{greeting}،\n\nنود إحاطتك بأن {plan['area']} حدّثت سجل {plan['object']}. يمكنك {plan['action']} من خلال النظام الداخلي المعتاد عند توفر الوقت.\n\nلا تتطلب هذه الرسالة إرسال كلمة مرور أو رمز تحقق، ولا تحتوي على رابط تسجيل دخول خارجي. للاستفسار، استخدم دليل الهاتف الداخلي أو افتح تذكرة عبر البوابة الرسمية.\n\nمع التحية،\n{plan['signature']}"; tip="الرسالة تستخدم النطاق الرسمي وتوجّهك إلى القناة الداخلية المعروفة دون طلب بيانات حساسة."
+    else:
+        greeting=f"Dear {person}"; body=f"{greeting},\n\n{plan['area']} has updated the record for {plan['object']}. You may {plan['action']} through the usual internal system when convenient.\n\nThis message does not request a password or verification code and contains no external sign-in link. For questions, use the internal directory or open a ticket through the official portal.\n\nKind regards,\n{plan['signature']}"; tip="The message uses the official domain and directs you to a known internal channel without requesting sensitive information."
+    return {"from":sender,"to":recipient,"subject":subject,"body":body,"attachment":"","suspicious_link":"","suspicious_text":"","indicators":[],"why_risky":"","learning_tip":tip,"is_phishing":False,"email_type":"Legitimate","attack_type":"None","risk_level":plan["difficulty"],"scenario_id":plan["fingerprint"],"scenario_meta":plan,"display_time":_V30_RNG.choice(["Today, 9:05 AM","Tuesday, 11:20 AM","Yesterday, 3:40 PM"])}
+
+
+def _v30_validate(result, plan):
+    if not isinstance(result,dict): return False
+    body=str(result.get("body", "")); subject=str(result.get("subject", "")); sender=str(result.get("from", ""))
+    if not all([body.strip(),subject.strip(),sender.strip()]): return False
+    if subject.lower() in body.lower(): return False
+    # exact difficulty indicator contract
+    if result.get("is_phishing") and len(result.get("indicators",[])) != V30_DIFFICULTY[plan["difficulty"]]["indicator_count"]: return False
+    # all evidence must visibly exist in the correct field
+    fields={"from":sender,"subject":subject,"body":body,"greeting":body,"link":body,"attachment":str(result.get("attachment", ""))}
+    for ind in result.get("indicators",[]):
+        if str(ind.get("evidence", "")).lower() not in fields.get(ind.get("target"),"").lower(): return False
+    # difficulty hard prohibitions
+    if plan["difficulty"]=="hard" and re.search(r"password|PIN|OTP|immediately|account suspension",body,re.I): return False
+    if plan["difficulty"]=="easy" and result.get("attachment"): return False
+    # sender/signature coherence
+    if plan["signature"].lower() not in body.lower(): return False
+    # role-family lock
+    if plan["family_id"] not in {f["id"] for f in V30_KNOWLEDGE[plan["role_type"]]}: return False
+    return True
+
+
+def _v30_generate(role,index,language,difficulty="medium",is_phishing=True,assessment=False):
+    phase="assess" if assessment else "learn"
+    plan=_v30_plan(role,index,language,difficulty,phase,is_phishing)
+    result=_v30_compose_phishing(plan,role,index) if is_phishing else _v30_compose_legitimate(plan,role,index)
+    if not _v30_validate(result,plan):
+        # A second independently planned deterministic generation is safer than
+        # displaying a rule-breaking model response.
+        plan=_v30_plan(role,index+1009,language,difficulty,phase,is_phishing)
+        result=_v30_compose_phishing(plan,role,index) if is_phishing else _v30_compose_legitimate(plan,role,index)
+    try: evaluate_and_log_auto_scores(result,str(difficulty or "medium").lower(),language,is_phishing=bool(is_phishing))
+    except Exception: pass
+    return result
+
+
+def generate_email(role,index,language,difficulty="medium"):
+    return _v30_generate(role,index,language,difficulty,True,False)
+
+
+def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
+    return _v30_generate(role,index,language,difficulty,bool(is_phishing),True)
+
+# =============================================================
+# END RULE-GUIDED ENGINE v30
+# =============================================================
+
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
