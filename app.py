@@ -2943,6 +2943,27 @@ def render_email_window(email, is_arabic, show_badges=False):
     suspicious_text = re.sub(r'<[^>]+>','', (email.get("suspicious_text") or ""))
     suspicious_link = re.sub(r'<[^>]+>','', (email.get("suspicious_link") or "")).strip()
 
+
+    # Badge numbers come from the same grounded indicators shown in the tutor.
+    # This removes the old hard-coded 1/2/3/4 mismatch.
+    _inds = email.get("indicators") if isinstance(email.get("indicators"), list) else []
+    def _badge_for_target(target):
+        for _it in _inds:
+            if isinstance(_it, dict) and _it.get("target") == target:
+                try:
+                    return int(_it.get("number"))
+                except Exception:
+                    return None
+        return None
+    def _badge_for_key(key):
+        for _it in _inds:
+            if isinstance(_it, dict) and _it.get("key") == key:
+                try:
+                    return int(_it.get("number"))
+                except Exception:
+                    return None
+        return None
+
     body_raw = re.sub(r'suspicious_link\s*:\s*', '', body_raw, flags=re.IGNORECASE)
     body_raw = re.sub(r'suspicious_text\s*:\s*', '', body_raw, flags=re.IGNORECASE)
     # Remove placeholder phone numbers like +966-XX-XXXXXXX or +1-XXX-XXX-XXXX
@@ -3052,6 +3073,22 @@ def render_email_window(email, is_arabic, show_badges=False):
         if suspicious_link not in body_raw and link_bare not in body_raw:
             body_raw = _place_link_in_body(body_raw, suspicious_link)
 
+
+    # Keep the suspicious URL exactly once and always before the signature.
+    # Provider output may include it inline and again as a trailing standalone line.
+    if suspicious_link:
+        _url_re = re.compile(re.escape(suspicious_link), re.I)
+        _seen = [0]
+        def _keep_first_url(m):
+            _seen[0] += 1
+            return m.group(0) if _seen[0] == 1 else ""
+        body_raw = _url_re.sub(_keep_first_url, body_raw)
+        body_raw = re.sub(r'[ \t]+\n', '\n', body_raw)
+        body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
+        if _seen[0] == 0:
+            body_raw = _place_link_in_body(body_raw, suspicious_link)
+        body_raw = _reposition_trailing_lone_link(body_raw, suspicious_link)
+
     has_attachment  = bool((email.get("attachment") or "").strip())
 
     # Remove duplicate attachment filename that sometimes appears as plain text at end
@@ -3062,46 +3099,35 @@ def render_email_window(email, is_arabic, show_badges=False):
         body_raw = re.sub(rf'^\s*{att_escaped}\s*$', '', body_raw, flags=re.MULTILINE)
         body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
-    body_html   = html_lib.escape(body_raw)
-    badge_count = [4 if has_attachment else 3]
+    body_html = html_lib.escape(body_raw)
 
     def make_badge(n, color="#DC2626"):
         return (f'<span style="display:inline-flex;align-items:center;justify-content:center;'
                 f'width:20px;height:20px;border-radius:50%;background:{color};color:white;'
                 f'font-size:.7rem;font-weight:800;margin:0 3px;vertical-align:middle;">{n}</span>')
 
-    def next_badge():
-        b = badge_count[0]; badge_count[0] += 1; return b
-
     if show_badges:
-        if suspicious_text:
-            safe_s = html_lib.escape(suspicious_text)
-            if safe_s in body_html:
-                b = next_badge()
-                body_html = body_html.replace(safe_s,
-                    f'<span style="border:2px solid rgba(239,68,68,.6);border-radius:8px;'
-                    f'padding:.2rem .5rem;background:rgba(239,68,68,.08);color:#FCA5A5;'
+        # Mark every body/greeting/link indicator with its own tutor number.
+        for _it in _inds:
+            if not isinstance(_it, dict):
+                continue
+            _target = _it.get("target")
+            _evidence = str(_it.get("evidence") or "")
+            try:
+                _num = int(_it.get("number"))
+            except Exception:
+                continue
+            if _target not in ("body", "greeting", "link") or not _evidence:
+                continue
+            _safe = html_lib.escape(_evidence)
+            if _safe in body_html:
+                _style = ('color:#60A5FA;text-decoration:underline;' if _target == "link" else 'color:#FCA5A5;')
+                body_html = body_html.replace(
+                    _safe,
+                    f'<span style="border:2px solid rgba(239,68,68,.6);border-radius:7px;'
+                    f'padding:.2rem .5rem;background:rgba(239,68,68,.08);{_style}'
                     f'box-decoration-break:clone;-webkit-box-decoration-break:clone;">'
-                    f'{make_badge(b)}{safe_s}</span>', 1)
-
-        if suspicious_link:
-            safe_l = html_lib.escape(suspicious_link)
-            if has_qr or has_link_button:
-                pass  # rendered as a real QR image / real button below instead
-            elif safe_l in body_html:
-                b = next_badge()
-                body_html = body_html.replace(safe_l,
-                    f'<span style="border:2px solid rgba(239,68,68,.6);border-radius:6px;'
-                    f'padding:.2rem .5rem;background:rgba(239,68,68,.08);color:#60A5FA;'
-                    f'text-decoration:underline;box-decoration-break:clone;'
-                    f'-webkit-box-decoration-break:clone;">{make_badge(b)}{safe_l}</span>', 1)
-            else:
-                b = next_badge()
-                body_html += (f'<br><br><span style="border:2px solid rgba(239,68,68,.6);'
-                              f'border-radius:6px;padding:.2rem .5rem;background:rgba(239,68,68,.08);'
-                              f'color:#60A5FA;text-decoration:underline;box-decoration-break:clone;'
-                              f'-webkit-box-decoration-break:clone;">'
-                              f'{make_badge(b)}{html_lib.escape(suspicious_link)}</span>')
+                    f'{make_badge(_num)}{_safe}</span>', 1)
 
     body_html = body_html.replace("\n","<br>")
 
@@ -3181,9 +3207,12 @@ def render_email_window(email, is_arabic, show_badges=False):
     tl = t("To:","إلى:")
     sl = t("Subject:","الموضوع:")
 
-    b_from = make_badge(1) if show_badges else ""
-    b_subj = make_badge(2) if show_badges else ""
-    b_att  = make_badge(3) if show_badges else ""
+    _n_from = _badge_for_target("from")
+    _n_subj = _badge_for_target("subject")
+    _n_att  = _badge_for_target("attachment")
+    b_from = make_badge(_n_from) if show_badges and _n_from else ""
+    b_subj = make_badge(_n_subj) if show_badges and _n_subj else ""
+    b_att  = make_badge(_n_att) if show_badges and _n_att else ""
 
     att_html = ""
     if att_val:
@@ -8430,94 +8459,106 @@ def _v20_find_phrase(body, patterns):
 
 
 def _v20_grounded_analysis(result, bp):
-    """Build tutor indicators only from evidence present in final output."""
+    """Build tutor indicators from evidence that is visible in the final email.
+    Each indicator also carries a render target so badge numbers and tutor text
+    always point to the same element."""
     if not result.get("is_phishing"):
         result["indicators"] = []
         result["suspicious_text"] = ""
         return result
+
     is_ar = bp["language"] == "Arabic"
     body = str(result.get("body", ""))
+    subject = str(result.get("subject", ""))
     sender = str(result.get("from", ""))
-    link = str(result.get("suspicious_link", ""))
-    evidence = []
+    link = str(result.get("suspicious_link", "")).strip()
+    candidates = []
 
-    sender_domain = ""
+    def add(key, title_en, title_ar, desc_en, desc_ar, evidence, target):
+        if evidence:
+            candidates.append({
+                "key": key,
+                "title": title_ar if is_ar else title_en,
+                "description": desc_ar if is_ar else desc_en,
+                "evidence": evidence,
+                "target": target,
+            })
+
     mdom = re.search(r"@([A-Za-z0-9.-]+)", sender)
-    if mdom:
-        sender_domain = mdom.group(1)
+    sender_domain = mdom.group(1) if mdom else ""
     if sender_domain and sender_domain.lower() != "hospital.org":
-        evidence.append((
-            "نطاق مرسل غير رسمي" if is_ar else "Non-official sender domain",
-            (f"عنوان المرسل يستخدم النطاق {sender_domain} وليس نطاق المستشفى الرسمي." if is_ar else f"The sender uses {sender_domain}, not the hospital's official domain."),
-            sender_domain,
-        ))
+        add("domain", "Non-official sender domain", "نطاق مرسل غير رسمي",
+            f"The sender uses {sender_domain}, not the hospital's official domain.",
+            f"عنوان المرسل يستخدم النطاق {sender_domain} وليس نطاق المستشفى الرسمي.",
+            sender_domain, "from")
+
+    urgency = _v20_find_phrase(subject + "\n" + body, [
+        r"(?:immediate(?:ly)?|urgent(?:ly)?|within (?:the )?(?:hour|\d+ hours?)|today|before your next shift|as soon as possible|failure to act)",
+        r"(?:فوراً|فورًا|عاجل|بشكل عاجل|خلال ساعة|خلال \d+ ساعات?|اليوم|قبل المناوبة القادمة|عدم الاستجابة)",
+    ])
+    if urgency:
+        target = "subject" if urgency.lower() in subject.lower() else "body"
+        add("urgency", "Time pressure", "ضغط زمني",
+            "The message uses urgency or a deadline to push the recipient into acting quickly.",
+            "تستخدم الرسالة مهلة أو استعجالاً لدفع المستلم للتصرف بسرعة.",
+            urgency, target)
+
+    if link and link in body:
+        add("link", "Unapproved external link", "رابط خارجي غير معتمد",
+            f"The link points to a non-official destination: {link}",
+            f"الرابط يقود إلى نطاق غير رسمي: {link}",
+            link, "link")
+
+    first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+    if re.match(r"(?:Dear (?:Staff|Team|Employee|Colleague|Healthcare Team)|Hello Staff|عزيزي الموظف|فريق العمل العزيز|الزملاء الأعزاء|عزيزي الزميل)", first, re.I):
+        add("greeting", "Generic greeting", "تحية عامة",
+            "The email does not address the recipient by name, which can indicate bulk targeting.",
+            "لا تخاطب الرسالة المستلم باسمه، ما قد يدل على إرسال جماعي.",
+            first.rstrip("،,"), "greeting")
 
     credential = _v20_find_phrase(body, [
-        r"(?:enter|confirm|verify|provide|reset|submit)\s+(?:your\s+)?(?:password|PIN|OTP|login credentials|account details)",
+        r"(?:enter|confirm|verify|provide|reset|submit)\s+(?:your\s+)?(?:password|PIN|OTP|login credentials|credentials|account details)",
         r"(?:أدخل|أكد|تحقق من|زوّدنا بـ|أرسل)\s+(?:كلمة المرور|الرقم السري|رمز التحقق|بيانات الدخول)",
     ])
     if credential:
-        evidence.append((
-            "طلب بيانات دخول" if is_ar else "Credential request",
-            "تطلب الرسالة بيانات حساسة لا ينبغي إرسالها عبر البريد." if is_ar else "The email asks for sensitive sign-in information that should not be provided by email.",
-            credential,
-        ))
+        add("credential", "Credential request", "طلب بيانات دخول",
+            "The email asks for sensitive sign-in information that should not be provided by email.",
+            "تطلب الرسالة بيانات حساسة لا ينبغي إرسالها عبر البريد.",
+            credential, "body")
 
-    urgency = _v20_find_phrase(body, [
-        r"(?:immediately|within \d+ hours?|today|before your next shift|as soon as possible|urgent(?:ly)?)",
-        r"(?:فوراً|فورًا|خلال \d+ ساعات?|اليوم|قبل المناوبة القادمة|بشكل عاجل|في أقرب وقت)",
-    ])
-    if urgency:
-        evidence.append((
-            "ضغط زمني" if is_ar else "Time pressure",
-            "تستخدم الرسالة مهلة أو استعجالاً لدفع المستلم للتصرف بسرعة." if is_ar else "The message uses a deadline or urgency to push the recipient into acting quickly.",
-            urgency,
-        ))
-
-    if link and link in body:
-        evidence.append((
-            "رابط خارجي غير معتمد" if is_ar else "Unapproved external link",
-            (f"الرابط يقود إلى نطاق غير رسمي: {link}" if is_ar else f"The link points to a non-official destination: {link}"),
-            link,
-        ))
-
-    first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
-    generic = bool(re.match(r"(?:Dear (?:Staff|Team|Employee|Colleague|Healthcare Team)|Hello Staff|عزيزي الموظف|فريق العمل العزيز|الزملاء الأعزاء|عزيزي الزميل)", first, re.I))
-    if generic:
-        evidence.append((
-            "تحية عامة" if is_ar else "Generic greeting",
-            "لا تخاطب الرسالة المستلم باسمه، ما قد يدل على إرسال جماعي." if is_ar else "The email does not address the recipient by name, which can indicate bulk targeting.",
-            first.rstrip("،,"),
-        ))
-
-    attachment = str(result.get("attachment", ""))
+    attachment = str(result.get("attachment", "")).strip()
     if attachment:
-        evidence.append((
-            "مرفق غير متوقع" if is_ar else "Unexpected attachment",
-            (f"تطلب الرسالة فتح المرفق {attachment} ضمن طلب حساس." if is_ar else f"The message asks the recipient to open {attachment} as part of a sensitive request."),
-            attachment,
-        ))
+        add("attachment", "Unexpected attachment", "مرفق غير متوقع",
+            f"The message asks the recipient to open {attachment} as part of a sensitive request.",
+            f"تطلب الرسالة فتح المرفق {attachment} ضمن طلب حساس.",
+            attachment, "attachment")
 
-    limits = {"easy": (4, 5), "medium": (3, 4), "hard": (1, 2)}
-    lo, hi = limits[bp["difficulty"]]
-    # Prefer the most meaningful evidence and respect the difficulty range.
-    chosen = evidence[:hi]
-    if len(chosen) < lo:
-        # Grounded workflow/channel mismatch is always present for phishing
-        # because the request is delivered through a controlled non-official channel.
-        fallback_title = "عدم تطابق القناة مع الإجراء" if is_ar else "Workflow-channel mismatch"
-        fallback_desc = "الإجراء المطلوب حساس ولا يُنفذ عادةً من خلال رابط بريد خارجي." if is_ar else "The requested action is sensitive and is not normally completed through an external email link."
-        if not any(x[0] == fallback_title for x in chosen):
-            chosen.append((fallback_title, fallback_desc, bp.get("action_text", "")))
-    chosen = chosen[:hi]
-    result["indicators"] = [
-        {"number": i + 1, "title": title, "description": desc}
-        for i, (title, desc, _phrase) in enumerate(chosen)
-    ]
-    phrase_candidates = [p for _t, _d, p in chosen if p and p in body]
-    result["suspicious_text"] = phrase_candidates[0] if phrase_candidates else ""
+    desired = {"easy": 4, "medium": 3, "hard": 2}[bp["difficulty"]]
+    # Prefer distinct visible UI targets. This prevents two tutor numbers from
+    # pointing to the same URL or a badge appearing with the wrong explanation.
+    priority = {
+        "easy": ["domain", "urgency", "link", "greeting", "credential", "attachment"],
+        "medium": ["domain", "link", "credential", "urgency", "attachment", "greeting"],
+        "hard": ["domain", "link", "attachment", "credential", "urgency", "greeting"],
+    }[bp["difficulty"]]
+    by_key = {c["key"]: c for c in candidates}
+    chosen = [by_key[k] for k in priority if k in by_key][:desired]
+
+    result["indicators"] = []
+    for i, item in enumerate(chosen, 1):
+        result["indicators"].append({
+            "number": i,
+            "title": item["title"],
+            "description": item["description"],
+            "evidence": item["evidence"],
+            "target": item["target"],
+            "key": item["key"],
+        })
+
+    # Legacy renderer compatibility; the updated renderer uses indicator targets.
+    body_item = next((x for x in result["indicators"] if x.get("target") == "body"), None)
+    result["suspicious_text"] = body_item.get("evidence", "") if body_item else ""
     return result
-
 
 def _v20_validate(result, bp):
     if not isinstance(result, dict):
