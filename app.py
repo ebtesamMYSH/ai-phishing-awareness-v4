@@ -467,58 +467,73 @@ _MEDICAL_KEYWORDS = [
 _PLACEHOLDER_LEFTOVER_RE = re.compile(r"\[QR(?:\s*Code)?\s*:?|suspicious_link\s*:|suspicious_text\s*:", re.I)
 
 def check_difficulty_conformance(result, difficulty, is_phishing=True):
-    """Score 0-100: how well the generated email matches the 9 textual
-    rules that were supposed to drive generation for this difficulty
-    level. Same 9 dimensions used as generation instructions, now used
-    as a post-hoc automatic check instead of a manual slider."""
+    """Score 0-100 against the documented progressive-difficulty plan.
+
+    Easy: 4-5 obvious indicators, visible URL, generic greeting, direct request.
+    Medium: 3-4 moderately subtle indicators, plausible look-alike workflow.
+    Hard: 1-2 subtle indicators, polished/personalised content and near-official cues.
+    """
     if not isinstance(result, dict):
         return None
-    body = str((result.get("body") or ""))
-    subject = str((result.get("subject") or ""))
-    frm = str((result.get("from") or ""))
+    body = str(result.get("body") or "")
+    subject = str(result.get("subject") or "")
+    frm = str(result.get("from") or "")
+    attachment = str(result.get("attachment") or "").strip()
+    link = str(result.get("suspicious_link") or "").strip()
     indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
-    text = f"{subject} {body}"
+    text = f"{subject} {body} {frm} {link}"
 
     domain_match = re.search(r"@([\w.-]+)>?", frm)
     domain = (domain_match.group(1) if domain_match else "").lower()
     domain_obvious = any(w in domain for w in ADVANCED_BANNED_DOMAIN_WORDS)
+    has_qr = bool(re.search(r"\[\s*QR\s*:", body, re.I))
+    has_raw_url = bool(re.search(r"https?://", body, re.I))
+    has_button_marker = bool(re.search(r"\[[^\]]+\]\(https?://", body, re.I))
 
-    checks = []  # each: True = conforms to expectation for this difficulty
+    checks = []
     if not is_phishing:
-        # Legitimate emails: just check they avoid red flags regardless of level.
-        checks.append(not _DIRECT_PASSWORD_RE.search(text))
-        checks.append(not _DIRECT_THREAT_RE.search(text))
-        checks.append(not domain_obvious)
-        return round(sum(checks) / len(checks) * 100) if checks else None
+        checks.extend([
+            not _DIRECT_PASSWORD_RE.search(text),
+            not _DIRECT_THREAT_RE.search(text),
+            not domain_obvious,
+        ])
+        return round(sum(checks) / len(checks) * 100)
 
     if difficulty == "easy":
-        checks.append(bool(_GENERIC_GREETING_RE.search(body.strip())))
-        checks.append(domain_obvious)
-        checks.append(bool(_DIRECT_PASSWORD_RE.search(text)))
-        checks.append(bool(_DIRECT_THREAT_RE.search(text)))
-        checks.append(bool(_IMMEDIATE_URGENCY_RE.search(text)))
-        checks.append(len(indicators) >= 3)
-    elif difficulty == "hard":
-        checks.append(bool(_PERSONAL_GREETING_RE.search(body.strip())))
-        checks.append(not domain_obvious)
-        checks.append(not _DIRECT_PASSWORD_RE.search(text))
-        checks.append(not _DIRECT_THREAT_RE.search(text))
-        checks.append(not _IMMEDIATE_URGENCY_RE.search(text))
-        checks.append(len(indicators) <= 3)
-    else:  # medium
-        checks.append(not _GENERIC_GREETING_RE.search(body.strip()))
-        checks.append(not _DIRECT_PASSWORD_RE.search(text))
-        checks.append(not _DIRECT_THREAT_RE.search(text))
-        checks.append(bool(_WINDOW_URGENCY_RE.search(text)) or not _IMMEDIATE_URGENCY_RE.search(text))
-        checks.append(len(indicators) <= 3)
+        checks.extend([
+            bool(_GENERIC_GREETING_RE.search(body.strip())) or _has_generic_greeting(body),
+            domain_obvious,
+            bool(_DIRECT_PASSWORD_RE.search(text)),
+            bool(_DIRECT_THREAT_RE.search(text) or _IMMEDIATE_URGENCY_RE.search(text)),
+            has_raw_url and not has_button_marker,
+            not attachment,
+            not has_qr,
+            4 <= len(indicators) <= 5,
+        ])
+    elif difficulty == "medium":
+        checks.extend([
+            not _has_generic_greeting(body),
+            not _DIRECT_PASSWORD_RE.search(text),
+            not _DIRECT_THREAT_RE.search(text),
+            bool(_WINDOW_URGENCY_RE.search(text)) or not _IMMEDIATE_URGENCY_RE.search(text),
+            not has_qr,
+            3 <= len(indicators) <= 4,
+            bool(link or attachment),
+        ])
+    else:
+        checks.extend([
+            bool(_PERSONAL_GREETING_RE.search(body.strip())) or not _has_generic_greeting(body),
+            not domain_obvious,
+            not _DIRECT_PASSWORD_RE.search(text),
+            not _DIRECT_THREAT_RE.search(text),
+            not _IMMEDIATE_URGENCY_RE.search(text),
+            1 <= len(indicators) <= 2,
+            bool(attachment or has_qr or has_button_marker or link),
+        ])
 
     caps_words = re.findall(r"\b[A-Z]{4,}\b", body)
     excl_count = body.count("!")
-    if difficulty == "easy":
-        checks.append((len(caps_words) + excl_count) >= 1)
-    else:
-        checks.append((len(caps_words) + excl_count) == 0)
-
+    checks.append((len(caps_words) + excl_count) >= 1 if difficulty == "easy" else (len(caps_words) + excl_count) == 0)
     return round(sum(checks) / len(checks) * 100) if checks else None
 
 def check_arabic_quality(result, is_ar):
@@ -1512,21 +1527,30 @@ def _difficulty_structure_issues(result, difficulty, is_phishing=True):
     has_qr = bool(re.search(r"\[\s*QR", body, re.I))
     has_attachment = bool(str(result.get("attachment", "")).strip())
     link = str(result.get("suspicious_link", "")).strip()
+    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
+    n_ind = len(indicators)
+
     if difficulty == "easy":
         if has_qr: issues.append("Beginner/Easy must not contain QR code")
         if has_attachment: issues.append("Beginner/Easy must not contain attachment")
         if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
         if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
+        if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
     elif difficulty == "medium":
         if has_qr: issues.append("Intermediate must not contain QR code")
         if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
             issues.append("Intermediate urgency is too aggressive")
+        if n_ind and not (3 <= n_ind <= 4): issues.append("Intermediate learning analysis must contain 3-4 indicators")
+        if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
+            issues.append("Intermediate attachment, when used, should be a simple PDF")
     elif difficulty == "hard":
-        if not has_qr: issues.append("Advanced/Hard must include a QR code marker [QR: ...]")
-        if re.search(r"https?://", body): issues.append("Advanced/Hard must not expose raw URL in body")
-        if not has_attachment: issues.append("Advanced/Hard must include an official named attachment")
         if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
             issues.append("Advanced/Hard must avoid direct credential requests")
+        if n_ind and not (1 <= n_ind <= 2): issues.append("Advanced/Hard learning analysis must contain only 1-2 subtle indicators")
+        # Hard should vary its advanced vector. At least one subtle channel is required,
+        # but forcing QR + attachment + button in every email makes the level repetitive.
+        if not (has_qr or has_attachment or link or re.search(r"\[[^\]]+\]\(https?://", body)):
+            issues.append("Advanced/Hard needs at least one subtle external channel: attachment, QR, or disguised link/button")
     return issues
 
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
@@ -1606,187 +1630,103 @@ Regenerate from scratch with a completely different idea, sender, and domain. Fo
 """
 
 def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
-    """
-    4-Axis Difficulty Framework — QR is EXCLUSIVE to hard/Advanced only.
-    Axis 1: Sender Identity | Axis 2: Content & Style
-    Axis 3: Technical Elements | Axis 4: Role & Healthcare Context
-    """
+    """Progressive Difficulty aligned with the approved Easy/Medium/Hard plan."""
+    if not is_phishing:
+        if is_ar:
+            rules = {
+                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط، تحية واضحة، لا روابط خارجية ولا مرفقات ولا QR ولا طلب بيانات حساسة.",
+                "medium": "رسالة شرعية متوسطة: نطاق رسمي، لغة مهنية، موعد طبيعي، تفاصيل قسم واقعية، ولا طلب تسجيل دخول خارجي.",
+                "hard": "رسالة شرعية متقدمة: نطاق رسمي، تحية شخصية كاملة، سياق داخلي دقيق، ولغة طبيعية احترافية بلا مؤشرات تصيد.",
+            }
+        else:
+            rules = {
+                "easy": "Legitimate Easy: official domain only; clear greeting; no external link, attachment, QR, or sensitive-data request.",
+                "medium": "Legitimate Intermediate: official domain, professional language, normal deadline, realistic department detail, no external sign-in.",
+                "hard": "Legitimate Advanced: official domain, fully personalised greeting, precise internal context, polished natural language, and no phishing cues.",
+            }
+        return rules.get(difficulty, rules["medium"])
+
     if is_ar:
-        if is_phishing:
-            rules = {
-                "easy": """
-مستوى سهل — المحاور الأربعة الإلزامية:
-
-المحور الأول — هوية المرسل:
-- التحية: عامة فقط ("عزيزي الموظف" أو "عزيزي الزميل") — ممنوع منعاً باتاً استخدام أي اسم شخصي.
-- نطاق البريد: واضح التزوير تماماً وبعيد عن الرسمي (مثل hospital-alert.com أو medupdate.net).
-- المرسل: جهة عامة أو اسم قسم مبهم وغير دقيق.
-
-المحور الثاني — المحتوى والأسلوب:
-- الأخطاء: ضع بالضبط خطأين إملائيين واضحين في جسم الرسالة — هذا إلزامي.
-- الإلحاح: تهديد مباشر وصريح ("الآن فوراً" أو "سيُغلق حسابك اليوم").
-- الطلب: طلب واضح ومباشر لكلمة المرور أو بيانات الدخول.
-- الطول: قصير لكن واضح (5-7 أسطر مقروءة إجمالاً).
-
-المحور الثالث — العناصر التقنية:
-- الرابط: رابط خام مكشوف كنص عادي في الرسالة — لا تستخدم زراً أو markdown.
-- QR: محظور تماماً في هذا المستوى — لا تضع أي رمز QR.
-- المرفق: محظور في هذا المستوى.
-- الزر: محظور — الرابط فقط كنص.
-
-المحور الرابع — الارتباط الوظيفي والسياق الصحي:
-- الارتباط بالوظيفة: عام لأي موظف بغض النظر عن دوره.
-- السياق الصحي: ذكر كلمة "مستشفى" أو "صحة" فقط دون تفاصيل.
-- المصداقية: منخفضة جداً — سهل الكشف.
+        rules = {
+            "easy": """
+المستوى السهل — مؤشرات كثيرة وواضحة (4 إلى 5):
+- تحية عامة فقط، بلا اسم شخصي.
+- نطاق مزيف واضح وبعيد عن hospital.org.
+- لغة مباشرة مع خطأين واضحين كحد أقصى.
+- طلب صريح لكلمة المرور أو PIN أو رمز تحقق.
+- إلحاح مباشر مثل اليوم/فوراً/سيُغلق الوصول.
+- رابط خام ظاهر كاملاً داخل الرسالة.
+- ممنوع المرفقات وQR وأزرار تسجيل الدخول وMicrosoft 365/Outlook.
+- صفحة الوجهة المتخيلة بسيطة وليست نسخة مطابقة للنظام.
+- التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
 """,
-                "medium": """
-مستوى متوسط — المحاور الأربعة الإلزامية:
-
-المحور الأول — هوية المرسل:
-- التحية: شبه مخصصة بالاسم الأول أو المسمى الوظيفي (مثل "عزيزي د. أحمد").
-- نطاق البريد: مشابه للرسمي مع فرق عند التدقيق (مثل hospital-it.net).
-- المرسل: قسم أو شخص يبدو معقولاً لكن غير رسمي تماماً.
-
-المحور الثاني — المحتوى والأسلوب:
-- الأخطاء: خطأ واحد فقط وخفيف في جسم الرسالة — هذا إلزامي.
-- الإلحاح: مهني ومتوسط، موعد 24-72 ساعة بدون تهديد عدواني.
-- الطلب: غير مباشر — تحديث حساب أو النقر على رابط خارجي.
-- الطول: متوسط (6-10 أسطر).
-
-المحور الثالث — العناصر التقنية:
-- الرابط: مختصر أو مموّه جزئياً.
-- QR: محظور تماماً في هذا المستوى — لا تضع أي رمز QR.
-- المرفق: مرفق PDF بسيط وعام مسموح به.
-- الزر: زر بسيط مسموح به.
-
-المحور الرابع — الارتباط الوظيفي والسياق الصحي:
-- الارتباط بالوظيفة: مرتبط بالقسم الوظيفي المحدد (سريري/إداري/تقني).
-- السياق الصحي: اسم قسم حقيقي + اسم نظام أو إجراء داخلي.
-- المصداقية: متوسطة — يحتاج انتباهاً للكشف.
+            "medium": """
+المستوى المتوسط — مؤشرات أقل وأكثر مهنية (3 إلى 4):
+- تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
+- نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
+- لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
+- موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
+- الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
+- ممنوع QR.
+- يمكن استخدام زر بسيط أو رابط مموه جزئياً، ويمكن استخدام PDF بسيط في بعض الرسائل فقط.
+- Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
+- صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
+- التحليل يجب أن يحتوي 3 أو 4 مؤشرات مرتبطة بالنص.
 """,
-                "hard": """
-مستوى صعب — المحاور الأربعة الإلزامية (الكل إلزامي):
-
-المحور الأول — هوية المرسل:
-- التحية: الاسم الكامل + اللقب الوظيفي الدقيق (مثل "عزيزتي د. نورة العتيبي، استشارية الأمراض الداخلية").
-- نطاق البريد: شبه رسمي بذكاء (مثل moh-staff.net) — ممنوع: secure, update, verify, login, reset.
-- المرسل: شخص واقعي جداً مع توقيع مهني كامل (الاسم + المنصب + القسم + رقم تحويلة حقيقي).
-
-المحور الثاني — المحتوى والأسلوب:
-- الأخطاء: صفر أخطاء — لغة احترافية كاملة.
-- الإلحاح: مهذب وخفي فقط ("إجراء روتيني") — ممنوع تماماً أي تهديد.
-- الطلب: لا تطلب كلمة المرور مباشرة — الخطر عبر إجراء يبدو طبيعياً.
-- الطول: طويل ومفصّل بصيغة احترافية.
-
-المحور الثالث — العناصر التقنية (كل ما يلي إلزامي):
-- الرابط: مخفي خلف زر رسمي فقط — ممنوع ظهور الرابط الخام في النص.
-- QR: إلزامي ومطلوب دائماً — يجب أن يظهر رمز QR. اكتب [QR: نص قصير وصفي] في موضعه.
-- المرفق: مستند رسمي مسمّى بتفاصيل واقعية (مثل بروتوكول_الامتثال_2024.pdf).
-- الزر: زر رسمي احترافي بتسمية وصفية.
-
-المحور الرابع — الارتباط الوظيفي والسياق الصحي:
-- الارتباط بالوظيفة: مرتبط بمهمة يومية محددة جداً للدور المختار.
-- السياق الصحي: نظام EMR أو بروتوكول سريري أو رقم تذكرة داخلية.
-- المصداقية: عالية جداً — يصعب كشفه.
-- يجب ذكر اسم زميل أو قسم داخلي محدد.
+            "hard": """
+المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
+- تحية بالاسم الكامل، ورسالة مرتبطة بمهمة يومية دقيقة للدور المختار.
+- نطاق شبه مطابق أو اختصار مؤسسي مقنع، بلا كلمات فاضحة مثل secure/update/verify/login/reset.
+- لغة طبيعية سليمة تماماً وتوقيع مهني واقعي.
+- لا طلب مباشر لكلمة المرور ولا تهديد ولا استعجال صارخ؛ يكون الطلب روتينياً ومنطقياً.
+- استخدم قناة متقدمة واحدة أو اثنتين فقط مع التنويع بين الأمثلة: مرفق PDF/Excel واقعي، رابط مخفي خلف زر، QR، SharePoint أو Microsoft 365/Outlook.
+- لا تجمع QR + مرفق + زر + رابط خام في كل رسالة؛ الهدف الواقعية لا كثرة العلامات.
+- إذا استُخدم رابط فيجب ألا يتكرر كنص خام وزر معاً.
+- صفحة الوجهة المتخيلة شبه مطابقة للنظام الحقيقي.
+- التحليل يجب أن يحتوي مؤشراً أو مؤشرين خفيين فقط.
 """,
-            }
-        else:
-            rules = {
-                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط (hospital.org أو moh.gov.sa)، لا أخطاء، لا تهديد، تحية واضحة، لا روابط خارجية.",
-                "medium": "رسالة شرعية متوسطة: نطاق رسمي فقط، لا أخطاء، موعد طبيعي، تحية شبه مخصصة، لا طلب بيانات حساسة.",
-                "hard": "رسالة شرعية متقدمة: نطاق رسمي فقط، لا أخطاء، قد تكون عاجلة مهنياً بدون تهديد، تحية مخصصة كاملة، تفاصيل دقيقة ومهنية.",
-            }
+        }
     else:
-        if is_phishing:
-            rules = {
-                "easy": """
-EASY level — 4-Axis mandatory framework:
-
-AXIS 1 — Sender Identity:
-- Greeting: GENERIC ONLY ("Dear Employee" or "Dear Staff") — using any personal name is FORBIDDEN.
-- Domain: obviously fake and far from official (e.g. hospital-alert.com, medupdate.net).
-- Sender: vague department or suspicious generic sender name.
-
-AXIS 2 — Content & Style:
-- Errors: include EXACTLY TWO obvious spelling/grammar mistakes in the body — this is MANDATORY.
-- Urgency: direct explicit threat ("Act NOW", "within hours", "or your account closes TODAY").
-- Request: obvious direct password/credential/account-update request.
-- Length: short but meaningful (5-7 readable lines total).
-
-AXIS 3 — Technical Elements:
-- Link: raw visible URL as plain text in body — do NOT use a button or markdown link format.
-- QR Code: STRICTLY FORBIDDEN — do not include any QR code at this level.
-- Attachment: FORBIDDEN at this level.
-- Button: FORBIDDEN — plain text URL only.
-
-AXIS 4 — Role & Healthcare Context:
-- Role alignment: generic — suitable for ANY employee regardless of role.
-- Healthcare context: mention word "hospital" only — no internal details.
-- Believability: very low — easily detected.
+        rules = {
+            "easy": """
+EASY — many obvious cues (4-5 indicators):
+- Generic greeting only; no personal name.
+- Clearly fake domain far from hospital.org.
+- Direct language with no more than two obvious mistakes.
+- Explicit request for password, staff PIN, login credentials, or verification code.
+- Strong urgency such as today/immediately/access will close.
+- Full raw URL visibly written in the email.
+- No attachment, QR, sign-in button, Microsoft 365, or Outlook workflow.
+- Imagined landing page is simple, not a close clone.
+- Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
 """,
-                "medium": """
-INTERMEDIATE level — 4-Axis mandatory framework:
-
-AXIS 1 — Sender Identity:
-- Greeting: semi-personalized using first name or job title (e.g. "Dear Dr. Ahmed").
-- Domain: plausible but imperfect — detectable difference (e.g. hospital-it.net, hr-moh.com).
-- Sender: plausible department or person but not perfectly official.
-
-AXIS 2 — Content & Style:
-- Errors: EXACTLY ONE subtle spelling/grammar mistake in the body — this is MANDATORY.
-- Urgency: moderate professional deadline 24-72 hours — no aggressive threats.
-- Request: indirect — account update or click external link.
-- Length: medium (6-10 lines).
-
-AXIS 3 — Technical Elements:
-- Link: shortened or partially hidden URL.
-- QR Code: STRICTLY FORBIDDEN — do not include any QR code at this level.
-- Attachment: simple generic PDF is allowed.
-- Button: simple button is allowed.
-
-AXIS 4 — Role & Healthcare Context:
-- Role alignment: tied to the specific job department (Clinical/Administrative/IT).
-- Healthcare context: real department name + system name or internal procedure.
-- Believability: moderate — requires attention to detect.
+            "medium": """
+INTERMEDIATE — fewer, more professional cues (3-4 indicators):
+- Greeting uses department/job title or first name only.
+- Plausible look-alike domain that differs on careful inspection.
+- Professional language with at most one subtle error and no aggressive threat.
+- Reasonable 24-72 hour deadline or normal workflow window.
+- Indirect request to open a review portal or external sign-in; never ask to email a password.
+- QR is forbidden.
+- A simple button or partially hidden URL is allowed; a generic PDF may appear occasionally, not always.
+- Microsoft 365/Outlook may appear occasionally, not in every example.
+- Imagined landing page resembles an internal system but is not a perfect clone.
+- Tutor analysis must contain 3 or 4 text-grounded indicators.
 """,
-                "hard": """
-ADVANCED level — 4-Axis mandatory framework (ALL elements are mandatory):
-
-AXIS 1 — Sender Identity:
-- Greeting: FULL NAME + precise job title (e.g. "Dear Dr. Noura Al-Otaibi, Internal Medicine Consultant").
-- Domain: near-official but not matching (e.g. moh-staff.net). FORBIDDEN words: secure, update, verify, login, reset.
-- Sender: realistic person with COMPLETE professional signature (name + title + dept + real extension number).
-
-AXIS 2 — Content & Style:
-- Errors: ZERO errors — completely flawless professional language.
-- Urgency: polite and subtle ONLY ("routine procedure") — NO threats of any kind.
-- Request: do NOT ask for password — risky action looks like normal workflow.
-- Length: long and detailed in professional format.
-
-AXIS 3 — Technical Elements (ALL mandatory):
-- Link: hidden behind button ONLY — raw URL MUST NOT appear in body text.
-- QR Code: MANDATORY AND REQUIRED — a QR code MUST appear in every Advanced email.
-  Write [QR: short descriptive label] at the appropriate position in the body.
-- Attachment: officially named document with realistic details (e.g. Compliance_Protocol_2024.pdf).
-- Button: professionally styled with a descriptive label (NOT "Open Link" or "Click Here").
-
-AXIS 4 — Role & Healthcare Context:
-- Role alignment: tied to a specific daily task of the selected role.
-- Healthcare context: EMR system / clinical protocol / internal ticket number.
-- Believability: very high — difficult to detect.
-- Must mention a specific colleague name or internal department.
+            "hard": """
+ADVANCED/HARD — only 1-2 subtle cues:
+- Fully personalised greeting and a highly specific daily task for the selected role.
+- Near-identical or convincing abbreviated domain; avoid obvious words secure/update/verify/login/reset/password/urgent.
+- Flawless, natural professional language and realistic complete signature.
+- No direct password request, explicit threat, or loud urgency; the action should look routine and logical.
+- Use only one or two advanced channels per email, varied across examples: realistic PDF/Excel attachment, hidden button link, QR, SharePoint, or Microsoft 365/Outlook.
+- Do not force QR + attachment + button + raw URL into every message; realism matters more than cue quantity.
+- Never show the same URL both raw and behind a button.
+- Imagined landing page is a near-clone of the real system.
+- Tutor analysis must contain only 1 or 2 subtle, text-grounded indicators.
 """,
-            }
-        else:
-            rules = {
-                "easy": "Legitimate Easy: official hospital.org or moh.gov.sa domain only, no errors, no urgency, clear greeting, no sensitive data request, no external links.",
-                "medium": "Legitimate Intermediate: official domain only, no errors, normal deadline, semi-personal greeting, no credentials request, realistic workflow detail.",
-                "hard": "Legitimate Advanced: official domain only, no errors, may be professionally urgent but not threatening, personalized greeting, realistic sender, detailed healthcare context.",
-            }
-    return rules.get(difficulty, rules.get("medium"))
-
-
+        }
+    return rules.get(difficulty, rules["medium"])
 
 def get_role_unbounded_context(role_type, is_ar=False):
     """Role context only; not a scenario template list. The model must invent the actual scenario."""
@@ -2172,7 +2112,13 @@ def build_prompt(role, index, language):
 
 قواعد QR الصارمة:
 - إذا كان المستوى سهلاً أو متوسطاً: ممنوع منعاً باتاً وضع أي رمز QR — لا تكتب [QR:...] إطلاقاً.
-- إذا كان المستوى صعباً: يجب وضع [QR: نص قصير وصفي] في موضع مناسب من الرسالة — هذا إلزامي.
+- إذا كان المستوى صعباً: QR مسموح كأحد القنوات المتقدمة، لكنه ليس إلزامياً في كل رسالة. استخدمه فقط عندما تختاره كقناة السيناريو.
+
+عدد مؤشرات التحليل الإلزامي حسب المستوى:
+- سهل: 4 أو 5 مؤشرات.
+- متوسط: 3 أو 4 مؤشرات.
+- صعب: مؤشر واحد أو مؤشرين فقط.
+اجعل طول مصفوفة indicators مطابقاً للمستوى المحدد.
 
 أخرج JSON بهذا الشكل فقط:
 {{
@@ -2185,9 +2131,7 @@ def build_prompt(role, index, language):
   "suspicious_text": "أخطر عبارة في الرسالة",
   "suspicious_link": "الرابط المشبوه أو فراغ",
   "indicators": [
-    {{"number": 1, "title": "علامة 1", "description": "شرح قصير"}},
-    {{"number": 2, "title": "علامة 2", "description": "شرح قصير"}},
-    {{"number": 3, "title": "علامة 3", "description": "شرح قصير"}}
+    {{"number": 1, "title": "علامة مرتبطة بالنص", "description": "شرح قصير"}}
   ],
   "why_risky": "لماذا الرسالة خطيرة",
   "learning_tip": "نصيحة تعليمية قصيرة"
@@ -2229,7 +2173,13 @@ Greeting & Sign-off rules:
 
 Strict QR rules:
 - If difficulty is EASY or INTERMEDIATE: QR codes are STRICTLY FORBIDDEN — do NOT write [QR:...] anywhere.
-- If difficulty is ADVANCED/HARD: a QR code is MANDATORY — you MUST include [QR: short descriptive label] in the body.
+- If difficulty is ADVANCED/HARD: QR is one optional advanced channel, not mandatory in every email. Include [QR: short descriptive label] only when QR is the chosen scenario channel.
+
+Mandatory tutor-indicator count by level:
+- Easy: 4 or 5 indicators.
+- Intermediate: 3 or 4 indicators.
+- Advanced/Hard: only 1 or 2 indicators.
+The indicators array length must match the selected level.
 
 Return only this JSON structure:
 {{
@@ -2242,9 +2192,7 @@ Return only this JSON structure:
   "suspicious_text": "most suspicious phrase",
   "suspicious_link": "suspicious URL or empty string",
   "indicators": [
-    {{"number": 1, "title": "Indicator 1", "description": "short explanation"}},
-    {{"number": 2, "title": "Indicator 2", "description": "short explanation"}},
-    {{"number": 3, "title": "Indicator 3", "description": "short explanation"}}
+    {{"number": 1, "title": "text-grounded indicator", "description": "short explanation"}}
   ],
   "why_risky": "why this email is risky",
   "learning_tip": "short practical learning tip"
@@ -5131,106 +5079,103 @@ def get_role_unbounded_context(role_type, is_ar=False):
     }.get(role_type, "Saudi hospital employee.")
 
 def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
-    """Final 9-criterion difficulty engine with strong separation."""
+    """Progressive Difficulty aligned with the approved Easy/Medium/Hard plan."""
+    if not is_phishing:
+        if is_ar:
+            rules = {
+                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط، تحية واضحة، لا روابط خارجية ولا مرفقات ولا QR ولا طلب بيانات حساسة.",
+                "medium": "رسالة شرعية متوسطة: نطاق رسمي، لغة مهنية، موعد طبيعي، تفاصيل قسم واقعية، ولا طلب تسجيل دخول خارجي.",
+                "hard": "رسالة شرعية متقدمة: نطاق رسمي، تحية شخصية كاملة، سياق داخلي دقيق، ولغة طبيعية احترافية بلا مؤشرات تصيد.",
+            }
+        else:
+            rules = {
+                "easy": "Legitimate Easy: official domain only; clear greeting; no external link, attachment, QR, or sensitive-data request.",
+                "medium": "Legitimate Intermediate: official domain, professional language, normal deadline, realistic department detail, no external sign-in.",
+                "hard": "Legitimate Advanced: official domain, fully personalised greeting, precise internal context, polished natural language, and no phishing cues.",
+            }
+        return rules.get(difficulty, rules["medium"])
+
     if is_ar:
-        if is_phishing:
-            rules = {
-                "easy": """
-مستوى مبتدئ — يجب أن يكون التصيد واضحًا جدًا عبر 9 معايير:
-1) النطاق: مزيف بوضوح، غريب، وغير قريب من الرسمي.
-2) الأخطاء: ضع بالضبط خطأين لغويين واضحين في جسم الرسالة.
-3) الإلحاح: تهديد مباشر خلال ساعات أو اليوم.
-4) التحية: عامة فقط مثل عزيزي الموظف/Dear Staff.
-5) المرسل: قسم عام أو اسم غير دقيق.
-6) الطلب: طلب واضح لكلمة مرور/بيانات دخول/تحديث حساب.
-7) السياق الداخلي: عام وضعيف، بلا تفاصيل شخصية.
-8) ناقل الهجوم: رابط واحد فقط أو مرفق واحد فقط.
-9) التكتيك: خوف وإلحاح مباشر.
-التحليل: اذكر Attack Type وRisk Level، واجعل أول سبب هو الطلب الحساس أو التهديد وليس الدومين دائمًا.
+        rules = {
+            "easy": """
+المستوى السهل — مؤشرات كثيرة وواضحة (4 إلى 5):
+- تحية عامة فقط، بلا اسم شخصي.
+- نطاق مزيف واضح وبعيد عن hospital.org.
+- لغة مباشرة مع خطأين واضحين كحد أقصى.
+- طلب صريح لكلمة المرور أو PIN أو رمز تحقق.
+- إلحاح مباشر مثل اليوم/فوراً/سيُغلق الوصول.
+- رابط خام ظاهر كاملاً داخل الرسالة.
+- ممنوع المرفقات وQR وأزرار تسجيل الدخول وMicrosoft 365/Outlook.
+- صفحة الوجهة المتخيلة بسيطة وليست نسخة مطابقة للنظام.
+- التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
 """,
-                "medium": """
-مستوى متوسط — يجب أن يكون خادعًا لكن قابلًا للاكتشاف عبر 9 معايير:
-1) النطاق: مقبول ظاهريًا لكنه غير رسمي عند التدقيق.
-2) الأخطاء: خطأ واحد خفيف فقط أو صياغة غريبة بسيطة.
-3) الإلحاح: موعد مهني 24–72 ساعة بدون تهديد عدواني.
-4) التحية: شبه مخصصة بالاسم الأول أو الدور.
-5) المرسل: قسم/موظف يبدو معقولًا لكن توجد فجوة.
-6) الطلب: طلب غير معتاد لكنه ممكن في العمل.
-7) السياق الداخلي: تفصيل واحد منطقي مثل قسم/نظام/موعد.
-8) ناقل الهجوم: رابط أو مرفق أو طلب رد، مع هندسة اجتماعية خفيفة.
-9) التكتيك: مصداقية مهنية + ضغط زمني خفيف.
-التحليل: نوّع المؤشرات؛ لا تبدأ دائمًا بـ"نطاق غير مألوف".
+            "medium": """
+المستوى المتوسط — مؤشرات أقل وأكثر مهنية (3 إلى 4):
+- تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
+- نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
+- لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
+- موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
+- الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
+- ممنوع QR.
+- يمكن استخدام زر بسيط أو رابط مموه جزئياً، ويمكن استخدام PDF بسيط في بعض الرسائل فقط.
+- Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
+- صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
+- التحليل يجب أن يحتوي 3 أو 4 مؤشرات مرتبطة بالنص.
 """,
-                "hard": """
-مستوى متقدم — يجب أن يبدو شبه شرعي وصعب الاكتشاف عبر 9 معايير:
-1) النطاق: قريب بذكاء أو يبدو كخدمة عمل خارجية، لكن ليس رسميًا. لا تستخدم كلمات مكشوفة مثل secure/update/verify/login/reset/password/urgent/alert/account/emr.
-2) الأخطاء: صفر أخطاء.
-3) الإلحاح: مهذب وخفي، بدون تهديد مباشر أو حروف كبيرة.
-4) التحية: مخصصة بالاسم والدور.
-5) المرسل: شخص/قسم واقعي جدًا مع توقيع مهني.
-6) الطلب: لا تطلب كلمة المرور مباشرة؛ اجعل الخطر في إجراء يبدو طبيعيًا: رد ببيانات، فتح مرفق، اعتماد MFA، مراجعة مستند، QR، أو بوابة.
-7) السياق الداخلي: Spear phishing بسياق خفيف مثل اجتماع سابق/مناوبة/تذكرة/مراجعة.
-8) ناقل الهجوم: ليس الرابط دائمًا؛ استخدم أحيانًا مرفق/QR/رد/مكالمة/اعتماد.
-9) التكتيك: سلطة أو ثقة أو روتين مهني، وليس خوفًا.
-التحليل: ركّز على السلوك والسياق والطلب، وليس الدومين فقط.
+            "hard": """
+المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
+- تحية بالاسم الكامل، ورسالة مرتبطة بمهمة يومية دقيقة للدور المختار.
+- نطاق شبه مطابق أو اختصار مؤسسي مقنع، بلا كلمات فاضحة مثل secure/update/verify/login/reset.
+- لغة طبيعية سليمة تماماً وتوقيع مهني واقعي.
+- لا طلب مباشر لكلمة المرور ولا تهديد ولا استعجال صارخ؛ يكون الطلب روتينياً ومنطقياً.
+- استخدم قناة متقدمة واحدة أو اثنتين فقط مع التنويع بين الأمثلة: مرفق PDF/Excel واقعي، رابط مخفي خلف زر، QR، SharePoint أو Microsoft 365/Outlook.
+- لا تجمع QR + مرفق + زر + رابط خام في كل رسالة؛ الهدف الواقعية لا كثرة العلامات.
+- إذا استُخدم رابط فيجب ألا يتكرر كنص خام وزر معاً.
+- صفحة الوجهة المتخيلة شبه مطابقة للنظام الحقيقي.
+- التحليل يجب أن يحتوي مؤشراً أو مؤشرين خفيين فقط.
 """,
-            }
-        else:
-            rules = {
-                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط hospital.org أو moh.gov.sa، لا روابط خارجية، لا طلب بيانات حساسة، لا تهديد، سياق عمل بسيط وآمن.",
-                "medium": "رسالة شرعية متوسطة: نطاق رسمي فقط، موعد أو إجراء طبيعي، تفاصيل عمل واقعية، يمكن ذكر الإنترانت أو رقم تحويلة، ولا يوجد طلب كلمة مرور أو بيانات حساسة.",
-                "hard": "رسالة شرعية متقدمة: رسمية ومفصلة وقد تبدو مهمة أو عاجلة مهنيًا، لكنها آمنة تمامًا: نطاق رسمي، لا رابط خارجي مشبوه، لا بيانات حساسة، لا تهديد.",
-            }
+        }
     else:
-        if is_phishing:
-            rules = {
-                "easy": """
-BEGINNER — make phishing obvious through 9 criteria:
-1) Domain: clearly fake and not close to official.
-2) Spelling: exactly two obvious mistakes in the body.
-3) Urgency: direct threat within hours/today.
-4) Greeting: generic only: Dear Staff/Dear Team.
-5) Sender: vague department or generic name.
-6) Request: obvious password/credential/account-update request.
-7) Insider context: weak and generic.
-8) Vector: one vector only: link OR attachment.
-9) Psychology: blunt fear and urgency.
-Analysis: include Attack Type and Risk Level. The first indicator should often be the sensitive request/threat, not always the domain.
+        rules = {
+            "easy": """
+EASY — many obvious cues (4-5 indicators):
+- Generic greeting only; no personal name.
+- Clearly fake domain far from hospital.org.
+- Direct language with no more than two obvious mistakes.
+- Explicit request for password, staff PIN, login credentials, or verification code.
+- Strong urgency such as today/immediately/access will close.
+- Full raw URL visibly written in the email.
+- No attachment, QR, sign-in button, Microsoft 365, or Outlook workflow.
+- Imagined landing page is simple, not a close clone.
+- Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
 """,
-                "medium": """
-INTERMEDIATE — mixed red flags through 9 criteria:
-1) Domain: plausible but not official on inspection.
-2) Spelling: exactly one subtle mistake OR one slightly odd phrase.
-3) Urgency: professional 24–72 hour deadline, no aggressive threat.
-4) Greeting: semi-personal: first name or role.
-5) Sender: plausible but imperfect.
-6) Request: unusual but possible in workplace context.
-7) Insider context: one realistic department/system/deadline detail.
-8) Vector: link, attachment, or reply request with light social engineering.
-9) Psychology: professional credibility plus mild time pressure.
-Analysis: vary indicator order; do not always start with Unfamiliar Domain.
+            "medium": """
+INTERMEDIATE — fewer, more professional cues (3-4 indicators):
+- Greeting uses department/job title or first name only.
+- Plausible look-alike domain that differs on careful inspection.
+- Professional language with at most one subtle error and no aggressive threat.
+- Reasonable 24-72 hour deadline or normal workflow window.
+- Indirect request to open a review portal or external sign-in; never ask to email a password.
+- QR is forbidden.
+- A simple button or partially hidden URL is allowed; a generic PDF may appear occasionally, not always.
+- Microsoft 365/Outlook may appear occasionally, not in every example.
+- Imagined landing page resembles an internal system but is not a perfect clone.
+- Tutor analysis must contain 3 or 4 text-grounded indicators.
 """,
-                "hard": """
-ADVANCED — almost legitimate and hard to detect through 9 criteria:
-1) Domain: intelligently close to a workplace/health service, but not official. Do NOT use obvious words: secure/update/verify/login/reset/password/urgent/alert/account/emr.
-2) Spelling: zero mistakes.
-3) Urgency: polite and subtle only; no threat, no all-caps.
-4) Greeting: personalized with name and role/title.
-5) Sender: realistic person/department with professional signature.
-6) Request: never ask directly for a password; hide risk inside a normal-looking workflow: reply with data, open attachment, approve MFA, review document, scan QR, call number, or use portal.
-7) Insider context: light spear-phishing context such as prior meeting, shift, ticket, case review, or department workflow.
-8) Vector: not always link; sometimes attachment, QR, reply, phone call, MFA, or shared document.
-9) Psychology: authority, trust, routine compliance, or professional responsibility.
-Analysis: focus on behavior, context mismatch, role mismatch, data sensitivity, MFA/attachment risk—not domain only.
+            "hard": """
+ADVANCED/HARD — only 1-2 subtle cues:
+- Fully personalised greeting and a highly specific daily task for the selected role.
+- Near-identical or convincing abbreviated domain; avoid obvious words secure/update/verify/login/reset/password/urgent.
+- Flawless, natural professional language and realistic complete signature.
+- No direct password request, explicit threat, or loud urgency; the action should look routine and logical.
+- Use only one or two advanced channels per email, varied across examples: realistic PDF/Excel attachment, hidden button link, QR, SharePoint, or Microsoft 365/Outlook.
+- Do not force QR + attachment + button + raw URL into every message; realism matters more than cue quantity.
+- Never show the same URL both raw and behind a button.
+- Imagined landing page is a near-clone of the real system.
+- Tutor analysis must contain only 1 or 2 subtle, text-grounded indicators.
 """,
-            }
-        else:
-            rules = {
-                "easy": "Legitimate Beginner: official hospital.org or moh.gov.sa only, no external links, no sensitive request, no threat, simple safe workplace purpose.",
-                "medium": "Legitimate Intermediate: official domain only, normal deadline/process, realistic workflow detail, may mention intranet/extension, no credentials/payment request.",
-                "hard": "Legitimate Advanced: official and detailed, may look important or professionally urgent, but safe: official domain, no suspicious external link, no sensitive request, no threat.",
-            }
-    return rules.get(difficulty, rules.get("medium"))
+        }
+    return rules.get(difficulty, rules["medium"])
 
 def get_analysis_contract(is_ar=False):
     if is_ar:
@@ -5295,6 +5240,12 @@ def build_prompt(role, index, language):
 {diff_rule}
 {analysis_contract}
 
+عدد مؤشرات التحليل الإلزامي حسب المستوى:
+- سهل: 4 أو 5 مؤشرات.
+- متوسط: 3 أو 4 مؤشرات.
+- صعب: مؤشر واحد أو مؤشرين فقط.
+اجعل طول مصفوفة indicators مطابقاً للمستوى المحدد.
+
 أخرج JSON بهذا الشكل فقط:
 {{
   "email_type": "نوع الهجوم المحدد",
@@ -5347,6 +5298,12 @@ Anti-repeat seed: {seed}
 Difficulty rules:
 {diff_rule}
 {analysis_contract}
+
+Mandatory tutor-indicator count by level:
+- Easy: 4 or 5 indicators.
+- Intermediate: 3 or 4 indicators.
+- Advanced/Hard: only 1 or 2 indicators.
+The indicators array length must match the selected level.
 
 Return only this JSON structure:
 {{
@@ -5523,21 +5480,30 @@ def _difficulty_structure_issues(result, difficulty, is_phishing=True):
     has_qr = bool(re.search(r"\[\s*QR", body, re.I))
     has_attachment = bool(str(result.get("attachment", "")).strip())
     link = str(result.get("suspicious_link", "")).strip()
+    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
+    n_ind = len(indicators)
+
     if difficulty == "easy":
         if has_qr: issues.append("Beginner/Easy must not contain QR code")
         if has_attachment: issues.append("Beginner/Easy must not contain attachment")
         if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
         if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
+        if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
     elif difficulty == "medium":
         if has_qr: issues.append("Intermediate must not contain QR code")
         if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
             issues.append("Intermediate urgency is too aggressive")
+        if n_ind and not (3 <= n_ind <= 4): issues.append("Intermediate learning analysis must contain 3-4 indicators")
+        if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
+            issues.append("Intermediate attachment, when used, should be a simple PDF")
     elif difficulty == "hard":
-        if not has_qr: issues.append("Advanced/Hard must include a QR code marker [QR: ...]")
-        if re.search(r"https?://", body): issues.append("Advanced/Hard must not expose raw URL in body")
-        if not has_attachment: issues.append("Advanced/Hard must include an official named attachment")
         if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
             issues.append("Advanced/Hard must avoid direct credential requests")
+        if n_ind and not (1 <= n_ind <= 2): issues.append("Advanced/Hard learning analysis must contain only 1-2 subtle indicators")
+        # Hard should vary its advanced vector. At least one subtle channel is required,
+        # but forcing QR + attachment + button in every email makes the level repetitive.
+        if not (has_qr or has_attachment or link or re.search(r"\[[^\]]+\]\(https?://", body)):
+            issues.append("Advanced/Hard needs at least one subtle external channel: attachment, QR, or disguised link/button")
     return issues
 
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
@@ -6079,33 +6045,103 @@ def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar
 
 # Stronger difficulty contract: short, provider-friendly, and visibly different.
 def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
-    if is_ar:
-        if is_phishing:
-            return {
-                "easy": "مبتدئ: تصيد واضح جدًا جدًا. تحية عامة فقط بدون أي اسم شخصي، مرسل عام (فريق/قسم) بدون اسم أو لقب وظيفي لشخص محدد، نطاق مزيف واضح تمامًا لا يشبه أي جهة رسمية حقيقية (ممنوع أي تشابه مع moh.gov.sa أو hospital.org)، طلب مباشر وصريح لكلمة المرور أو بيانات الدخول، رابط نصي مكشوف فقط، ممنوع أي مرفق نهائيًا، تهديد مباشر وصريح، وخطأان إملائيان واضحان إلزاميًا.",
-                "medium": "متوسط: تصيد مقنع جزئيًا. تفاصيل عمل واقعية، تحية شبه شخصية بالاسم الأول أو المسمى الوظيفي فقط (ليست عامة وليست كاملة)، نطاق شبه رسمي يشبه الرسمي بفارق بسيط، إلحاح مهني خفيف 24-72 ساعة، مؤشران واضحان فقط، ولا تستخدم تهديدًا مبالغًا أو كلمات إنجليزية كثيرة.",
-                "hard": "متقدم: تصيد قريب من الشرعي. تحية بالاسم الكامل + اللقب الوظيفي الدقيق، مرسل بتوقيع مهني كامل، نطاق شبه رسمي بذكاء، لا أخطاء إملائية، لا تهديد مباشر، لا طلب كلمة مرور صريح، يجب أن يتضمن مرفقًا رسميًا مسمّى دائماً. رمز QR اختياري ومتنوّع بين الأمثلة (ضعه فقط إذا يخدم السيناريو، وليس بكل مرة)، واستخدم سياقًا داخليًا واقعيًا (EMR/بروتوكول/رقم تذكرة) واسم زميل أو قسم محدد."
-            }.get(difficulty, "متوسط")
-        return {
-            "easy": "شرعي مبتدئ: رسمي وواضح من hospital.org أو moh.gov.sa، لا رابط خارجي، لا بيانات حساسة، لا تهديد.",
-            "medium": "شرعي متوسط: رسمي مع تفاصيل عمل واقعية وموعد طبيعي، قد يذكر الإنترانت أو التحويلة، دون طلب بيانات حساسة.",
-            "hard": "شرعي متقدم: يبدو مهمًا ومهنيًا لكنه آمن؛ نطاق رسمي، تفاصيل دقيقة، لا رابط مشبوه، لا تهديد، لا بيانات دخول."
-        }.get(difficulty, "شرعي متوسط")
-    if is_phishing:
-        return {
-            "easy": "Beginner: extremely obvious phishing. Generic greeting only, no personal name anywhere; generic sender (a team/department, NOT a named person with a title); domain must be completely and obviously fake, unrelated to any real organization (must NOT resemble moh.gov.sa or hospital.org); direct explicit password/credential request; a plain visible link only; NO attachment of any kind; direct explicit threat; and EXACTLY two obvious spelling/grammar mistakes.",
-            "medium": "Intermediate: partly convincing phishing. Realistic workplace detail, semi-personal greeting using first name or job title only (not generic, not full name+title), look-alike domain resembling the real one with a small detectable difference, mild professional urgency of 24-72 hours, only two clear red flags, no extreme threat or heavy all-caps.",
-            "hard": "Advanced: near-legitimate phishing. Personalized greeting with full name and precise job title, sender with a complete professional signature, near-official domain, no spelling mistakes, no direct password request, no blunt threat. MUST include an officially named attachment. A QR code is OPTIONAL and should vary across examples (include it only when it fits the scenario, not in every single one), plus a realistic internal context (EMR/clinical protocol/ticket number) and a specific colleague or department name."
-        }.get(difficulty, "Intermediate")
-    return {
-        "easy": "Legitimate Beginner: official hospital.org or moh.gov.sa only, simple safe purpose, no external link, no sensitive request, no threat.",
-        "medium": "Legitimate Intermediate: official domain, realistic workplace detail, normal deadline or intranet/extension reference, no credentials/payment request.",
-        "hard": "Legitimate Advanced: important and detailed but safe; official domain, no suspicious external link, no sensitive-data request, no threat."
-    }.get(difficulty, "Legitimate Intermediate")
+    """Progressive Difficulty aligned with the approved Easy/Medium/Hard plan."""
+    if not is_phishing:
+        if is_ar:
+            rules = {
+                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط، تحية واضحة، لا روابط خارجية ولا مرفقات ولا QR ولا طلب بيانات حساسة.",
+                "medium": "رسالة شرعية متوسطة: نطاق رسمي، لغة مهنية، موعد طبيعي، تفاصيل قسم واقعية، ولا طلب تسجيل دخول خارجي.",
+                "hard": "رسالة شرعية متقدمة: نطاق رسمي، تحية شخصية كاملة، سياق داخلي دقيق، ولغة طبيعية احترافية بلا مؤشرات تصيد.",
+            }
+        else:
+            rules = {
+                "easy": "Legitimate Easy: official domain only; clear greeting; no external link, attachment, QR, or sensitive-data request.",
+                "medium": "Legitimate Intermediate: official domain, professional language, normal deadline, realistic department detail, no external sign-in.",
+                "hard": "Legitimate Advanced: official domain, fully personalised greeting, precise internal context, polished natural language, and no phishing cues.",
+            }
+        return rules.get(difficulty, rules["medium"])
 
-# Tighten prompts once more so providers know the analysis must mention the attack type.
-_OLD_BUILD_PROMPT_STUDY3 = build_prompt
-_OLD_BUILD_ASSESS_PROMPT_STUDY3 = build_assess_prompt
+    if is_ar:
+        rules = {
+            "easy": """
+المستوى السهل — مؤشرات كثيرة وواضحة (4 إلى 5):
+- تحية عامة فقط، بلا اسم شخصي.
+- نطاق مزيف واضح وبعيد عن hospital.org.
+- لغة مباشرة مع خطأين واضحين كحد أقصى.
+- طلب صريح لكلمة المرور أو PIN أو رمز تحقق.
+- إلحاح مباشر مثل اليوم/فوراً/سيُغلق الوصول.
+- رابط خام ظاهر كاملاً داخل الرسالة.
+- ممنوع المرفقات وQR وأزرار تسجيل الدخول وMicrosoft 365/Outlook.
+- صفحة الوجهة المتخيلة بسيطة وليست نسخة مطابقة للنظام.
+- التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
+""",
+            "medium": """
+المستوى المتوسط — مؤشرات أقل وأكثر مهنية (3 إلى 4):
+- تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
+- نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
+- لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
+- موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
+- الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
+- ممنوع QR.
+- يمكن استخدام زر بسيط أو رابط مموه جزئياً، ويمكن استخدام PDF بسيط في بعض الرسائل فقط.
+- Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
+- صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
+- التحليل يجب أن يحتوي 3 أو 4 مؤشرات مرتبطة بالنص.
+""",
+            "hard": """
+المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
+- تحية بالاسم الكامل، ورسالة مرتبطة بمهمة يومية دقيقة للدور المختار.
+- نطاق شبه مطابق أو اختصار مؤسسي مقنع، بلا كلمات فاضحة مثل secure/update/verify/login/reset.
+- لغة طبيعية سليمة تماماً وتوقيع مهني واقعي.
+- لا طلب مباشر لكلمة المرور ولا تهديد ولا استعجال صارخ؛ يكون الطلب روتينياً ومنطقياً.
+- استخدم قناة متقدمة واحدة أو اثنتين فقط مع التنويع بين الأمثلة: مرفق PDF/Excel واقعي، رابط مخفي خلف زر، QR، SharePoint أو Microsoft 365/Outlook.
+- لا تجمع QR + مرفق + زر + رابط خام في كل رسالة؛ الهدف الواقعية لا كثرة العلامات.
+- إذا استُخدم رابط فيجب ألا يتكرر كنص خام وزر معاً.
+- صفحة الوجهة المتخيلة شبه مطابقة للنظام الحقيقي.
+- التحليل يجب أن يحتوي مؤشراً أو مؤشرين خفيين فقط.
+""",
+        }
+    else:
+        rules = {
+            "easy": """
+EASY — many obvious cues (4-5 indicators):
+- Generic greeting only; no personal name.
+- Clearly fake domain far from hospital.org.
+- Direct language with no more than two obvious mistakes.
+- Explicit request for password, staff PIN, login credentials, or verification code.
+- Strong urgency such as today/immediately/access will close.
+- Full raw URL visibly written in the email.
+- No attachment, QR, sign-in button, Microsoft 365, or Outlook workflow.
+- Imagined landing page is simple, not a close clone.
+- Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
+""",
+            "medium": """
+INTERMEDIATE — fewer, more professional cues (3-4 indicators):
+- Greeting uses department/job title or first name only.
+- Plausible look-alike domain that differs on careful inspection.
+- Professional language with at most one subtle error and no aggressive threat.
+- Reasonable 24-72 hour deadline or normal workflow window.
+- Indirect request to open a review portal or external sign-in; never ask to email a password.
+- QR is forbidden.
+- A simple button or partially hidden URL is allowed; a generic PDF may appear occasionally, not always.
+- Microsoft 365/Outlook may appear occasionally, not in every example.
+- Imagined landing page resembles an internal system but is not a perfect clone.
+- Tutor analysis must contain 3 or 4 text-grounded indicators.
+""",
+            "hard": """
+ADVANCED/HARD — only 1-2 subtle cues:
+- Fully personalised greeting and a highly specific daily task for the selected role.
+- Near-identical or convincing abbreviated domain; avoid obvious words secure/update/verify/login/reset/password/urgent.
+- Flawless, natural professional language and realistic complete signature.
+- No direct password request, explicit threat, or loud urgency; the action should look routine and logical.
+- Use only one or two advanced channels per email, varied across examples: realistic PDF/Excel attachment, hidden button link, QR, SharePoint, or Microsoft 365/Outlook.
+- Do not force QR + attachment + button + raw URL into every message; realism matters more than cue quantity.
+- Never show the same URL both raw and behind a button.
+- Imagined landing page is a near-clone of the real system.
+- Tutor analysis must contain only 1 or 2 subtle, text-grounded indicators.
+""",
+        }
+    return rules.get(difficulty, rules["medium"])
 
 def build_prompt(role, index, language):
     base = _OLD_BUILD_PROMPT_STUDY3(role, index, language)
@@ -6884,21 +6920,30 @@ def _difficulty_structure_issues(result, difficulty, is_phishing=True):
     has_qr = bool(re.search(r"\[\s*QR", body, re.I))
     has_attachment = bool(str(result.get("attachment", "")).strip())
     link = str(result.get("suspicious_link", "")).strip()
+    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
+    n_ind = len(indicators)
+
     if difficulty == "easy":
         if has_qr: issues.append("Beginner/Easy must not contain QR code")
         if has_attachment: issues.append("Beginner/Easy must not contain attachment")
         if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
         if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
+        if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
     elif difficulty == "medium":
         if has_qr: issues.append("Intermediate must not contain QR code")
         if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
             issues.append("Intermediate urgency is too aggressive")
+        if n_ind and not (3 <= n_ind <= 4): issues.append("Intermediate learning analysis must contain 3-4 indicators")
+        if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
+            issues.append("Intermediate attachment, when used, should be a simple PDF")
     elif difficulty == "hard":
-        if not has_qr: issues.append("Advanced/Hard must include a QR code marker [QR: ...]")
-        if re.search(r"https?://", body): issues.append("Advanced/Hard must not expose raw URL in body")
-        if not has_attachment: issues.append("Advanced/Hard must include an official named attachment")
         if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
             issues.append("Advanced/Hard must avoid direct credential requests")
+        if n_ind and not (1 <= n_ind <= 2): issues.append("Advanced/Hard learning analysis must contain only 1-2 subtle indicators")
+        # Hard should vary its advanced vector. At least one subtle channel is required,
+        # but forcing QR + attachment + button in every email makes the level repetitive.
+        if not (has_qr or has_attachment or link or re.search(r"\[[^\]]+\]\(https?://", body)):
+            issues.append("Advanced/Hard needs at least one subtle external channel: attachment, QR, or disguised link/button")
     return issues
 
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
@@ -7066,21 +7111,30 @@ def _difficulty_structure_issues(result, difficulty, is_phishing=True):
     has_qr = bool(re.search(r"\[\s*QR", body, re.I))
     has_attachment = bool(str(result.get("attachment", "")).strip())
     link = str(result.get("suspicious_link", "")).strip()
+    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
+    n_ind = len(indicators)
+
     if difficulty == "easy":
         if has_qr: issues.append("Beginner/Easy must not contain QR code")
         if has_attachment: issues.append("Beginner/Easy must not contain attachment")
         if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
         if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
+        if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
     elif difficulty == "medium":
         if has_qr: issues.append("Intermediate must not contain QR code")
         if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
             issues.append("Intermediate urgency is too aggressive")
+        if n_ind and not (3 <= n_ind <= 4): issues.append("Intermediate learning analysis must contain 3-4 indicators")
+        if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
+            issues.append("Intermediate attachment, when used, should be a simple PDF")
     elif difficulty == "hard":
-        if not has_qr: issues.append("Advanced/Hard must include a QR code marker [QR: ...]")
-        if re.search(r"https?://", body): issues.append("Advanced/Hard must not expose raw URL in body")
-        if not has_attachment: issues.append("Advanced/Hard must include an official named attachment")
         if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
             issues.append("Advanced/Hard must avoid direct credential requests")
+        if n_ind and not (1 <= n_ind <= 2): issues.append("Advanced/Hard learning analysis must contain only 1-2 subtle indicators")
+        # Hard should vary its advanced vector. At least one subtle channel is required,
+        # but forcing QR + attachment + button in every email makes the level repetitive.
+        if not (has_qr or has_attachment or link or re.search(r"\[[^\]]+\]\(https?://", body)):
+            issues.append("Advanced/Hard needs at least one subtle external channel: attachment, QR, or disguised link/button")
     return issues
 
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
