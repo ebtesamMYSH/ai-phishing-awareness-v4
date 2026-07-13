@@ -1540,7 +1540,7 @@ def _difficulty_structure_issues(result, difficulty, is_phishing=True):
         if has_qr: issues.append("Intermediate must not contain QR code")
         if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
             issues.append("Intermediate urgency is too aggressive")
-        if n_ind and not (3 <= n_ind <= 4): issues.append("Intermediate learning analysis must contain 3-4 indicators")
+        if n_ind and not (2 <= n_ind <= 3): issues.append("Intermediate learning analysis must contain 2-3 indicators")
         if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
             issues.append("Intermediate attachment, when used, should be a simple PDF")
     elif difficulty == "hard":
@@ -1661,17 +1661,17 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
 - التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
 """,
             "medium": """
-المستوى المتوسط — مؤشرات أقل وأكثر مهنية (3 إلى 4):
+المستوى المتوسط — مؤشرات أقل وأكثر مهنية (2 إلى 3):
 - تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
 - نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
 - لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
 - موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
 - الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
 - ممنوع QR.
-- يمكن استخدام زر بسيط أو رابط مموه جزئياً، ويمكن استخدام PDF بسيط في بعض الرسائل فقط.
+- استخدم وسيلة واحدة فقط حسب صيغة العرض المحددة: زر واحد أو رابط واحد أو PDF بلا رابط. ممنوع جمع الزر والرابط في الرسالة نفسها.
 - Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
 - صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
-- التحليل يجب أن يحتوي 3 أو 4 مؤشرات مرتبطة بالنص.
+- التحليل يجب أن يحتوي مؤشرين أو 3 مؤشرات مرتبطة بالنص.
 """,
             "hard": """
 المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
@@ -1701,17 +1701,17 @@ EASY — many obvious cues (4-5 indicators):
 - Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
 """,
             "medium": """
-INTERMEDIATE — fewer, more professional cues (3-4 indicators):
+INTERMEDIATE — fewer, more professional cues (2-3 indicators):
 - Greeting uses department/job title or first name only.
 - Plausible look-alike domain that differs on careful inspection.
 - Professional language with at most one subtle error and no aggressive threat.
 - Reasonable 24-72 hour deadline or normal workflow window.
 - Indirect request to open a review portal or external sign-in; never ask to email a password.
 - QR is forbidden.
-- A simple button or partially hidden URL is allowed; a generic PDF may appear occasionally, not always.
+- Use exactly one delivery style as instructed: one button, one visible URL, or a simple PDF with no link. Never combine a button and a visible URL in the same email.
 - Microsoft 365/Outlook may appear occasionally, not in every example.
 - Imagined landing page resembles an internal system but is not a perfect clone.
-- Tutor analysis must contain 3 or 4 text-grounded indicators.
+- Tutor analysis must contain 2 or 3 text-grounded indicators.
 """,
             "hard": """
 ADVANCED/HARD — only 1-2 subtle cues:
@@ -2060,6 +2060,41 @@ Anti-repetition rules:
 # UNBOUNDED LEARNING PROMPT
 # No fixed templates. No fixed scenario pool. No example domains.
 # =============================================================
+def get_medium_presentation_mode(phase, index):
+    """Return a session-stable Medium delivery style.
+
+    Learning (6): 2 buttons, 3 visible links, 1 attachment/no-link.
+    Assessment (10): 4 buttons, 4 visible links, 2 attachment/no-link.
+    The order is shuffled once per session to avoid a predictable pattern.
+    """
+    phase_key = "learn" if phase == "learn" else "assess"
+    size = 6 if phase_key == "learn" else 10
+    key = f"medium_presentation_order_{phase_key}"
+    modes = st.session_state.get(key)
+    if not isinstance(modes, list) or len(modes) != size:
+        modes = (["button"] * 2 + ["link"] * 3 + ["none"]) if size == 6 else (["button"] * 4 + ["link"] * 4 + ["none"] * 2)
+        random.shuffle(modes)
+        st.session_state[key] = modes
+    try:
+        return modes[int(index) % size]
+    except Exception:
+        return modes[0]
+
+
+def get_medium_channel_instruction(mode, is_ar=False):
+    if is_ar:
+        return {
+            "button": "صيغة العرض لهذه الرسالة: زر واحد فقط داخل موضع طبيعي في النص. ممنوع كتابة الرابط الخام في body، وممنوع إظهار زر ورابط معاً.",
+            "link": "صيغة العرض لهذه الرسالة: رابط نصي واحد ظاهر فقط داخل موضع طبيعي في النص. ممنوع إنشاء زر أو تكرار الرابط.",
+            "none": "صيغة العرض لهذه الرسالة: بدون زر وبدون رابط وبدون QR. استخدم مرفق PDF بسيط فقط أو اطلب التحقق من النظام المعتاد بشكل مستقل.",
+        }.get(mode, "")
+    return {
+        "button": "Presentation for this email: use exactly ONE inline button. Do not show the raw URL in body and never combine a button with a visible link.",
+        "link": "Presentation for this email: use exactly ONE visible text URL in a natural position. Do not create a button and do not repeat the URL.",
+        "none": "Presentation for this email: use NO button, NO URL, and NO QR. Use only a simple PDF attachment or ask the recipient to verify through the usual internal system independently.",
+    }.get(mode, "")
+
+
 def build_prompt(role, index, language):
     is_ar = (language == "Arabic")
     difficulty = st.session_state.get("difficulty", "medium")
@@ -2116,7 +2151,7 @@ def build_prompt(role, index, language):
 
 عدد مؤشرات التحليل الإلزامي حسب المستوى:
 - سهل: 4 أو 5 مؤشرات.
-- متوسط: 3 أو 4 مؤشرات.
+- متوسط: مؤشرين أو 3 مؤشرات.
 - صعب: مؤشر واحد أو مؤشرين فقط.
 اجعل طول مصفوفة indicators مطابقاً للمستوى المحدد.
 
@@ -2177,7 +2212,7 @@ Strict QR rules:
 
 Mandatory tutor-indicator count by level:
 - Easy: 4 or 5 indicators.
-- Intermediate: 3 or 4 indicators.
+- Intermediate: 2 or 3 indicators.
 - Advanced/Hard: only 1 or 2 indicators.
 The indicators array length must match the selected level.
 
@@ -2928,6 +2963,10 @@ def render_email_window(email, is_arabic, show_badges=False):
     # --------------------------------------------------------
     qr_label, has_qr = "", False
     _difficulty = st.session_state.get("difficulty", "medium")
+    _medium_channel = str(email.get("medium_channel", "")).strip().lower()
+    if _difficulty == "medium" and _medium_channel not in {"button", "link", "none"}:
+        # Backward-compatible fallback for old cached/generated items.
+        _medium_channel = "button" if re.search(r'\[[^\]]+\]\s*\(\s*https?://', body_raw) else ("link" if suspicious_link else "none")
 
     qr_match = re.search(r'\[\s*QR(?:\s*Code)?\s*:?\s*([^\]]*)\]', body_raw, re.I)
     if qr_match:
@@ -2956,7 +2995,17 @@ def render_email_window(email, is_arabic, show_badges=False):
     link_label, link_url, has_link_button = "", "", False
     link_match = re.search(r'\[([^\]]{1,80})\]\s*\(\s*(https?://[^\)\s]+)\s*\)', body_raw)
     if link_match:
-        if _difficulty == "easy":
+        if _difficulty == "medium" and _medium_channel != "button":
+            _raw_url = link_match.group(2).strip()
+            if _medium_channel == "link":
+                body_raw = body_raw[:link_match.start()] + _raw_url + body_raw[link_match.end():]
+                suspicious_link = suspicious_link or _raw_url
+                email["suspicious_link"] = suspicious_link
+            else:  # no-link mode
+                body_raw = body_raw[:link_match.start()] + "" + body_raw[link_match.end():]
+                suspicious_link = ""
+                email["suspicious_link"] = ""
+        elif _difficulty == "easy":
             # Easy level: NO button allowed — convert to plain text URL
             _raw_url = link_match.group(2).strip()
             body_raw = body_raw[:link_match.start()] + _raw_url + body_raw[link_match.end():]
@@ -3015,16 +3064,29 @@ def render_email_window(email, is_arabic, show_badges=False):
         body_raw = re.sub(rf'^[ \t]*{bare_no_scheme}[ \t]*$\n?', '', body_raw, flags=re.MULTILINE)
         body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
-    # For medium/hard: if no button and no QR and link missing — place correctly, not at end
-    if _difficulty == "medium" and suspicious_link and not has_qr and not has_link_button:
-        link_bare = re.sub(r'^https?://', '', suspicious_link)
-        if suspicious_link not in body_raw and link_bare not in body_raw:
-            body_raw = _place_link_in_body(body_raw, suspicious_link)
+    # Medium uses exactly one planned delivery style: button OR visible link OR no link.
+    if _difficulty == "medium":
+        if _medium_channel == "none":
+            if suspicious_link:
+                body_raw = body_raw.replace(suspicious_link, "")
+                body_raw = body_raw.replace(re.sub(r'^https?://', '', suspicious_link), "")
+            suspicious_link = ""
+            email["suspicious_link"] = ""
+            has_link_button = False
+            body_raw = body_raw.replace("@@LINK_TOKEN@@", "")
+        elif _medium_channel == "link" and suspicious_link and not has_link_button:
+            link_bare = re.sub(r'^https?://', '', suspicious_link)
+            if suspicious_link not in body_raw and link_bare not in body_raw:
+                body_raw = _place_link_in_body(body_raw, suspicious_link)
+        elif _medium_channel == "button":
+            # A button is rendered from the markdown token; remove any duplicate raw URL.
+            if has_link_button and suspicious_link:
+                body_raw = re.sub(rf'^\s*{re.escape(suspicious_link)}\s*$', '', body_raw, flags=re.MULTILINE)
 
 
     # Keep the suspicious URL exactly once and always before the signature.
     # Provider output may include it inline and again as a trailing standalone line.
-    if suspicious_link:
+    if suspicious_link and not (_difficulty == "medium" and _medium_channel in {"none", "button"}):
         _url_re = re.compile(re.escape(suspicious_link), re.I)
         _seen = [0]
         def _keep_first_url(m):
@@ -3077,6 +3139,9 @@ def render_email_window(email, is_arabic, show_badges=False):
                     f'box-decoration-break:clone;-webkit-box-decoration-break:clone;">'
                     f'{make_badge(_num)}{_safe}</span>', 1)
 
+    if _difficulty == "medium":
+        body_raw = re.sub(r'\n\s*\n+', '\n', body_raw).strip()
+        body_html = html_lib.escape(body_raw)
     body_html = body_html.replace("\n","<br>")
 
     # --------------------------------------------------------
@@ -5110,17 +5175,17 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
 - التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
 """,
             "medium": """
-المستوى المتوسط — مؤشرات أقل وأكثر مهنية (3 إلى 4):
+المستوى المتوسط — مؤشرات أقل وأكثر مهنية (2 إلى 3):
 - تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
 - نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
 - لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
 - موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
 - الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
 - ممنوع QR.
-- يمكن استخدام زر بسيط أو رابط مموه جزئياً، ويمكن استخدام PDF بسيط في بعض الرسائل فقط.
+- استخدم وسيلة واحدة فقط حسب صيغة العرض المحددة: زر واحد أو رابط واحد أو PDF بلا رابط. ممنوع جمع الزر والرابط في الرسالة نفسها.
 - Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
 - صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
-- التحليل يجب أن يحتوي 3 أو 4 مؤشرات مرتبطة بالنص.
+- التحليل يجب أن يحتوي مؤشرين أو 3 مؤشرات مرتبطة بالنص.
 """,
             "hard": """
 المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
@@ -5150,17 +5215,17 @@ EASY — many obvious cues (4-5 indicators):
 - Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
 """,
             "medium": """
-INTERMEDIATE — fewer, more professional cues (3-4 indicators):
+INTERMEDIATE — fewer, more professional cues (2-3 indicators):
 - Greeting uses department/job title or first name only.
 - Plausible look-alike domain that differs on careful inspection.
 - Professional language with at most one subtle error and no aggressive threat.
 - Reasonable 24-72 hour deadline or normal workflow window.
 - Indirect request to open a review portal or external sign-in; never ask to email a password.
 - QR is forbidden.
-- A simple button or partially hidden URL is allowed; a generic PDF may appear occasionally, not always.
+- Use exactly one delivery style as instructed: one button, one visible URL, or a simple PDF with no link. Never combine a button and a visible URL in the same email.
 - Microsoft 365/Outlook may appear occasionally, not in every example.
 - Imagined landing page resembles an internal system but is not a perfect clone.
-- Tutor analysis must contain 3 or 4 text-grounded indicators.
+- Tutor analysis must contain 2 or 3 text-grounded indicators.
 """,
             "hard": """
 ADVANCED/HARD — only 1-2 subtle cues:
@@ -5208,6 +5273,8 @@ def build_prompt(role, index, language):
     role_context = get_role_unbounded_context(role_type, is_ar)
     diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
     analysis_contract = get_analysis_contract(is_ar)
+    medium_channel = get_medium_presentation_mode("learn", index) if difficulty == "medium" else ""
+    medium_channel_rule = get_medium_channel_instruction(medium_channel, is_ar) if medium_channel else ""
 
     if is_ar:
         return f"""
@@ -5238,11 +5305,12 @@ def build_prompt(role, index, language):
 {avoid_topics}{avoid_domains}
 قواعد الصعوبة:
 {diff_rule}
+{medium_channel_rule}
 {analysis_contract}
 
 عدد مؤشرات التحليل الإلزامي حسب المستوى:
 - سهل: 4 أو 5 مؤشرات.
-- متوسط: 3 أو 4 مؤشرات.
+- متوسط: مؤشرين أو 3 مؤشرات.
 - صعب: مؤشر واحد أو مؤشرين فقط.
 اجعل طول مصفوفة indicators مطابقاً للمستوى المحدد.
 
@@ -5252,6 +5320,7 @@ def build_prompt(role, index, language):
   "attack_type": "{plan['attack_type']}",
   "risk_level": "Low/Medium/High/Critical",
   "confidence_score": "0-100%",
+  "medium_channel": "{medium_channel}",
   "from": "اسم مرسل واقعي <email@invented-domain>",
   "to": "{recipient_email}",
   "subject": "عنوان الرسالة",
@@ -5297,11 +5366,12 @@ Anti-repeat seed: {seed}
 {avoid_topics}{avoid_domains}
 Difficulty rules:
 {diff_rule}
+{medium_channel_rule}
 {analysis_contract}
 
 Mandatory tutor-indicator count by level:
 - Easy: 4 or 5 indicators.
-- Intermediate: 3 or 4 indicators.
+- Intermediate: 2 or 3 indicators.
 - Advanced/Hard: only 1 or 2 indicators.
 The indicators array length must match the selected level.
 
@@ -5343,6 +5413,8 @@ def build_assess_prompt(role, index, is_phishing, language):
     avoid_domains = get_used_domains_text(role_type, suffix, is_ar)
     role_context = get_role_unbounded_context(role_type, is_ar)
     diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=is_phishing, is_ar=is_ar)
+    medium_channel = get_medium_presentation_mode("assess", index) if (difficulty == "medium" and is_phishing) else ""
+    medium_channel_rule = get_medium_channel_instruction(medium_channel, is_ar) if medium_channel else ""
 
     if is_ar:
         label = "تصيد" if is_phishing else "شرعي"
@@ -5493,7 +5565,7 @@ def _difficulty_structure_issues(result, difficulty, is_phishing=True):
         if has_qr: issues.append("Intermediate must not contain QR code")
         if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
             issues.append("Intermediate urgency is too aggressive")
-        if n_ind and not (3 <= n_ind <= 4): issues.append("Intermediate learning analysis must contain 3-4 indicators")
+        if n_ind and not (2 <= n_ind <= 3): issues.append("Intermediate learning analysis must contain 2-3 indicators")
         if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
             issues.append("Intermediate attachment, when used, should be a simple PDF")
     elif difficulty == "hard":
@@ -6076,17 +6148,17 @@ def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
 - التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
 """,
             "medium": """
-المستوى المتوسط — مؤشرات أقل وأكثر مهنية (3 إلى 4):
+المستوى المتوسط — مؤشرات أقل وأكثر مهنية (2 إلى 3):
 - تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
 - نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
 - لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
 - موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
 - الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
 - ممنوع QR.
-- يمكن استخدام زر بسيط أو رابط مموه جزئياً، ويمكن استخدام PDF بسيط في بعض الرسائل فقط.
+- استخدم وسيلة واحدة فقط حسب صيغة العرض المحددة: زر واحد أو رابط واحد أو PDF بلا رابط. ممنوع جمع الزر والرابط في الرسالة نفسها.
 - Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
 - صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
-- التحليل يجب أن يحتوي 3 أو 4 مؤشرات مرتبطة بالنص.
+- التحليل يجب أن يحتوي مؤشرين أو 3 مؤشرات مرتبطة بالنص.
 """,
             "hard": """
 المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
@@ -6116,17 +6188,17 @@ EASY — many obvious cues (4-5 indicators):
 - Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
 """,
             "medium": """
-INTERMEDIATE — fewer, more professional cues (3-4 indicators):
+INTERMEDIATE — fewer, more professional cues (2-3 indicators):
 - Greeting uses department/job title or first name only.
 - Plausible look-alike domain that differs on careful inspection.
 - Professional language with at most one subtle error and no aggressive threat.
 - Reasonable 24-72 hour deadline or normal workflow window.
 - Indirect request to open a review portal or external sign-in; never ask to email a password.
 - QR is forbidden.
-- A simple button or partially hidden URL is allowed; a generic PDF may appear occasionally, not always.
+- Use exactly one delivery style as instructed: one button, one visible URL, or a simple PDF with no link. Never combine a button and a visible URL in the same email.
 - Microsoft 365/Outlook may appear occasionally, not in every example.
 - Imagined landing page resembles an internal system but is not a perfect clone.
-- Tutor analysis must contain 3 or 4 text-grounded indicators.
+- Tutor analysis must contain 2 or 3 text-grounded indicators.
 """,
             "hard": """
 ADVANCED/HARD — only 1-2 subtle cues:
@@ -6933,7 +7005,7 @@ def _difficulty_structure_issues(result, difficulty, is_phishing=True):
         if has_qr: issues.append("Intermediate must not contain QR code")
         if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
             issues.append("Intermediate urgency is too aggressive")
-        if n_ind and not (3 <= n_ind <= 4): issues.append("Intermediate learning analysis must contain 3-4 indicators")
+        if n_ind and not (2 <= n_ind <= 3): issues.append("Intermediate learning analysis must contain 2-3 indicators")
         if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
             issues.append("Intermediate attachment, when used, should be a simple PDF")
     elif difficulty == "hard":
@@ -7122,9 +7194,23 @@ def _difficulty_structure_issues(result, difficulty, is_phishing=True):
         if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
     elif difficulty == "medium":
         if has_qr: issues.append("Intermediate must not contain QR code")
+        channel = str(result.get("medium_channel", "")).strip().lower()
+        has_button = bool(re.search(r"\[[^\]]+\]\(https?://", body))
+        visible_url = bool(re.search(r"https?://", body))
+        if has_button and visible_url:
+            # Markdown button syntax contains a URL internally; only flag when a separate raw URL also exists.
+            body_without_button = re.sub(r"\[[^\]]+\]\(https?://[^\)]+\)", "", body)
+            if re.search(r"https?://", body_without_button):
+                issues.append("Intermediate must not combine a button and a visible raw URL")
+        if channel == "button" and not has_button:
+            issues.append("Intermediate button-mode email must contain exactly one markdown button")
+        elif channel == "link" and (has_button or not visible_url):
+            issues.append("Intermediate link-mode email must contain one visible URL and no button")
+        elif channel == "none" and (has_button or visible_url or link):
+            issues.append("Intermediate no-link mode must contain no button or URL")
         if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
             issues.append("Intermediate urgency is too aggressive")
-        if n_ind and not (3 <= n_ind <= 4): issues.append("Intermediate learning analysis must contain 3-4 indicators")
+        if n_ind and not (2 <= n_ind <= 3): issues.append("Intermediate learning analysis must contain 2-3 indicators")
         if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
             issues.append("Intermediate attachment, when used, should be a simple PDF")
     elif difficulty == "hard":
@@ -10220,14 +10306,56 @@ _V34_EASY_AR = """
 
 def build_prompt(role, index, language):
     base = _V34_BUILD_PROMPT(role, index, language)
-    if st.session_state.get("difficulty", "medium") == "easy":
+    difficulty = st.session_state.get("difficulty", "medium")
+    if difficulty == "easy":
         base += _V34_EASY_AR if language == "Arabic" else _V34_EASY_EN
+    elif difficulty == "medium":
+        mode = get_medium_presentation_mode("learn", index)
+        rule = get_medium_channel_instruction(mode, language == "Arabic")
+        if language == "Arabic":
+            base += f"""
+
+تصحيح إلزامي للمستوى المتوسط:
+- {rule}
+- استخدم مؤشرين أو 3 مؤشرات فقط.
+- أضف للحقل JSON: \"medium_channel\": \"{mode}\".
+- لا تترك فراغات كبيرة بين فقرات الرسالة.
+"""
+        else:
+            base += f"""
+
+MANDATORY INTERMEDIATE OVERRIDE:
+- {rule}
+- Use only 2 or 3 grounded indicators.
+- Add this JSON field: \"medium_channel\": \"{mode}\".
+- Keep normal compact email paragraph spacing.
+"""
     return base
 
 def build_assess_prompt(role, index, is_phishing, language):
     base = _V34_BUILD_ASSESS_PROMPT(role, index, is_phishing, language)
-    if is_phishing and st.session_state.get("difficulty", "medium") == "easy":
+    difficulty = st.session_state.get("difficulty", "medium")
+    if is_phishing and difficulty == "easy":
         base += _V34_EASY_AR if language == "Arabic" else _V34_EASY_EN
+    elif is_phishing and difficulty == "medium":
+        mode = get_medium_presentation_mode("assess", index)
+        rule = get_medium_channel_instruction(mode, language == "Arabic")
+        if language == "Arabic":
+            base += f"""
+
+تصحيح إلزامي للمستوى المتوسط:
+- {rule}
+- أضف للحقل JSON: \"medium_channel\": \"{mode}\".
+- لا تترك فراغات كبيرة بين فقرات الرسالة.
+"""
+        else:
+            base += f"""
+
+MANDATORY INTERMEDIATE OVERRIDE:
+- {rule}
+- Add this JSON field: \"medium_channel\": \"{mode}\".
+- Keep normal compact email paragraph spacing.
+"""
     return base
 
 def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
