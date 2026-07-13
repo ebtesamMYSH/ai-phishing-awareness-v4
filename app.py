@@ -1,3 +1,4 @@
+# =============================================================
 # AI Phishing Awareness Training Tool
 # -------------------------------------------------------------
 # Project   : Study 3 - AI Tutor-Based Phishing Awareness
@@ -9673,6 +9674,436 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
 # END RULE-GUIDED SCENARIO PLANNER v32
 # =============================================================
 
+
+# =============================================================
+# SCENARIO ENGINE v33 — COMBINATORIAL PLANNER (SAFE UPGRADE)
+# -------------------------------------------------------------
+# This layer changes only scenario planning and message composition.
+# It deliberately reuses the stable indicator objects, evidence mapping,
+# link field, validator, renderer, scoring, UI, languages, and provider code.
+# =============================================================
+
+_V33_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenario_history_v33.json")
+_V33_RNG = random.SystemRandom()
+
+V33_PHISH_ARCHETYPES = [
+    "release_gate", "exception_resolution", "handover_action", "queue_escalation",
+    "deadline_followup", "service_restore", "record_reconciliation", "approval_hold",
+    "case_assignment", "status_confirmation", "missing_acknowledgement", "workflow_lock",
+    "review_returned", "coverage_change", "safety_followup", "document_release",
+]
+
+V33_LEGIT_ARCHETYPES = [
+    "brief_update", "colleague_note", "meeting_preparation", "record_correction",
+    "schedule_change", "quality_followup", "policy_notice", "handover_summary",
+    "request_for_comment", "completion_notice", "clarification_request", "team_briefing",
+    "shift_note", "meeting_minutes", "service_update", "reference_notice",
+]
+
+V33_TONES = [
+    "formal", "concise", "operational", "collegial", "system_notice",
+    "departmental", "case_focused", "follow_up",
+]
+
+V33_OPENING_MODES = [
+    "state_change", "returned_item", "missed_response", "new_exception",
+    "release_ready", "queue_notice", "follow_up", "service_event",
+]
+
+V33_PRESSURE_STYLES_EN = [
+    "today", "within the next hour", "before your next shift", "before 3:00 PM",
+    "before the case is returned", "before the queue closes", "before the handover window ends",
+    "immediately",
+]
+V33_PRESSURE_STYLES_AR = [
+    "اليوم", "خلال الساعة القادمة", "قبل مناوبتك القادمة", "قبل الساعة الثالثة مساءً",
+    "قبل إعادة الحالة", "قبل إغلاق قائمة الانتظار", "قبل انتهاء فترة التسليم", "فورًا",
+]
+
+V33_CREDENTIAL_ACTIONS_EN = [
+    "confirm your staff PIN", "provide the verification code", "verify your account details",
+    "submit your login credentials", "enter your password", "approve the sign-in verification",
+]
+V33_CREDENTIAL_ACTIONS_AR = [
+    "تأكيد الرقم السري للموظف", "إدخال رمز التحقق", "التحقق من بيانات الحساب",
+    "إرسال بيانات الدخول", "إدخال كلمة المرور", "اعتماد طلب تسجيل الدخول",
+]
+
+V33_CTA_LABELS_EN = [
+    "Open the record", "Review the item", "View the case", "Continue to the request",
+    "Open the exception", "Review the handover", "Open the review", "View the update",
+]
+V33_CTA_LABELS_AR = [
+    "فتح السجل", "مراجعة العنصر", "عرض الحالة", "متابعة الطلب",
+    "فتح الاستثناء", "مراجعة التسليم", "فتح المراجعة", "عرض التحديث",
+]
+
+V33_CONSEQUENCES_EN = [
+    "The item may be returned to the queue if the step is not completed.",
+    "Access to this workflow may be restricted until the request is completed.",
+    "The record will remain unavailable until verification is completed.",
+    "The request may close automatically if no response is recorded.",
+    "The case may be reassigned if the action is not completed.",
+    "The workflow may remain locked until the step is finished.",
+]
+V33_CONSEQUENCES_AR = [
+    "قد يُعاد العنصر إلى قائمة الانتظار إذا لم تكتمل الخطوة.",
+    "قد يُقيّد الوصول إلى هذا المسار حتى اكتمال الطلب.",
+    "سيظل السجل غير متاح حتى اكتمال التحقق.",
+    "قد يُغلق الطلب تلقائيًا إذا لم تُسجل استجابة.",
+    "قد تُعاد إسناد الحالة إذا لم يكتمل الإجراء.",
+    "قد يظل المسار مقفلاً حتى إنهاء الخطوة.",
+]
+
+V33_SUBJECT_PATTERNS_EN = {
+    "release_gate": ["Release Pending: {obj}", "{obj} Awaiting Release", "Release Hold — {obj}"],
+    "exception_resolution": ["Correction Required — {obj}", "Record Exception: {obj}", "Review Exception — {obj}"],
+    "handover_action": ["Handover Action Needed: {obj}", "Before the Next Shift — {obj}", "Handover Item — {obj}"],
+    "queue_escalation": ["Escalation Notice — {obj}", "{obj} Returned to the Queue", "Escalated Response Needed: {obj}"],
+    "deadline_followup": ["Final Follow-up: {obj}", "Outstanding Response — {obj}", "Action Needed Today: {obj}"],
+    "service_restore": ["Service Access Notice: {obj}", "Restore Access — {obj}", "Temporary Access Hold: {obj}"],
+    "record_reconciliation": ["Reconciliation Needed: {obj}", "Record Review Required — {obj}", "Unresolved Record: {obj}"],
+    "approval_hold": ["Approval Hold: {obj}", "Approval Pending — {obj}", "Action Needed Before Release: {obj}"],
+    "case_assignment": ["New Case Assignment: {obj}", "Case Response Needed — {obj}", "Assigned Item: {obj}"],
+    "status_confirmation": ["Status Confirmation Required: {obj}", "Status Change — {obj}", "Confirm Updated Status: {obj}"],
+    "missing_acknowledgement": ["Acknowledgement Missing: {obj}", "Response Not Recorded — {obj}", "Outstanding Acknowledgement: {obj}"],
+    "workflow_lock": ["Workflow Locked: {obj}", "Access Blocked — {obj}", "Workflow Access Pending: {obj}"],
+    "review_returned": ["Review Returned: {obj}", "{obj} Sent Back for Review", "Returned Review Item — {obj}"],
+    "coverage_change": ["Coverage Change Awaiting Confirmation", "Schedule Update — {obj}", "Coverage Review Needed: {obj}"],
+    "safety_followup": ["Safety Follow-up: {obj}", "Clinical Safety Review — {obj}", "Safety Response Required: {obj}"],
+    "document_release": ["Document Release Pending: {obj}", "Release Review — {obj}", "Document Access Hold: {obj}"],
+}
+
+V33_SUBJECT_PATTERNS_AR = {
+    k: [
+        "إجراء مطلوب: {obj}", "متابعة مطلوبة: {obj}", "تحديث بانتظار الرد: {obj}"
+    ] for k in V33_PHISH_ARCHETYPES
+}
+
+V33_GENERIC_GREETINGS_EN = [
+    "Dear Staff Member", "Dear Healthcare Employee", "Dear Colleague",
+    "Hello Clinical Team", "Attention Clinical Staff", "Dear Clinical Team",
+]
+V33_GENERIC_GREETINGS_AR = [
+    "عزيزي الموظف", "عزيزي الزميل", "فريق العمل السريري",
+    "الزملاء الأعزاء", "إلى أعضاء الفريق السريري", "عزيزي عضو الفريق",
+]
+
+V33_FAKE_DOMAINS = [
+    "portal-confirm-now.net", "staff-verify-center.com", "secure-staff-check.net",
+    "hospital-access-alert.co", "clinical-update-login.org", "care-review-portal.net",
+    "clinical-record-check.com", "staff-access-review.net", "hospital-case-verify.org",
+    "care-workflow-alert.co",
+]
+V33_MAILBOXES = [
+    "review", "workflow", "alerts", "coordination", "updates", "case-notice",
+    "records", "followup", "service", "response",
+]
+
+
+def _v33_load_history():
+    try:
+        with open(_V33_HISTORY_PATH, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        return rows if isinstance(rows, list) else []
+    except Exception:
+        return []
+
+
+def _v33_save_history(rows):
+    try:
+        with open(_V33_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(rows[-6000:], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _v33_bucket(role_type, language, difficulty):
+    cycle = st.session_state.get("v33_cycle_id")
+    if cycle is None:
+        cycle = _V33_RNG.randrange(10_000_000, 99_999_999)
+        st.session_state["v33_cycle_id"] = cycle
+    key = f"v33_memory_{cycle}_{role_type}_{language}_{difficulty}"
+    return st.session_state.setdefault(key, {
+        "semantic": [], "families": [], "objects": [], "actions": [], "senders": [],
+        "archetypes": [], "tones": [], "openings": [], "subjects": [], "credentials": [],
+        "deadlines": [], "domains": [], "legit_archetypes": [],
+    })
+
+
+def _v33_pick(items, used=None):
+    values = list(items)
+    if used:
+        fresh = [x for x in values if x not in set(used)]
+        if fresh:
+            values = fresh
+    return _V33_RNG.choice(values)
+
+
+def _v33_plan(role, index, language, difficulty, phase, is_phishing):
+    """Combinatorial scenario plan. It never writes HTML, links, indicators, or tutor text."""
+    diff = str(difficulty or "medium").lower()
+    if diff not in V30_DIFFICULTY:
+        diff = "medium"
+    role_type = _v30_role_type(role)
+    mem = _v33_bucket(role_type, language, diff)
+    history = _v33_load_history()
+    recent = {
+        row.get("semantic") for row in history[-2500:]
+        if row.get("role_type") == role_type and row.get("difficulty") == diff
+    }
+
+    families = list(V30_KNOWLEDGE[role_type])
+    for _ in range(240):
+        family = _v33_pick(families, [])
+        obj = _v33_pick(family["objects"], mem["objects"][-24:])
+        action = _v33_pick(family["actions"], mem["actions"][-20:])
+        sender = _v33_pick(family["senders"], mem["senders"][-16:])
+        sender_idx = family["senders"].index(sender)
+        signature = family["signatures"][sender_idx % len(family["signatures"])]
+        archetypes = V33_PHISH_ARCHETYPES if is_phishing else V33_LEGIT_ARCHETYPES
+        archetype = _v33_pick(archetypes, mem["archetypes"][-12:] if is_phishing else mem["legit_archetypes"][-12:])
+        tone = _v33_pick(V33_TONES, mem["tones"][-8:])
+        opening_mode = _v33_pick(V33_OPENING_MODES, mem["openings"][-8:])
+        semantic = "|".join([
+            role_type, family["id"], obj, action, sender, archetype, tone,
+            opening_mode, "P" if is_phishing else "L",
+        ])
+        # Strong session diversity: avoid same family three times in a short window.
+        family_recent_count = mem["families"][-8:].count(family["id"])
+        if semantic not in recent and semantic not in mem["semantic"] and family_recent_count < 2:
+            break
+
+    plan = {
+        "role_type": role_type, "language": language, "difficulty": diff,
+        "phase": phase, "is_phishing": bool(is_phishing),
+        "family_id": family["id"], "area": family["area"], "event": family["event"],
+        "object": obj, "action": action, "sender": sender, "signature": signature,
+        "structure": archetype, "tone": tone, "opening_mode": opening_mode,
+        "channel": _V33_RNG.choice(V30_DIFFICULTY[diff]["allowed_channels"]),
+        "semantic": semantic,
+    }
+    plan["fingerprint"] = "v33:" + _v30_hashlib.sha256(semantic.encode("utf-8")).hexdigest()[:20]
+
+    mem["semantic"].append(semantic); mem["families"].append(family["id"])
+    mem["objects"].append(obj); mem["actions"].append(action); mem["senders"].append(sender)
+    mem["tones"].append(tone); mem["openings"].append(opening_mode)
+    (mem["archetypes"] if is_phishing else mem["legit_archetypes"]).append(archetype)
+    for key in mem:
+        mem[key] = mem[key][-60:]
+
+    history.append({
+        "semantic": semantic, "role_type": role_type, "difficulty": diff,
+        "phase": phase, "family_id": family["id"], "object": obj,
+        "archetype": archetype, "tone": tone,
+    })
+    _v33_save_history(history)
+    return plan
+
+
+def _v33_subject(plan):
+    ar = plan["language"] == "Arabic"
+    bank = V33_SUBJECT_PATTERNS_AR if ar else V33_SUBJECT_PATTERNS_EN
+    templates = bank[plan["structure"]]
+    return _v33_pick(templates).format(obj=plan["object"].title() if not ar else plan["object"])
+
+
+def _v33_context_sentence(plan, ar=False):
+    obj, area, mode = plan["object"], plan["area"], plan["opening_mode"]
+    if ar:
+        bank = {
+            "state_change": f"تغيرت حالة {obj} في {area} بعد تحديث السجل.",
+            "returned_item": f"أُعيد {obj} إلى قائمة {area} للمراجعة.",
+            "missed_response": f"لم تُسجل استجابة على {obj} ضمن {area}.",
+            "new_exception": f"تم اكتشاف استثناء جديد في سجل {obj}.",
+            "release_ready": f"أصبح {obj} جاهزًا للإطلاق في {area}.",
+            "queue_notice": f"يوجد عنصر متعلق بـ {obj} بانتظارك في قائمة {area}.",
+            "follow_up": f"هذه متابعة بخصوص {obj} ضمن {area}.",
+            "service_event": f"تأثر الوصول إلى {obj} أثناء تحديث الخدمة.",
+        }
+    else:
+        bank = {
+            "state_change": f"The status of {obj} changed after an update in {area}.",
+            "returned_item": f"The {obj} item was returned to the {area} queue for review.",
+            "missed_response": f"No response has been recorded for {obj} in {area}.",
+            "new_exception": f"A new exception was detected in the {obj} record.",
+            "release_ready": f"The {obj} item is ready for release in {area}.",
+            "queue_notice": f"An item related to {obj} is waiting in the {area} queue.",
+            "follow_up": f"This is a follow-up regarding {obj} in {area}.",
+            "service_event": f"Access to {obj} was affected during a service update.",
+        }
+    return bank[mode]
+
+
+def _v33_easy_phishing(plan, role, index):
+    """Stable easy writer: one link field, evidence-grounded indicators, richer scenario wording."""
+    ar = plan["language"] == "Arabic"
+    recipient = _v30_recipient(role, index, plan["language"], plan["phase"])
+    mem = _v33_bucket(plan["role_type"], plan["language"], plan["difficulty"])
+
+    domain = _v33_pick(V33_FAKE_DOMAINS, mem["domains"][-8:])
+    mailbox = _v33_pick(V33_MAILBOXES)
+    sender = f'{plan["sender"]} <{mailbox}@{domain}>'
+    greeting = _v33_pick(V33_GENERIC_GREETINGS_AR if ar else V33_GENERIC_GREETINGS_EN)
+    credential = _v33_pick(V33_CREDENTIAL_ACTIONS_AR if ar else V33_CREDENTIAL_ACTIONS_EN, mem["credentials"][-5:])
+    deadline = _v33_pick(V33_PRESSURE_STYLES_AR if ar else V33_PRESSURE_STYLES_EN, mem["deadlines"][-5:])
+    cta = _v33_pick(V33_CTA_LABELS_AR if ar else V33_CTA_LABELS_EN)
+    consequence = _v33_pick(V33_CONSEQUENCES_AR if ar else V33_CONSEQUENCES_EN)
+    subject = _v33_subject(plan)
+    slug = re.sub(r"[^a-z0-9]+", "-", plan["family_id"].lower()).strip("-")
+    link = f"http://{domain}/{slug}/{_V33_RNG.randrange(1000,9999)}"
+    context = _v33_context_sentence(plan, ar)
+    obj, action, archetype = plan["object"], plan["action"], plan["structure"]
+
+    if ar:
+        action_sentence = f"يرجى {credential} {deadline} حتى تتمكن من {action}."
+        connectors = {
+            "release_gate": f"{context} يلزم تأكيد الهوية قبل إكمال الإطلاق.",
+            "exception_resolution": f"{context} يلزم إكمال خطوة التحقق لتصحيح الحالة.",
+            "handover_action": f"{context} يتطلب عنصر التسليم تأكيدًا قبل المتابعة.",
+            "queue_escalation": f"{context} تم تصعيد الطلب بعد عدم تسجيل استجابة.",
+            "deadline_followup": f"{context} ما زالت الخطوة المطلوبة معلقة.",
+            "service_restore": f"{context} يلزم التحقق لاستعادة الوصول.",
+            "record_reconciliation": f"{context} يلزم توثيق المراجعة قبل إغلاق العنصر.",
+            "approval_hold": f"{context} ما زال الاعتماد متوقفًا حتى اكتمال التحقق.",
+            "case_assignment": f"{context} يجب تأكيد الوصول قبل فتح المهمة.",
+            "status_confirmation": f"{context} يلزم تأكيد الحالة الجديدة.",
+            "missing_acknowledgement": f"{context} لم يتم تسجيل الإقرار المطلوب.",
+            "workflow_lock": f"{context} ما زال المسار مقفلاً.",
+            "review_returned": f"{context} أُعيدت المراجعة بسبب خطوة غير مكتملة.",
+            "coverage_change": f"{context} يحتاج تعديل التغطية إلى تأكيد.",
+            "safety_followup": f"{context} يحتاج بند السلامة إلى استجابة موثقة.",
+            "document_release": f"{context} يتوقف إصدار المستند على إكمال التحقق.",
+        }
+        body = f"{greeting}،\n\n{connectors[archetype]} {action_sentence}\n\n{cta}: {link}\n\n{consequence}\n\n{plan['signature']}"
+    else:
+        action_sentence = f"Please {credential} {deadline} so you can {action}."
+        connectors = {
+            "release_gate": f"{context} Identity confirmation is required before release can continue.",
+            "exception_resolution": f"{context} The verification step must be completed before the status can be corrected.",
+            "handover_action": f"{context} The handover item requires confirmation before it can be acknowledged.",
+            "queue_escalation": f"{context} The request has been escalated because no response was recorded.",
+            "deadline_followup": f"{context} The requested step is still outstanding.",
+            "service_restore": f"{context} Verification is required to restore access.",
+            "record_reconciliation": f"{context} The review must be documented before the item can close.",
+            "approval_hold": f"{context} Approval remains on hold until verification is completed.",
+            "case_assignment": f"{context} Access confirmation is required before the task can be opened.",
+            "status_confirmation": f"{context} The updated status requires confirmation.",
+            "missing_acknowledgement": f"{context} The required acknowledgement has not been recorded.",
+            "workflow_lock": f"{context} The workflow remains locked.",
+            "review_returned": f"{context} The review was returned because a required step is incomplete.",
+            "coverage_change": f"{context} The coverage change requires confirmation.",
+            "safety_followup": f"{context} The safety item requires a documented response.",
+            "document_release": f"{context} Document release is waiting for verification.",
+        }
+        body = f"{greeting},\n\n{connectors[archetype]} {action_sentence}\n\n{cta}: {link}\n\n{consequence}\n\n{plan['signature']}"
+
+    first_line = next(x.strip() for x in body.splitlines() if x.strip()).rstrip(",،")
+    indicators = [
+        _v30_indicator(1, "domain", "Non-official sender domain" if not ar else "نطاق مرسل غير رسمي",
+                       (f"The sender uses {domain}, not the hospital's official domain." if not ar else f"يستخدم المرسل النطاق {domain} وليس نطاق المستشفى الرسمي."), domain, "from"),
+        _v30_indicator(2, "urgency", "Strong urgency or threat" if not ar else "استعجال أو تهديد واضح",
+                       ("The message uses a short deadline or access consequence to pressure the recipient." if not ar else "تستخدم الرسالة مهلة قصيرة أو نتيجة مرتبطة بالوصول للضغط على المستلم."), deadline, "body"),
+        _v30_indicator(3, "credential", "Direct credential request" if not ar else "طلب مباشر لبيانات الدخول",
+                       ("The message directly asks for a password, staff PIN, login credentials, or verification code." if not ar else "تطلب الرسالة مباشرة كلمة مرور أو رقمًا سريًا أو بيانات دخول أو رمز تحقق."), credential, "body"),
+        _v30_indicator(4, "link", "Visible external link" if not ar else "رابط خارجي ظاهر",
+                       (f"The link points to the non-official domain {domain}." if not ar else f"يقود الرابط إلى النطاق غير الرسمي {domain}."), link, "link"),
+        _v30_indicator(5, "greeting", "Generic greeting" if not ar else "تحية عامة",
+                       ("The message does not address the recipient by name, which may indicate bulk targeting." if not ar else "لا تخاطب الرسالة المستلم باسمه، وقد يدل ذلك على إرسال جماعي."), first_line, "greeting"),
+    ]
+    why = ("The message combines a non-official sender domain, a direct credential request, a visible external link, and strong pressure—clear beginner-level phishing indicators."
+           if not ar else "تجمع الرسالة بين نطاق غير رسمي وطلب مباشر لبيانات الدخول ورابط خارجي وضغط واضح، وهي مؤشرات تصيد مناسبة للمستوى المبتدئ.")
+    tip = ("Never enter a password, staff PIN, or verification code through an unexpected email link. Open the official system directly or verify the request through a trusted channel."
+           if not ar else "لا تُدخل كلمة مرور أو رقمًا سريًا أو رمز تحقق عبر رابط بريد غير متوقع. افتح النظام الرسمي مباشرة أو تحقق من الطلب عبر قناة موثوقة.")
+
+    mem["credentials"].append(credential); mem["deadlines"].append(deadline); mem["domains"].append(domain)
+    mem["credentials"] = mem["credentials"][-20:]; mem["deadlines"] = mem["deadlines"][-20:]; mem["domains"] = mem["domains"][-20:]
+
+    return {
+        "from": sender, "to": recipient, "subject": subject, "body": body,
+        "attachment": "", "suspicious_link": link, "suspicious_text": credential,
+        "indicators": indicators, "why_risky": why, "learning_tip": tip,
+        "is_phishing": True, "email_type": "Phishing", "attack_type": "Credential harvesting",
+        "risk_level": "easy", "scenario_id": plan["fingerprint"], "scenario_meta": plan,
+        "display_time": _V33_RNG.choice(["Today, 8:15 AM", "Today, 10:42 AM", "Monday, 2:31 PM", "Yesterday, 4:05 PM", "Thursday, 9:18 AM"]),
+    }
+
+
+def _v33_legitimate(plan, role, index):
+    """Legitimate writer delegates to the proven v32 writer after mapping a diverse archetype."""
+    # Map the four new legitimate archetypes to safe established structures.
+    mapping = {
+        "shift_note": "handover_summary",
+        "meeting_minutes": "meeting_preparation",
+        "service_update": "brief_update",
+        "reference_notice": "policy_notice",
+    }
+    legacy_structure = mapping.get(plan["structure"], plan["structure"])
+    legacy_plan = dict(plan, structure=legacy_structure)
+    return _v32_legitimate(legacy_plan, role, index)
+
+
+def _v33_validate(result, plan):
+    if not _v32_validate(result, plan):
+        return False
+    body = str(result.get("body", ""))
+    subject = str(result.get("subject", ""))
+    if result.get("is_phishing") and plan["difficulty"] == "easy":
+        link = str(result.get("suspicious_link", ""))
+        if body.count(link) != 1:
+            return False
+        # Every tutor evidence item must be present in its actual source field.
+        source_blob = {
+            "from": str(result.get("from", "")), "body": body,
+            "link": link, "greeting": body,
+        }
+        for item in result.get("indicators", []):
+            evidence = str(item.get("evidence", "")).strip()
+            location = str(item.get("location", "body"))
+            if evidence and evidence.lower() not in source_blob.get(location, body).lower():
+                return False
+    # Avoid lexical near-duplicates inside one cycle.
+    mem = _v33_bucket(plan["role_type"], plan["language"], plan["difficulty"])
+    subj_key = re.sub(r"\W+", " ", subject.lower()).strip()
+    if subj_key in mem["subjects"]:
+        return False
+    mem["subjects"].append(subj_key)
+    mem["subjects"] = mem["subjects"][-60:]
+    return True
+
+
+def _v33_generate(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    phase = "assess" if assessment else "learn"
+    result = None
+    for attempt in range(16):
+        plan = _v33_plan(role, index + attempt * 104729, language, difficulty, phase, is_phishing)
+        if is_phishing and plan["difficulty"] == "easy":
+            result = _v33_easy_phishing(plan, role, index)
+        elif is_phishing:
+            # Preserve the proven medium/hard writer and indicator mapping.
+            legacy_plan = dict(plan, structure=_v33_pick(V32_PHISH_STRUCTURES))
+            result = _v31_compose_phishing(legacy_plan, role, index)
+        else:
+            result = _v33_legitimate(plan, role, index)
+        if _v33_validate(result, plan):
+            try:
+                evaluate_and_log_auto_scores(result, plan["difficulty"], language, is_phishing=bool(is_phishing))
+            except Exception:
+                pass
+            return result
+    return result
+
+
+def generate_email(role, index, language, difficulty="medium"):
+    return _v33_generate(role, index, language, difficulty, True, False)
+
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    return _v33_generate(role, index, language, difficulty, bool(is_phishing), True)
+
+# =============================================================
+# END SCENARIO ENGINE v33
+# =============================================================
 
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
