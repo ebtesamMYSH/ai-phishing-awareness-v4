@@ -1,4 +1,3 @@
-# =============================================================
 # AI Phishing Awareness Training Tool
 # -------------------------------------------------------------
 # Project   : Study 3 - AI Tutor-Based Phishing Awareness
@@ -9281,6 +9280,397 @@ def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
 
 # =============================================================
 # END RULE-GUIDED ENGINE v31
+# =============================================================
+
+
+# =============================================================
+# RULE-GUIDED SCENARIO PLANNER v32
+# -------------------------------------------------------------
+# Safe upgrade over v31:
+#   * changes ONLY the pre-writing scenario plan and the email writer
+#   * keeps the stable indicator schema, renderer fields, scoring, UI,
+#     provider selection, and results pipeline unchanged
+#   * plans coherent role-locked combinations before composing text
+#   * stores semantic history so later sessions avoid recent combinations
+# =============================================================
+
+_V32_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenario_history_v32.json")
+_V32_RNG = random.SystemRandom()
+
+V32_PHISH_STRUCTURES = [
+    "pending_release", "failed_review", "workflow_handover", "service_interruption",
+    "escalation_notice", "case_return", "deadline_reminder", "record_exception",
+    "coordination_request", "unresolved_item", "status_change", "final_followup",
+]
+
+V32_LEGIT_STRUCTURES = [
+    "brief_update", "colleague_note", "meeting_preparation", "record_correction",
+    "schedule_change", "quality_followup", "policy_notice", "handover_summary",
+    "request_for_comment", "completion_notice", "clarification_request", "team_briefing",
+]
+
+V32_GENERIC_GREETINGS_EN = [
+    "Dear Staff Member", "Dear Healthcare Employee", "Dear Colleague",
+    "Hello Clinical Team", "Attention Clinical Staff", "Dear Clinical Team",
+]
+V32_GENERIC_GREETINGS_AR = [
+    "عزيزي الموظف", "عزيزي الزميل", "فريق العمل السريري", "الزملاء الأعزاء",
+    "إلى أعضاء الفريق السريري", "عزيزي عضو الفريق",
+]
+
+V32_CREDENTIAL_REQUESTS_EN = [
+    "confirm your staff PIN", "provide your verification code",
+    "verify your account details", "submit your login credentials",
+    "enter your password", "approve the sign-in verification",
+]
+V32_CREDENTIAL_REQUESTS_AR = [
+    "تأكيد الرقم السري للموظف", "إدخال رمز التحقق", "التحقق من بيانات الحساب",
+    "إرسال بيانات الدخول", "إدخال كلمة المرور", "اعتماد طلب تسجيل الدخول",
+]
+
+V32_DEADLINES_EN = [
+    "today", "immediately", "within the next hour", "before your next shift",
+    "before the record is returned", "before 3:00 PM",
+]
+V32_DEADLINES_AR = [
+    "اليوم", "فورًا", "خلال الساعة القادمة", "قبل مناوبتك القادمة",
+    "قبل إعادة السجل", "قبل الساعة الثالثة مساءً",
+]
+
+V32_MAILBOXES = ["review", "workflow", "alerts", "coordination", "updates", "case-notice"]
+V32_FAKE_DOMAINS = [
+    "portal-confirm-now.net", "staff-verify-center.com", "secure-staff-check.net",
+    "hospital-access-alert.co", "clinical-update-login.org", "care-review-portal.net",
+]
+
+V32_FAMILY_CONTEXT = {
+    "clinical": {
+        "lab_critical": ["the result was flagged during final validation", "the specimen record was returned for correction", "the result release is being held"],
+        "referral": ["the referral is waiting in the acceptance queue", "the destination service has not recorded a response", "the transfer request is pending release"],
+        "radiology": ["the reporting queue contains an unresolved addendum", "the imaging record was paused during reconciliation", "the report is awaiting clinician acknowledgement"],
+        "medication": ["the medication workflow contains an unresolved exception", "the pharmacy review was returned for clarification", "the order remains in the safety queue"],
+        "infection": ["the infection-control item was escalated after no response", "the exposure follow-up remains incomplete", "the precaution update has not been acknowledged"],
+        "patient_safety": ["the case review is still open", "the incident record was returned for a missing acknowledgement", "the safety item is waiting for documented follow-up"],
+        "schedule": ["the revised roster has not been confirmed", "the coverage change remains pending", "the schedule item was returned to the staffing queue"],
+        "blood_bank": ["the transfusion item is awaiting release", "the blood-product request remains unmatched", "the crossmatch workflow is pending acknowledgement"],
+        "discharge": ["the documentation item remains unsigned", "the record was returned by the coding queue", "the discharge workflow is waiting for completion"],
+        "education": ["the assigned module remains incomplete", "the competency item was escalated", "the training record has not been acknowledged"],
+        "equipment": ["the device advisory is awaiting acknowledgement", "the inspection record was returned", "the equipment notice remains open"],
+        "telehealth": ["the virtual consultation record is waiting for review", "the remote-care item was returned", "the telehealth workflow remains open"],
+        "emergency": ["the acute-care item is awaiting handover", "the observation record remains open", "the escalation note was returned"],
+        "icu": ["the critical-care review is still pending", "the monitoring item has not been acknowledged", "the ICU workflow contains an unresolved exception"],
+        "oncology": ["the treatment-plan item remains pending", "the oncology record is waiting for acknowledgement", "the infusion workflow was returned"],
+        "maternity": ["the maternity record is awaiting review", "the monitoring note remains incomplete", "the obstetric workflow was returned"],
+        "renal": ["the renal-care item is awaiting release", "the dialysis review remains incomplete", "the renal workflow was returned"],
+        "pathology": ["the specimen record is awaiting review", "the pathology addendum remains unreleased", "the tracking item was returned"],
+        "rehabilitation": ["the therapy handover remains open", "the rehabilitation note is awaiting acknowledgement", "the care-plan item was returned"],
+        "occupational_health": ["the employee-health record is awaiting review", "the fitness item remains open", "the screening workflow was returned"],
+    },
+    "admin": {},
+    "it": {},
+}
+
+
+def _v32_load_history():
+    try:
+        with open(_V32_HISTORY_PATH, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        return rows if isinstance(rows, list) else []
+    except Exception:
+        return []
+
+
+def _v32_save_history(rows):
+    try:
+        with open(_V32_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(rows[-3000:], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _v32_choice(items, used=None):
+    items = list(items)
+    if used:
+        fresh = [x for x in items if x not in used]
+        if fresh:
+            items = fresh
+    return _V32_RNG.choice(items)
+
+
+def _v32_session_bucket(role_type, language, difficulty):
+    cycle = st.session_state.get("v32_cycle_id")
+    if cycle is None:
+        cycle = _V32_RNG.randrange(10_000_000, 99_999_999)
+        st.session_state["v32_cycle_id"] = cycle
+    key = f"v32_plan_memory_{cycle}_{role_type}_{language}_{difficulty}"
+    return st.session_state.setdefault(key, {
+        "semantic": [], "objects": [], "styles": [], "senders": [],
+        "openings": [], "deadlines": [], "credentials": [], "subjects": [],
+    })
+
+
+def _v32_plan(role, index, language, difficulty, phase, is_phishing):
+    """Generate a coherent plan only. It never writes links or tutor analysis."""
+    diff = str(difficulty or "medium").lower()
+    if diff not in V30_DIFFICULTY:
+        diff = "medium"
+    role_type = _v30_role_type(role)
+    memory = _v32_session_bucket(role_type, language, diff)
+    history = _v32_load_history()
+    recent = {r.get("semantic") for r in history[-1200:] if r.get("role_type") == role_type}
+
+    families = list(V30_KNOWLEDGE[role_type])
+    # Try many compatible combinations before accepting one.
+    for _ in range(120):
+        family = _V32_RNG.choice(families)
+        obj = _v32_choice(family["objects"], set(memory["objects"]))
+        action = _V32_RNG.choice(family["actions"])
+        sender = _v32_choice(family["senders"], set(memory["senders"]))
+        signature = family["signatures"][family["senders"].index(sender) % len(family["signatures"])]
+        styles = V32_PHISH_STRUCTURES if is_phishing else V32_LEGIT_STRUCTURES
+        style = _v32_choice(styles, set(memory["styles"]))
+        contexts = V32_FAMILY_CONTEXT.get(role_type, {}).get(family["id"], [family["event"]])
+        context = _V32_RNG.choice(contexts)
+        semantic = "|".join([role_type, family["id"], obj, action, style, context, "P" if is_phishing else "L"])
+        if semantic not in recent and semantic not in memory["semantic"]:
+            break
+
+    plan = {
+        "role_type": role_type, "language": language, "difficulty": diff,
+        "phase": phase, "is_phishing": bool(is_phishing),
+        "family_id": family["id"], "area": family["area"], "event": family["event"],
+        "object": obj, "action": action, "sender": sender, "signature": signature,
+        "structure": style, "operational_context": context,
+        "channel": _V32_RNG.choice(V30_DIFFICULTY[diff]["allowed_channels"]),
+        "semantic": semantic,
+    }
+    plan["fingerprint"] = "v32:" + str(abs(hash(semantic)))
+
+    memory["semantic"].append(semantic); memory["objects"].append(obj)
+    memory["styles"].append(style); memory["senders"].append(sender)
+    for k in memory:
+        memory[k] = memory[k][-40:]
+    history.append({
+        "semantic": semantic, "role_type": role_type, "difficulty": diff,
+        "phase": phase, "family_id": family["id"], "object": obj, "style": style,
+    })
+    _v32_save_history(history)
+    return plan
+
+
+def _v32_subject(plan, urgency, style):
+    obj = plan["object"].title()
+    bank = {
+        "pending_release": [f"Release Pending: {obj}", f"{obj} Awaiting Release"],
+        "failed_review": [f"Review Could Not Be Completed: {obj}", f"Unresolved Review — {obj}"],
+        "workflow_handover": [f"Before Your Next Shift — {obj}", f"Handover Item: {obj}"],
+        "service_interruption": [f"Access Notice: {obj}", f"Service Alert — {obj}"],
+        "escalation_notice": [f"Escalated: {obj} Awaiting Your Response", f"Escalation Notice — {obj}"],
+        "case_return": [f"Returned to Queue: {obj}", f"Case Returned — {obj}"],
+        "deadline_reminder": [f"Final Reminder — {obj}", f"Action Required {urgency.title()}: {obj}"],
+        "record_exception": [f"Record Exception: {obj}", f"Correction Required — {obj}"],
+        "coordination_request": [f"Coordination Request: {obj}", f"Response Requested — {obj}"],
+        "unresolved_item": [f"Unresolved Item: {obj}", f"Pending Item — {obj}"],
+        "status_change": [f"Status Change: {obj}", f"Update Required — {obj}"],
+        "final_followup": [f"Final Follow-up: {obj}", f"Outstanding Response — {obj}"],
+    }
+    return _V32_RNG.choice(bank[style])
+
+
+def _v32_easy_phishing(plan, role, index):
+    ar = plan["language"] == "Arabic"
+    recipient = _v30_recipient(role, index, plan["language"], plan["phase"])
+    domain = _v32_choice(V32_FAKE_DOMAINS)
+    mailbox = _v32_choice(V32_MAILBOXES)
+    sender = f'{plan["sender"]} <{mailbox}@{domain}>'
+    greeting = _v32_choice(V32_GENERIC_GREETINGS_AR if ar else V32_GENERIC_GREETINGS_EN)
+    credential = _v32_choice(V32_CREDENTIAL_REQUESTS_AR if ar else V32_CREDENTIAL_REQUESTS_EN)
+    deadline = _v32_choice(V32_DEADLINES_AR if ar else V32_DEADLINES_EN)
+    slug = re.sub(r"[^a-z0-9]+", "-", plan["family_id"].lower()).strip("-")
+    link = f"http://{domain}/{slug}/{_V32_RNG.randrange(1000,9999)}"
+    subject = _v32_subject(plan, deadline if not ar else "اليوم", plan["structure"]) if not ar else f"إجراء مطلوب: {plan['object']}"
+    obj, area, action, context, style = plan["object"], plan["area"], plan["action"], plan["operational_context"], plan["structure"]
+
+    if ar:
+        variants = {
+            "pending_release": f"{greeting}،\n\nأصبح {obj} جاهزًا للإطلاق، لكن يلزم التحقق من الهوية أولًا. يرجى {credential} {deadline} حتى تتمكن من {action}.\n\nفتح السجل: {link}\n\nسيُسحب العنصر إذا لم يكتمل الإجراء.\n\n{plan['signature']}",
+            "failed_review": f"{greeting}،\n\nتعذرت مراجعة {obj} ضمن {area}. يرجى {credential} {deadline} لفتح السجل ومراجعة التفاصيل.\n\nفتح عنصر المراجعة: {link}\n\nقد يتم تعليق الوصول مؤقتًا إذا لم يكتمل الإجراء.\n\nمع التحية،\n{plan['signature']}",
+            "workflow_handover": f"{greeting}،\n\nيوجد عنصر تسليم مرتبط بـ {obj} ينتظر المتابعة {deadline}. يرجى {credential} لعرضه وتأكيد الاستلام.\n\nفتح عنصر التسليم: {link}\n\nقد يؤدي عدم التأكيد إلى حجب الوصول أثناء المناوبة.\n\n{plan['signature']}",
+            "service_interruption": f"{greeting}،\n\nتم إيقاف الوصول إلى {obj} أثناء تحديث الخدمة. لاستعادته، يرجى {credential} {deadline}.\n\nاستعادة الوصول: {link}\n\nسيظل السجل غير متاح حتى اكتمال الخطوة.\n\n{plan['signature']}",
+            "escalation_notice": f"{greeting}،\n\nتم تصعيد {obj} إلى {area} لعدم تسجيل استجابة. أكمل التحقق عبر {credential} {deadline}.\n\nمراجعة التصعيد: {link}\n\nقد تؤدي التأخيرات إلى تعليق وصولك لهذا المسار.\n\nشكرًا،\n{plan['signature']}",
+            "case_return": f"{greeting}،\n\nأُعيد {obj} إلى قائمة المتابعة لأن خطوة التحقق لم تكتمل. يرجى {credential} {deadline} ثم {action}.\n\nعرض الحالة: {link}\n\nستبقى الحالة معلقة حتى استكمال الطلب.\n\n{plan['signature']}",
+            "deadline_reminder": f"{greeting}،\n\nهذه متابعة أخيرة بخصوص {obj}. ما زالت الخطوة المطلوبة معلقة. يرجى {credential} {deadline} حتى تتمكن من {action}.\n\nعرض الحالة: {link}\n\nقد يؤدي عدم الرد إلى تقييد الوصول.\n\n{plan['signature']}",
+            "record_exception": f"{greeting}،\n\nرُصد استثناء في سجل {obj}. يلزم {credential} {deadline} لتصحيح الحالة ومتابعة {action}.\n\nفتح الاستثناء: {link}\n\nسيبقى السجل محجوبًا حتى إنهاء الخطوة.\n\n{plan['signature']}",
+            "coordination_request": f"{greeting}،\n\nيحتاج فريق {area} إلى ردك على {obj}. يرجى {credential} {deadline} حتى تتمكن من {action}.\n\nفتح الطلب: {link}\n\nقد يُعاد الطلب إلى قائمة الانتظار إذا لم يصل الرد.\n\n{plan['signature']}",
+            "unresolved_item": f"{greeting}،\n\nما زال {obj} غير مكتمل ضمن {area}. يرجى {credential} {deadline} لفتح العنصر وإنهاء {action}.\n\nفتح العنصر: {link}\n\nقد يُعلّق الوصول إلى المسار حتى اكتمال الإجراء.\n\n{plan['signature']}",
+            "status_change": f"{greeting}،\n\nتغيرت حالة {obj} بعد تحديث النظام. لتأكيد الحالة الجديدة، يرجى {credential} {deadline}.\n\nمراجعة التغيير: {link}\n\nلن يتاح السجل قبل اعتماد الخطوة.\n\n{plan['signature']}",
+            "final_followup": f"{greeting}،\n\nلم نتلق ردًا على {obj}. يرجى {credential} {deadline} ثم {action}.\n\nمتابعة الطلب: {link}\n\nسيُغلق الطلب ويُقيّد الوصول إذا لم تكتمل الخطوة.\n\n{plan['signature']}",
+        }
+    else:
+        variants = {
+            "pending_release": f"{greeting},\n\n{obj.title()} is ready for release, but identity confirmation is required first. Please {credential} {deadline} so you can {action}.\n\nOpen the record: {link}\n\nThe item will be withdrawn if the action is not completed.\n\n{plan['signature']}",
+            "failed_review": f"{greeting},\n\nA review item for {obj} could not be completed in {area}. Please {credential} {deadline} to open the record and review the details.\n\nOpen the review item: {link}\n\nIf the step is not completed, access may be suspended temporarily.\n\nRegards,\n{plan['signature']}",
+            "workflow_handover": f"{greeting},\n\nA handover item linked to {obj} is waiting {deadline}. Please {credential} to view it and acknowledge receipt.\n\nOpen the handover item: {link}\n\nFailure to acknowledge it may block access during the shift.\n\n{plan['signature']}",
+            "service_interruption": f"{greeting},\n\nAccess to {obj} was paused during a service update. To restore it, please {credential} {deadline}.\n\nRestore access: {link}\n\nThe record will remain unavailable until the step is completed.\n\n{plan['signature']}",
+            "escalation_notice": f"{greeting},\n\n{obj.title()} has been escalated to {area} because no response was recorded. Complete verification by {credential} {deadline}.\n\nReview the escalation: {link}\n\nDelays may suspend your access to this workflow.\n\nThank you,\n{plan['signature']}",
+            "case_return": f"{greeting},\n\n{obj.title()} was returned to the queue because the verification step was not completed. Please {credential} {deadline}, then {action}.\n\nView the case: {link}\n\nThe case will remain pending until the request is completed.\n\n{plan['signature']}",
+            "deadline_reminder": f"{greeting},\n\nThis is a final follow-up regarding {obj}. The requested step is still outstanding. Please {credential} {deadline} so you can {action}.\n\nView the case: {link}\n\nAn unanswered request may be returned to the queue and may restrict access.\n\n{plan['signature']}",
+            "record_exception": f"{greeting},\n\nA record exception was detected for {obj}. You must {credential} {deadline} to correct the status and {action}.\n\nOpen the exception: {link}\n\nThe record will stay locked until the step is finished.\n\n{plan['signature']}",
+            "coordination_request": f"{greeting},\n\n{area} needs your response on {obj}. Please {credential} {deadline} so you can {action}.\n\nOpen the request: {link}\n\nThe request may be returned to the queue if no response is received.\n\n{plan['signature']}",
+            "unresolved_item": f"{greeting},\n\n{obj.title()} remains unresolved in {area}. Please {credential} {deadline} to open the item and complete the required review.\n\nOpen the item: {link}\n\nAccess to the workflow may be suspended until the action is completed.\n\n{plan['signature']}",
+            "status_change": f"{greeting},\n\nThe status of {obj} changed after a system update. To confirm the new status, please {credential} {deadline}.\n\nReview the change: {link}\n\nThe record will not be available until the step is approved.\n\n{plan['signature']}",
+            "final_followup": f"{greeting},\n\nNo response has been recorded for {obj}. Please {credential} {deadline}, then {action}.\n\nFollow up on the request: {link}\n\nThe request may be closed and access restricted if the step is not completed.\n\n{plan['signature']}",
+        }
+    body = variants[style]
+
+    # Stable grounded indicator contract. Evidence is guaranteed to exist.
+    first_line = next(x.strip() for x in body.splitlines() if x.strip()).rstrip(",،")
+    indicators = [
+        _v30_indicator(1, "domain", "Non-official sender domain" if not ar else "نطاق مرسل غير رسمي",
+                       (f"The sender uses {domain}, not the hospital's official domain." if not ar else f"يستخدم المرسل النطاق {domain} وليس نطاق المستشفى الرسمي."), domain, "from"),
+        _v30_indicator(2, "urgency", "Strong urgency or threat" if not ar else "استعجال أو تهديد واضح",
+                       ("The message uses a short deadline or an access consequence to pressure the recipient." if not ar else "تستخدم الرسالة مهلة قصيرة أو نتيجة مرتبطة بالوصول للضغط على المستلم."), deadline, "body"),
+        _v30_indicator(3, "credential", "Direct credential request" if not ar else "طلب مباشر لبيانات الدخول",
+                       ("The message directly asks for a password, staff PIN, login credentials, or verification code." if not ar else "تطلب الرسالة مباشرة كلمة مرور أو رقمًا سريًا أو بيانات دخول أو رمز تحقق."), credential, "body"),
+        _v30_indicator(4, "link", "Visible external link" if not ar else "رابط خارجي ظاهر",
+                       (f"The link points to the non-official domain {domain}." if not ar else f"يقود الرابط إلى النطاق غير الرسمي {domain}."), link, "link"),
+        _v30_indicator(5, "greeting", "Generic greeting" if not ar else "تحية عامة",
+                       ("The message does not address the recipient by name, which may indicate bulk targeting." if not ar else "لا تخاطب الرسالة المستلم باسمه، وقد يدل ذلك على إرسال جماعي."), first_line, "greeting"),
+    ]
+    why = ("The message combines a non-official domain, a direct credential request, an external link, and strong time pressure—clear beginner-level phishing indicators."
+           if not ar else "تجمع الرسالة بين نطاق غير رسمي وطلب مباشر لبيانات الدخول ورابط خارجي وضغط زمني واضح، وهي مؤشرات تصيد مناسبة للمستوى المبتدئ.")
+    tip = ("Never enter a password, staff PIN, or verification code through an unexpected email link. Open the official system directly or verify the request through a trusted channel."
+           if not ar else "لا تُدخل كلمة مرور أو رقمًا سريًا أو رمز تحقق عبر رابط بريد غير متوقع. افتح النظام الرسمي مباشرة أو تحقق من الطلب عبر قناة موثوقة.")
+    return {
+        "from": sender, "to": recipient, "subject": subject, "body": body,
+        "attachment": "", "suspicious_link": link, "suspicious_text": credential,
+        "indicators": indicators, "why_risky": why, "learning_tip": tip,
+        "is_phishing": True, "email_type": "Phishing", "attack_type": "Credential harvesting",
+        "risk_level": "easy", "scenario_id": plan["fingerprint"], "scenario_meta": plan,
+        "display_time": _V32_RNG.choice(["Today, 8:15 AM", "Today, 10:42 AM", "Monday, 2:31 PM", "Yesterday, 4:05 PM", "Thursday, 9:18 AM"]),
+    }
+
+
+def _v32_legitimate(plan, role, index):
+    ar = plan["language"] == "Arabic"
+    recipient = _v30_recipient(role, index, plan["language"], plan["phase"])
+    person = _v30_display_name(recipient)
+    sender = f'{plan["sender"]} <{_v32_choice(["notifications", "coordination", "quality", "clinical.ops", "records"])}@hospital.org>'
+    obj, area, action, style = plan["object"], plan["area"], plan["action"], plan["structure"]
+    if ar:
+        subjects = {
+            "brief_update": f"تحديث موجز: {obj}", "colleague_note": f"ملاحظة بخصوص {obj}",
+            "meeting_preparation": f"{obj} للاجتماع القادم", "record_correction": f"تصحيح مطلوب: {obj}",
+            "schedule_change": f"تغيير في الموعد: {obj}", "quality_followup": f"متابعة جودة: {obj}",
+            "policy_notice": f"إشعار إرشادي: {obj}", "handover_summary": f"ملخص تسليم: {obj}",
+            "request_for_comment": f"طلب ملاحظة: {obj}", "completion_notice": f"اكتمل تحديث {obj}",
+            "clarification_request": f"استفسار بسيط: {obj}", "team_briefing": f"إحاطة الفريق: {obj}",
+        }
+        bodies = {
+            "brief_update": f"عزيزي {person}،\n\nتم تحديث {obj} في {area}. يمكنك {action} من خلال مساحة العمل الداخلية عند توفر الوقت.\n\nمع التحية،\n{plan['signature']}",
+            "colleague_note": f"مرحبًا {person}،\n\nأضفت ملاحظة قصيرة في سجل {obj}. هل يمكنك مراجعتها خلال المناوبة وإخباري إذا كانت هناك نقطة تحتاج تعديلًا؟\n\nشكرًا،\n{plan['signature']}",
+            "meeting_preparation": f"عزيزي {person}،\n\nنجهز بند {obj} لاجتماع {area} القادم. يرجى إضافة تعليقك في النظام الداخلي قبل ظهر الأربعاء.\n\nشكرًا،\n{plan['signature']}",
+            "record_correction": f"عزيزي {person}،\n\nلاحظنا اختلافًا بسيطًا في سجل {obj}. هل يمكنك مراجعة الحقل الأخير وتصحيحه في النظام المعتاد؟\n\nمع التقدير،\n{plan['signature']}",
+            "schedule_change": f"عزيزي {person}،\n\nتم تعديل توقيت {obj}. سيظهر الموعد الجديد في الجدول الداخلي اليوم؛ يرجى الرد فقط إذا تعارض مع مناوبتك.\n\n{plan['signature']}",
+            "quality_followup": f"عزيزي {person}،\n\nأصبحت خلاصة مراجعة الجودة الخاصة بـ {obj} متاحة في مساحة {area}. توجد ملاحظتان تحتاجان تعليق القسم قبل الاجتماع القادم.\n\nمع التحية،\n{plan['signature']}",
+            "policy_notice": f"عزيزي {person}،\n\nنُشرت النسخة المحدثة من إرشادات {obj} في مكتبة السياسات الداخلية. سيبدأ تطبيقها الأسبوع القادم وسنغطي التغيير في إحاطة الفريق.\n\n{plan['signature']}",
+            "handover_summary": f"عزيزي {person}،\n\nأضفت ملخص تسليم يتعلق بـ {obj} للفريق القادم. يرجى مراجعته في السجل وإضافة أي نقطة ناقصة قبل نهاية المناوبة.\n\nمع التحية،\n{plan['signature']}",
+            "request_for_comment": f"مرحبًا {person}،\n\nهل يمكنك إضافة ملاحظتك على {obj} في مساحة {area} الداخلية قبل نهاية اليوم؟ لا يلزم الرد بالبريد إذا لم توجد تغييرات.\n\nشكرًا،\n{plan['signature']}",
+            "completion_notice": f"عزيزي {person}،\n\nاكتمل تحديث {obj} وأصبح السجل متاحًا في النظام الداخلي. لا يلزم اتخاذ إجراء ما لم تلاحظ اختلافًا في التفاصيل.\n\nمع التقدير،\n{plan['signature']}",
+            "clarification_request": f"مرحبًا {person}،\n\nلدينا استفسار بسيط بخصوص {obj}. يرجى مراجعة الملاحظة في السجل الداخلي وإضافة التصحيح عند توفر الوقت.\n\nشكرًا،\n{plan['signature']}",
+            "team_briefing": f"عزيزي {person}،\n\nسيُناقش {obj} في إحاطة فريق {area} القادمة. أضفنا الملخص إلى مساحة العمل الداخلية للقراءة المسبقة.\n\nمع التحية،\n{plan['signature']}",
+        }
+        subject, body = subjects[style], bodies[style]
+        tip = "الرسالة تستخدم نطاق المستشفى الرسمي وسياقًا مهنيًا طبيعيًا وقناة داخلية معروفة دون طلب بيانات حساسة."
+    else:
+        subjects = {
+            "brief_update": f"Update: {obj.title()}", "colleague_note": f"A Note About {obj.title()}",
+            "meeting_preparation": f"{obj.title()} for the Next Meeting", "record_correction": f"Correction Needed: {obj.title()}",
+            "schedule_change": f"Schedule Change — {obj.title()}", "quality_followup": f"Quality Follow-up: {obj.title()}",
+            "policy_notice": f"Guidance Notice: {obj.title()}", "handover_summary": f"Handover Summary: {obj.title()}",
+            "request_for_comment": f"Comment Requested: {obj.title()}", "completion_notice": f"{obj.title()} Update Completed",
+            "clarification_request": f"Quick Clarification: {obj.title()}", "team_briefing": f"Team Briefing — {obj.title()}",
+        }
+        bodies = {
+            "brief_update": f"Dear {person},\n\nThe {obj} record has been updated in {area}. You can {action} it through the usual internal workspace when convenient.\n\nKind regards,\n{plan['signature']}",
+            "colleague_note": f"Hello {person},\n\nI added a short note to the {obj} record. Could you review it during your shift and let me know if anything needs changing?\n\nThanks,\n{plan['signature']}",
+            "meeting_preparation": f"Dear {person},\n\nWe are preparing the {obj} item for the next {area} meeting. Please add your comment in the internal workspace by Wednesday noon.\n\nThank you,\n{plan['signature']}",
+            "record_correction": f"Dear {person},\n\nWe noticed a minor discrepancy in the {obj} record. Could you check the final field and correct it in the usual system?\n\nBest regards,\n{plan['signature']}",
+            "schedule_change": f"Dear {person},\n\nThe timing for {obj} has changed. The revised slot will appear in the internal schedule today; please reply only if it conflicts with your shift.\n\nRegards,\n{plan['signature']}",
+            "quality_followup": f"Dear {person},\n\nThe quality-review summary for {obj} is now available in the {area} workspace. Two observations need the department's comments before the next meeting.\n\nKind regards,\n{plan['signature']}",
+            "policy_notice": f"Dear {person},\n\nThe revised guidance for {obj} has been published in the internal policy library. It takes effect next week and will be covered at the team briefing.\n\nRegards,\n{plan['signature']}",
+            "handover_summary": f"Dear {person},\n\nI added a handover summary for {obj} for the incoming team. Please review it in the record and add anything missing before the end of the shift.\n\nKind regards,\n{plan['signature']}",
+            "request_for_comment": f"Hello {person},\n\nCould you add your comment to {obj} in the internal {area} workspace before the end of the day? There is no need to reply by email if nothing has changed.\n\nThanks,\n{plan['signature']}",
+            "completion_notice": f"Dear {person},\n\nThe update to {obj} has been completed and the record is available in the internal system. No action is needed unless you notice a discrepancy.\n\nBest regards,\n{plan['signature']}",
+            "clarification_request": f"Hello {person},\n\nWe have a quick clarification regarding {obj}. Please check the note in the internal record and add the correction when convenient.\n\nThanks,\n{plan['signature']}",
+            "team_briefing": f"Dear {person},\n\n{obj.title()} will be discussed at the next {area} team briefing. The summary has been added to the internal workspace for advance reading.\n\nKind regards,\n{plan['signature']}",
+        }
+        subject, body = subjects[style], bodies[style]
+        tip = "The message uses the official hospital domain, a natural workplace context, and a known internal workflow without asking for sensitive information."
+    return {
+        "from": sender, "to": recipient, "subject": subject, "body": body,
+        "attachment": "", "suspicious_link": "", "suspicious_text": "", "indicators": [],
+        "why_risky": "", "learning_tip": tip, "is_phishing": False,
+        "email_type": "Legitimate", "attack_type": "None", "risk_level": plan["difficulty"],
+        "scenario_id": plan["fingerprint"], "scenario_meta": plan,
+        "display_time": _V32_RNG.choice(["Today, 9:05 AM", "Tuesday, 11:20 AM", "Yesterday, 3:40 PM", "Thursday, 1:15 PM"]),
+    }
+
+
+def _v32_validate(result, plan):
+    # Preserve all v31 validation and add semantic/session safeguards.
+    if not _v31_validate(result, plan):
+        return False
+    body = str(result.get("body", "")); subject = str(result.get("subject", ""))
+    if result.get("is_phishing") and plan["difficulty"] == "easy":
+        if len(result.get("indicators", [])) != 5:
+            return False
+        link = str(result.get("suspicious_link", ""))
+        if not link or body.count(link) != 1:
+            return False
+    # Reject repeated opening/subject inside the active cycle.
+    mem = _v32_session_bucket(plan["role_type"], plan["language"], plan["difficulty"])
+    opening = next((ln.strip().lower() for ln in body.splitlines() if ln.strip()), "")
+    subj_key = re.sub(r"\W+", " ", subject.lower()).strip()
+    if opening and opening in mem["openings"][:-1]:
+        return False
+    if subj_key and subj_key in mem["subjects"]:
+        return False
+    mem["openings"].append(opening); mem["subjects"].append(subj_key)
+    mem["openings"] = mem["openings"][-40:]; mem["subjects"] = mem["subjects"][-40:]
+    return True
+
+
+def _v32_generate(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    phase = "assess" if assessment else "learn"
+    result = None
+    for attempt in range(10):
+        plan = _v32_plan(role, index + attempt * 104729, language, difficulty, phase, is_phishing)
+        if is_phishing and plan["difficulty"] == "easy":
+            result = _v32_easy_phishing(plan, role, index)
+        elif is_phishing:
+            # Keep v31's proven medium/hard writer and indicator mapping.
+            result = _v31_compose_phishing(plan, role, index)
+        else:
+            result = _v32_legitimate(plan, role, index)
+        if _v32_validate(result, plan):
+            try:
+                evaluate_and_log_auto_scores(result, plan["difficulty"], language, is_phishing=bool(is_phishing))
+            except Exception:
+                pass
+            return result
+    return result
+
+
+def generate_email(role, index, language, difficulty="medium"):
+    return _v32_generate(role, index, language, difficulty, True, False)
+
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    return _v32_generate(role, index, language, difficulty, bool(is_phishing), True)
+
+# =============================================================
+# END RULE-GUIDED SCENARIO PLANNER v32
 # =============================================================
 
 
