@@ -1,3 +1,5 @@
+# =============================================================
+# AI Phishing Awareness Training Tool
 # -------------------------------------------------------------
 # Project   : Study 3 - AI Tutor-Based Phishing Awareness
 # Purpose   : Bilingual (Arabic/English) web platform for
@@ -2039,193 +2041,6 @@ def build_content_shape(role_type, difficulty, is_ar=False):
         "nonce": random.randint(10000, 99999),
     }
 
-
-# =============================================================
-# SAFE EVENT-SEQUENCE LAYER
-# -------------------------------------------------------------
-# This layer changes only the story logic (what happened first,
-# what changed, and why the recipient is contacted). It does NOT
-# control rendering, URLs, indicators, analysis, difficulty rules,
-# classification, or the final JSON schema. Those remain governed
-# by the existing engine and post-generation guardrails.
-# =============================================================
-_EVENT_SEQUENCE_LIBRARY = {
-    "clinical": [
-        ("record_updated", "clinical_review_pending", "acknowledgement_requested"),
-        ("result_released", "clarification_added", "follow_up_requested"),
-        ("referral_submitted", "document_missing", "case_returned_for_completion"),
-        ("schedule_changed", "coverage_conflict_detected", "confirmation_requested"),
-        ("safety_notice_issued", "department_response_missing", "escalation_created"),
-        ("handover_created", "incoming_team_comment_needed", "receipt_requested"),
-        ("medication_item_flagged", "pharmacy_review_pending", "documented_response_requested"),
-        ("specimen_processed", "discrepancy_detected", "correction_requested"),
-        ("imaging_report_amended", "clinical_note_pending", "review_requested"),
-        ("training_assigned", "completion_status_unrecorded", "attendance_confirmation_requested"),
-    ],
-    "admin": [
-        ("request_submitted", "approval_pending", "confirmation_requested"),
-        ("invoice_received", "cost_center_mismatch", "correction_requested"),
-        ("schedule_published", "staffing_conflict_detected", "response_requested"),
-        ("contract_review_started", "document_expiry_detected", "renewal_action_requested"),
-        ("claim_processed", "supporting_document_missing", "case_returned_for_completion"),
-        ("employee_record_updated", "verification_pending", "acknowledgement_requested"),
-        ("purchase_order_created", "supplier_detail_changed", "approval_requested"),
-        ("audit_opened", "evidence_gap_found", "document_upload_requested"),
-    ],
-    "it": [
-        ("system_alert_created", "service_impact_detected", "technical_review_requested"),
-        ("maintenance_scheduled", "dependency_conflict_found", "confirmation_requested"),
-        ("certificate_checked", "renewal_window_opened", "administrator_action_requested"),
-        ("backup_job_completed", "integrity_exception_detected", "validation_requested"),
-        ("access_change_requested", "approval_pending", "identity_confirmation_requested"),
-        ("security_event_logged", "owner_response_missing", "escalation_created"),
-        ("software_update_released", "compatibility_issue_found", "deployment_response_requested"),
-        ("device_inventory_updated", "ownership_mismatch_detected", "correction_requested"),
-    ],
-}
-
-_EVENT_SEQUENCE_LABELS_AR = {
-    "record_updated": "تم تحديث السجل", "clinical_review_pending": "أصبحت المراجعة السريرية معلقة",
-    "acknowledgement_requested": "طُلب تأكيد الاستلام", "result_released": "صدرت النتيجة",
-    "clarification_added": "أُضيف توضيح", "follow_up_requested": "طُلبت متابعة",
-    "referral_submitted": "أُرسلت الإحالة", "document_missing": "ظهر مستند ناقص",
-    "case_returned_for_completion": "أُعيدت الحالة للاستكمال", "schedule_changed": "تغيّر الجدول",
-    "coverage_conflict_detected": "ظهر تعارض في التغطية", "confirmation_requested": "طُلب التأكيد",
-    "safety_notice_issued": "صدر إشعار سلامة", "department_response_missing": "لم تُسجل استجابة القسم",
-    "escalation_created": "تم إنشاء تصعيد", "handover_created": "أُنشئ تسليم",
-    "incoming_team_comment_needed": "احتاج الفريق المستلم إلى تعليق", "receipt_requested": "طُلب تأكيد الاستلام",
-    "medication_item_flagged": "تم تعليم بند دوائي", "pharmacy_review_pending": "أصبحت مراجعة الصيدلية معلقة",
-    "documented_response_requested": "طُلب رد موثق", "specimen_processed": "تمت معالجة العينة",
-    "discrepancy_detected": "اكتُشف اختلاف", "correction_requested": "طُلب تصحيح",
-    "imaging_report_amended": "عُدّل تقرير الأشعة", "clinical_note_pending": "أصبحت الملاحظة السريرية معلقة",
-    "review_requested": "طُلبت مراجعة", "training_assigned": "أُسند تدريب",
-    "completion_status_unrecorded": "لم تُسجل حالة الإكمال", "attendance_confirmation_requested": "طُلب تأكيد الحضور",
-}
-
-_SEQUENCE_ACTION_COMPATIBILITY = {
-    "clinical": re.compile(r"review|confirm|acknowledge|check|open|document|correct|follow|respond|مراجعة|تأكيد|إقرار|فتح|توثيق|تصحيح|متابعة|رد", re.I),
-    "admin": re.compile(r"review|approve|confirm|acknowledge|check|upload|correct|renew|مراجعة|اعتماد|تأكيد|إقرار|رفع|تصحيح|تجديد", re.I),
-    "it": re.compile(r"review|validate|confirm|approve|check|deploy|renew|respond|مراجعة|تحقق|تأكيد|اعتماد|فحص|نشر|تجديد|رد", re.I),
-}
-
-
-def _sequence_role(role_type):
-    if role_type == "other":
-        return random.choice(["clinical", "admin", "it"])
-    return role_type if role_type in _EVENT_SEQUENCE_LIBRARY else "clinical"
-
-
-def _sequence_signature(plan):
-    return "|".join(plan.get("event_chain", [])) + "|" + str(plan.get("narrative_shape", ""))
-
-
-def build_safe_event_plan(card, difficulty, phase="learn", is_phishing=True, is_ar=False):
-    """Return a validated story plan. It never writes the email itself."""
-    role_type = _sequence_role(card.get("role_type", "clinical"))
-    pool = _EVENT_SEQUENCE_LIBRARY[role_type]
-    memory_key = f"used_event_sequences_{phase}_{role_type}_{difficulty}_{is_phishing}"
-    used = set(st.session_state.get(memory_key, []))
-
-    shapes = [
-        "chronological: event -> change/problem -> requested next step",
-        "status-first: current status -> what caused it -> requested next step",
-        "exception-first: detected exception -> operational effect -> requested next step",
-        "handover-first: ownership transfer -> missing confirmation -> requested next step",
-        "follow-up-first: previous action -> no recorded response -> requested next step",
-    ]
-    candidates = []
-    for chain in pool:
-        for shape in shapes:
-            plan = {
-                "role_type": role_type,
-                "event_chain": list(chain),
-                "narrative_shape": shape,
-                "scenario_id": card.get("id", ""),
-                "core_task": card.get("scenario", ""),
-                "logical_sender": card.get("sender", ""),
-                "internal_system": card.get("system", ""),
-                "requested_action": card.get("action", "review the notice"),
-                "difficulty": difficulty,
-                "classification": "phishing" if is_phishing else "legitimate",
-            }
-            if _sequence_signature(plan) not in used:
-                candidates.append(plan)
-    if not candidates:
-        st.session_state[memory_key] = []
-        candidates = [{
-            "role_type": role_type, "event_chain": list(random.choice(pool)),
-            "narrative_shape": random.choice(shapes), "scenario_id": card.get("id", ""),
-            "core_task": card.get("scenario", ""), "logical_sender": card.get("sender", ""),
-            "internal_system": card.get("system", ""), "requested_action": card.get("action", "review the notice"),
-            "difficulty": difficulty, "classification": "phishing" if is_phishing else "legitimate",
-        }]
-    plan = random.choice(candidates)
-    issues = validate_safe_event_plan(plan)
-    if issues:
-        # Guaranteed local fallback: simple, compatible chain. Existing email engine remains untouched.
-        plan["event_chain"] = list(pool[0])
-        plan["narrative_shape"] = shapes[0]
-        plan["fallback_used"] = True
-    sig = _sequence_signature(plan)
-    history = st.session_state.get(memory_key, [])
-    history.append(sig)
-    st.session_state[memory_key] = history[-40:]
-    return plan
-
-
-def validate_safe_event_plan(plan):
-    issues = []
-    role_type = plan.get("role_type")
-    chain = plan.get("event_chain")
-    if role_type not in _EVENT_SEQUENCE_LIBRARY:
-        issues.append("unknown role type")
-    if not isinstance(chain, list) or len(chain) != 3 or any(not str(x).strip() for x in chain):
-        issues.append("event chain must contain exactly three non-empty events")
-    action = str(plan.get("requested_action", ""))
-    compat = _SEQUENCE_ACTION_COMPATIBILITY.get(role_type)
-    if compat and action and not compat.search(action):
-        issues.append("requested action is not compatible with selected role")
-    if plan.get("classification") not in {"phishing", "legitimate"}:
-        issues.append("invalid classification")
-    return issues
-
-
-def event_plan_to_prompt(plan, is_ar=False):
-    """Serialize only story logic into prompt text; never analysis or technical placement rules."""
-    if is_ar:
-        chain = " ← ".join(_EVENT_SEQUENCE_LABELS_AR.get(x, x.replace("_", " ")) for x in plan["event_chain"])
-        return f"""
-خطة تسلسل أحداث آمنة — استخدمها لصياغة القصة فقط:
-- تسلسل الأحداث الإلزامي: {chain}
-- شكل السرد: {plan['narrative_shape']}
-- المهمة الصحية الأساسية: {plan['core_task']}
-- الجهة المنطقية: {plan['logical_sender']}
-- النظام الداخلي: {plan['internal_system']}
-- الإجراء النهائي: {plan['requested_action']}
-
-حدود صارمة:
-- لا تغيّر التصنيف أو مستوى الصعوبة.
-- لا تحدد مكان الرابط أو QR أو المرفق؛ اتبع قواعد المستوى الحالية فقط.
-- لا تكتب تحليل المعلم من هذه الخطة. التحليل يجب أن يُشتق من النص النهائي الظاهر.
-- يجب أن تكون كل جملة منطقية مع تسلسل الأحداث، من دون خلط وظائف أو أقسام.
-"""
-    chain = " -> ".join(x.replace("_", " ") for x in plan["event_chain"])
-    return f"""
-Safe Event-Sequence Plan — use it for story logic only:
-- Mandatory event chain: {chain}
-- Narrative shape: {plan['narrative_shape']}
-- Core healthcare task: {plan['core_task']}
-- Logical unit/sender: {plan['logical_sender']}
-- Internal system/procedure: {plan['internal_system']}
-- Final requested action: {plan['requested_action']}
-
-Hard boundaries:
-- Do not change classification or difficulty.
-- Do not decide URL, QR, attachment, or indicator placement; obey the existing difficulty rules only.
-- Do not copy analysis from this plan. Tutor analysis must be derived from visible final email evidence.
-- Every sentence must follow this event chain logically, without mixing roles or departments.
-"""
-
 def select_scenario_card(role_type, index, phase="learn"):
     """Pick a scenario card from the 300-card library without repeating the same card order.
     Other is a deliberate mix of clinical/admin/it, as requested.
@@ -2238,7 +2053,7 @@ def select_scenario_card(role_type, index, phase="learn"):
     order = get_session_random_order(len(cards), order_key)
     return cards[order[index % len(order)]]
 
-def scenario_card_to_prompt(card, difficulty, is_ar=False, phase="learn", is_phishing=True):
+def scenario_card_to_prompt(card, difficulty, is_ar=False):
     """Build a dynamic scenario instruction.
 
     The scenario card gives the healthcare idea. The content-shape engine gives
@@ -2247,10 +2062,8 @@ def scenario_card_to_prompt(card, difficulty, is_ar=False, phase="learn", is_phi
     difficulty framework.
     """
     attack_pool = _ATTACK_BY_DIFFICULTY.get(difficulty, _ATTACK_BY_DIFFICULTY["medium"])
-    attack = random.choice(attack_pool) if is_phishing else "none — legitimate workplace communication"
+    attack = random.choice(attack_pool)
     shape = build_content_shape(card.get("role_type", "clinical"), difficulty, is_ar)
-    event_plan = build_safe_event_plan(card, difficulty, phase=phase, is_phishing=is_phishing, is_ar=is_ar)
-    event_instruction = event_plan_to_prompt(event_plan, is_ar=is_ar)
     if is_ar:
         return f"""
 بطاقة السيناريو المعتمدة — يجب الالتزام بها وعدم استبدالها:
@@ -2270,7 +2083,7 @@ def scenario_card_to_prompt(card, difficulty, is_ar=False, phase="learn", is_phi
 - التوقيع المقترح: {shape['signature']} مع اسم شخص ومنصب منطقيين إذا كان المستوى صعباً
 - الطول المطلوب: {shape['length_hint']}
 - رقم تنويع داخلي: {shape['nonce']}
-{event_instruction}
+
 قواعد منع التكرار:
 - لا تبدأ الرسالة دائمًا بنفس الجملة.
 - لا تستخدم نفس نهاية الرسالة في كل مرة.
@@ -2295,7 +2108,7 @@ Dynamic Email Content Engine — mandatory for this generation:
 - Suggested signature unit: {shape['signature']} with a logical person/title if Advanced
 - Required length: {shape['length_hint']}
 - Internal diversity nonce: {shape['nonce']}
-{event_instruction}
+
 Anti-repetition rules:
 - Do not always start with the same sentence.
 - Do not always use the same closing line.
@@ -2319,7 +2132,7 @@ def build_prompt(role, index, language):
     avoid_domains = get_used_domains_text(role_type, "learn", is_ar)
     role_context = get_role_unbounded_context(role_type, is_ar)
     scenario_card = select_scenario_card(role_type, index, phase="learn")
-    scenario_instruction = scenario_card_to_prompt(scenario_card, difficulty, is_ar, phase="learn", is_phishing=True)
+    scenario_instruction = scenario_card_to_prompt(scenario_card, difficulty, is_ar)
     diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
 
     if is_ar:
@@ -2455,7 +2268,7 @@ def build_assess_prompt(role, index, is_phishing, language):
     avoid_domains = get_used_domains_text(role_type, suffix, is_ar)
     role_context = get_role_unbounded_context(role_type, is_ar)
     scenario_card = select_scenario_card(role_type, index, phase="assess")
-    scenario_instruction = scenario_card_to_prompt(scenario_card, difficulty, is_ar, phase="assess", is_phishing=is_phishing)
+    scenario_instruction = scenario_card_to_prompt(scenario_card, difficulty, is_ar)
     diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=is_phishing, is_ar=is_ar)
 
     if is_ar:
@@ -4112,10 +3925,27 @@ def page_report():
     else: areas.append(tp("Review phishing indicators more carefully","راجع مؤشرات التصيد بعناية أكبر"))
     if lp>=70: strengths.append(tp("Good at identifying legitimate emails","جيد في تمييز الرسائل الشرعية"))
     else: areas.append(tp("Be cautious not to flag legitimate emails","احذر من تصنيف الرسائل الشرعية كتصيد"))
-    recs=[tp("Always verify sender email addresses carefully","تحقق دائماً من عنوان البريد الإلكتروني للمرسل"),
-          tp("Never click suspicious links — type URLs directly","لا تنقر على الروابط المشبوهة — اكتب العنوان مباشرة"),
-          tp("Be cautious with unexpected attachments","كن حذراً مع المرفقات غير المتوقعة"),
-          tp("When in doubt, contact IT or the sender directly","عند الشك، تواصل مع تقنية المعلومات أو المرسل مباشرة")]
+    # Personalized recommendations based on the trainee's actual error pattern.
+    recs=[]
+    if lp < 70:
+        recs.append(tp(
+            "Do not flag an email only because its subject sounds urgent. First check the official domain, whether it requests credentials, and whether it uses an external link.",
+            "لا تصنّف الرسالة كتصيد لمجرد أن عنوانها يبدو عاجلاً. افحص أولاً النطاق الرسمي، وهل تطلب بيانات دخول، وهل تستخدم رابطاً خارجياً."
+        ))
+    if pp < 70:
+        recs.append(tp(
+            "Pause before acting on credential, PIN, OTP, or verification requests—especially when they arrive through an unexpected link.",
+            "توقّف قبل تنفيذ أي طلب لكلمة مرور أو رقم موظف أو رمز تحقق، خصوصاً عندما يصل عبر رابط غير متوقع."
+        ))
+    if pp >= 70 and lp >= 70:
+        recs.append(tp(
+            "Keep using multiple clues together: sender domain, requested action, channel, link destination, and message context.",
+            "استمر في جمع أكثر من دليل معاً: نطاق المرسل، الإجراء المطلوب، القناة، وجهة الرابط، وسياق الرسالة."
+        ))
+    recs.extend([
+        tp("Verify unusual requests through the hospital's official system or a trusted internal contact.","تحقق من الطلبات غير المعتادة عبر نظام المستشفى الرسمي أو جهة داخلية موثوقة."),
+        tp("When uncertain, do not reply with sensitive information and do not use the email link.","عند الشك، لا ترسل معلومات حساسة ولا تستخدم الرابط الموجود في البريد.")
+    ])
     user_name  = (st.session_state.get("user_name") or "")
     user_email = (st.session_state.get("user_email") or "")
     name_line  = f'<div style="color:#F8FAFC;font-size:1rem;font-weight:700;margin-bottom:.2rem;">{html_lib.escape(user_name)}</div>' if user_name else ""
@@ -10290,6 +10120,79 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
 
 # =============================================================
 # END SCENARIO ENGINE v33
+# =============================================================
+
+
+# =============================================================
+# SAFE MICRO-IMPROVEMENT PATCH v34
+# Scope is intentionally limited to content diversity, grounded
+# analysis and Easy-level indicator count. Rendering, link
+# placement, badge anchoring, parsing and provider calls are untouched.
+# =============================================================
+_V34_BUILD_PROMPT = build_prompt
+_V34_BUILD_ASSESS_PROMPT = build_assess_prompt
+_V34_NORMALIZE = normalize_learning_analysis
+
+_V34_EASY_EN = """
+
+SAFE EASY-DIVERSITY RULES (content-only; do not change the JSON schema):
+- Use 3, 4, or 5 clear phishing indicators, selected naturally for this specific email. Do not force the same five indicators into every scenario.
+- Across a 10-question cycle, vary the attack construction: credential request, fake document access, MFA/OTP abuse, authority impersonation, external-link workflow, or account/access pressure.
+- Vary the event sequence and opening sentence. Do not reuse the same body structure or consequence sentence more than twice in one cycle.
+- Every indicator title and description must quote or explicitly refer to evidence that actually appears in THIS email. Never mention an attachment, QR code, patient-data request, typo, or threat unless it is present.
+- why_risky must summarize this email's actual combination of clues. learning_tip must address the strongest clue in this email, not use a generic repeated tip.
+- Keep Easy obvious for beginners: at least three strong clues, a visible fake URL when a link is used, and no QR code or attachment.
+"""
+
+_V34_EASY_AR = """
+
+قواعد تنويع آمنة للمستوى السهل (تعديل محتوى فقط دون تغيير بنية JSON):
+- استخدم 3 أو 4 أو 5 مؤشرات تصيد واضحة بحسب محتوى الرسالة نفسها، ولا تفرض المؤشرات الخمسة ذاتها على كل سيناريو.
+- نوّع بناء الهجوم داخل دورة الأسئلة: طلب بيانات دخول، وصول مزيف لمستند، إساءة استخدام MFA/OTP، انتحال جهة مسؤولة، سير عمل عبر رابط خارجي، أو ضغط متعلق بالحساب أو الوصول.
+- نوّع بداية الرسالة وتسلسل الحدث. لا تكرر قالب الجسم نفسه أو جملة العاقبة نفسها أكثر من مرتين في الدورة.
+- يجب أن يشير كل عنوان ووصف في indicators إلى دليل موجود فعلاً في هذه الرسالة. لا تذكر مرفقاً أو QR أو بيانات مرضى أو خطأ لغوياً أو تهديداً إلا إذا ظهر فعلاً.
+- يجب أن يلخص why_risky مجموعة الأدلة الفعلية في الرسالة، وأن ترتبط learning_tip بأقوى مؤشر فيها بدلاً من نص عام متكرر.
+- أبقِ المستوى السهل واضحاً للمبتدئ: ثلاثة أدلة قوية على الأقل، ورابط مزيف ظاهر عند استخدام الرابط، ومن دون QR أو مرفقات.
+"""
+
+def build_prompt(role, index, language):
+    base = _V34_BUILD_PROMPT(role, index, language)
+    if st.session_state.get("difficulty", "medium") == "easy":
+        base += _V34_EASY_AR if language == "Arabic" else _V34_EASY_EN
+    return base
+
+def build_assess_prompt(role, index, is_phishing, language):
+    base = _V34_BUILD_ASSESS_PROMPT(role, index, is_phishing, language)
+    if is_phishing and st.session_state.get("difficulty", "medium") == "easy":
+        base += _V34_EASY_AR if language == "Arabic" else _V34_EASY_EN
+    return base
+
+def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
+    result = _V34_NORMALIZE(result, role_type, difficulty, is_ar)
+    if not isinstance(result, dict) or "error" in result:
+        return result
+    # Previous normalizer guarantees three grounded indicators. For Easy,
+    # preserve any additional model-generated grounded indicators up to 5,
+    # while keeping numbering stable. Never synthesize extra clues.
+    if difficulty == "easy":
+        raw = result.get("indicators") if isinstance(result.get("indicators"), list) else []
+        clean=[]
+        seen=set()
+        for item in raw[:5]:
+            if not isinstance(item, dict):
+                continue
+            title=str(item.get("title") or "").strip()
+            desc=str(item.get("description") or "").strip()
+            key=(title.lower(), desc.lower())
+            if title and desc and key not in seen:
+                seen.add(key)
+                clean.append({"number":len(clean)+1,"title":title,"description":desc})
+        if len(clean) >= 3:
+            result["indicators"] = clean
+    return result
+
+# =============================================================
+# END SAFE MICRO-IMPROVEMENT PATCH v34
 # =============================================================
 
 # ══════════════════════════════════════════════════════════════
