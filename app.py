@@ -1,5 +1,3 @@
-# =============================================================
-# AI Phishing Awareness Training Tool
 # -------------------------------------------------------------
 # Project   : Study 3 - AI Tutor-Based Phishing Awareness
 # Purpose   : Bilingual (Arabic/English) web platform for
