@@ -3140,7 +3140,14 @@ def render_email_window(email, is_arabic, show_badges=False):
     if has_qr:
         qr_data    = suspicious_link or link_url or "https://example-training-only.invalid/qr"
         qr_img_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(qr_data, safe='')}"
-        qr_badge   = make_badge(next_badge()) if show_badges else ""
+        # Use the grounded tutor indicator number for the QR/link.
+        _qr_num = (
+            _badge_for_target("qr")
+            or _badge_for_key("qr")
+            or _badge_for_target("link")
+            or _badge_for_key("link")
+        )
+        qr_badge   = make_badge(_qr_num) if show_badges and _qr_num else ""
         qr_caption = html_lib.escape(qr_label) if qr_label else t("Scan with your phone","امسح بهاتفك")
         qr_block_html = f"""
 <div style="margin:1rem 0;display:flex;align-items:center;gap:.8rem;direction:{bd};flex-wrap:wrap;">
@@ -3161,7 +3168,9 @@ def render_email_window(email, is_arabic, show_badges=False):
 
     link_block_html = ""
     if has_link_button:
-        link_badge = make_badge(next_badge()) if show_badges else ""
+        # Use the existing grounded link indicator number.
+        _link_num = _badge_for_target("link") or _badge_for_key("link")
+        link_badge = make_badge(_link_num) if show_badges and _link_num else ""
         # Replace generic "Open Link" label with descriptive fallback
         _display_label = link_label
         if _display_label.strip().lower() in ("open link", "click here", "link", "رابط", "اضغط هنا", "فتح الرابط"):
