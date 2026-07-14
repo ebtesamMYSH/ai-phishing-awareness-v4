@@ -10386,6 +10386,434 @@ def normalize_learning_analysis(result, role_type, difficulty, is_ar=False):
 # END SAFE MICRO-IMPROVEMENT PATCH v34
 # =============================================================
 
+
+# =============================================================
+# MEDIUM GENERATION ENGINE v35 — SAFE DYNAMIC CHANNEL UPGRADE
+# -------------------------------------------------------------
+# Scope:
+#   * Medium phishing only.
+#   * Easy, Hard, legitimate messages, UI, renderer, scoring,
+#     badges, results and provider integrations remain unchanged.
+#   * Exactly one delivery channel per Medium phishing email:
+#       button | visible_link | pdf_attachment | sharepoint_button |
+#       internal_reply
+#   * Indicators and tutor analysis are generated from the actual
+#     evidence in the resulting email.
+# =============================================================
+
+_V35_RNG = random.SystemRandom()
+
+V35_MEDIUM_CHANNEL_WEIGHTS = [
+    ("button", 24),
+    ("visible_link", 22),
+    ("pdf_attachment", 18),
+    ("sharepoint_button", 18),
+    ("internal_reply", 18),
+]
+
+V35_MEDIUM_STRUCTURES = [
+    "policy_acknowledgement",
+    "incident_followup",
+    "training_completion",
+    "schedule_revision",
+    "equipment_notice",
+    "audit_request",
+    "case_assignment",
+    "service_change",
+    "quality_review",
+    "document_correction",
+]
+
+V35_MEDIUM_DEADLINES_EN = [
+    "within 24 hours",
+    "by tomorrow afternoon",
+    "before Friday's departmental review",
+    "before the current review window closes",
+    "by the end of the next business day",
+]
+V35_MEDIUM_DEADLINES_AR = [
+    "خلال 24 ساعة",
+    "قبل ظهر الغد",
+    "قبل مراجعة القسم يوم الجمعة",
+    "قبل إغلاق فترة المراجعة الحالية",
+    "قبل نهاية يوم العمل القادم",
+]
+
+V35_MEDIUM_GREETINGS_EN = [
+    "Dear {area} Team",
+    "Hello {area} Team",
+    "Good morning {area} colleagues",
+    "Dear Clinical Colleagues",
+    "Hello Team",
+]
+V35_MEDIUM_GREETINGS_AR = [
+    "فريق {area} المحترم",
+    "مرحبًا فريق {area}",
+    "صباح الخير زملاء {area}",
+    "الزملاء السريريين الأعزاء",
+    "مرحبًا بالفريق",
+]
+
+def _v35_weighted_choice(items):
+    total = sum(weight for _, weight in items)
+    pick = _V35_RNG.uniform(0, total)
+    upto = 0
+    for value, weight in items:
+        upto += weight
+        if pick <= upto:
+            return value
+    return items[-1][0]
+
+def _v35_medium_channel(phase, index):
+    """Session-stable weighted channel with anti-streak protection."""
+    cycle = st.session_state.get("v18_cycle_id", "default")
+    key = f"v35_medium_channels_{cycle}_{phase}"
+    planned = st.session_state.setdefault(key, [])
+    idx = int(index)
+    while len(planned) <= idx:
+        candidate = _v35_weighted_choice(V35_MEDIUM_CHANNEL_WEIGHTS)
+        if len(planned) >= 2 and planned[-1] == planned[-2] == candidate:
+            alternatives = [(v, w) for v, w in V35_MEDIUM_CHANNEL_WEIGHTS if v != candidate]
+            candidate = _v35_weighted_choice(alternatives)
+        planned.append(candidate)
+    return planned[idx]
+
+def _v35_medium_structure(phase, index):
+    cycle = st.session_state.get("v18_cycle_id", "default")
+    key = f"v35_medium_structures_{cycle}_{phase}"
+    used = st.session_state.setdefault(key, [])
+    available = [x for x in V35_MEDIUM_STRUCTURES if x not in used[-8:]]
+    if not available:
+        available = list(V35_MEDIUM_STRUCTURES)
+    style = available[(int(index) + len(used)) % len(available)]
+    used.append(style)
+    return style
+
+def _v35_compact(body):
+    body = re.sub(r"[ \t]+\n", "\n", str(body or ""))
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    return body.strip()
+
+def _v35_medium_phishing(plan, role, index):
+    lang = plan["language"]
+    ar = lang == "Arabic"
+    recipient = _v30_recipient(role, index, lang, plan["phase"])
+    domain = _v30_domain("medium")
+    link = _v30_link(plan, domain)
+    mailbox = _V35_RNG.choice(["workflow", "review", "coordination", "updates", "records"])
+    sender = f'{plan["sender"]} <{mailbox}@{domain}>'
+    area = plan["area"]
+    obj = plan["object"]
+    action = plan["action"]
+    signature = plan["signature"]
+    channel = _v35_medium_channel(plan["phase"], index)
+    structure = _v35_medium_structure(plan["phase"], index)
+    deadline = _V35_RNG.choice(V35_MEDIUM_DEADLINES_AR if ar else V35_MEDIUM_DEADLINES_EN)
+    greeting = _V35_RNG.choice(V35_MEDIUM_GREETINGS_AR if ar else V35_MEDIUM_GREETINGS_EN).format(area=area)
+    attachment = ""
+    suspicious_link = ""
+    medium_channel = "none"
+
+    if ar:
+        subjects = {
+            "policy_acknowledgement": f"تحديث سياسة {area}: {obj}",
+            "incident_followup": f"متابعة حادثة — {obj}",
+            "training_completion": f"استكمال تدريب {area}",
+            "schedule_revision": f"تعديل جدول: {obj}",
+            "equipment_notice": f"إشعار معدات — {obj}",
+            "audit_request": f"طلب مراجعة تدقيق: {obj}",
+            "case_assignment": f"إسناد حالة — {obj}",
+            "service_change": f"تغيير خدمة {area}",
+            "quality_review": f"مراجعة جودة: {obj}",
+            "document_correction": f"تصحيح مستند: {obj}",
+        }
+        intros = {
+            "policy_acknowledgement": f"نُشرت نسخة محدثة من الإجراء المرتبط بـ {obj} ضمن {area}.",
+            "incident_followup": f"أعيد فتح بند متابعة يتعلق بـ {obj} بعد مراجعة أولية من {area}.",
+            "training_completion": f"أظهرت قائمة التدريب أن متطلبًا مرتبطًا بـ {obj} ما زال غير مكتمل.",
+            "schedule_revision": f"تم تعديل توقيت {obj} ويحتاج القسم إلى تأكيد الاستلام.",
+            "equipment_notice": f"سُجل تحديث تشغيلي يتعلق بـ {obj} ضمن {area}.",
+            "audit_request": f"اختارت مراجعة الجودة بند {obj} لعينة التدقيق الحالية.",
+            "case_assignment": f"أُسند إليك عنصر متعلق بـ {obj} ضمن مسار {area}.",
+            "service_change": f"سيُطبق تغيير في خدمة {area} يؤثر على {obj}.",
+            "quality_review": f"أضيفت ملاحظة جديدة إلى مراجعة الجودة الخاصة بـ {obj}.",
+            "document_correction": f"اكتُشف اختلاف بسيط في مستند {obj} ويحتاج إلى مراجعة.",
+        }
+        subject = subjects[structure]
+        intro = intros[structure]
+        closing = _V35_RNG.choice([
+            "إذا لم يكن العنصر ضمن مسؤوليتك، أبلغ منسق القسم عبر القناة الرسمية.",
+            "لا ترسل أي معلومات سريرية حساسة عبر البريد.",
+            "سيبقى البند مفتوحًا حتى تتم مراجعته من القسم.",
+        ])
+    else:
+        subjects = {
+            "policy_acknowledgement": f"{area} Policy Update: {obj.title()}",
+            "incident_followup": f"Incident Follow-up — {obj.title()}",
+            "training_completion": f"{area} Training Completion Notice",
+            "schedule_revision": f"Schedule Revision: {obj.title()}",
+            "equipment_notice": f"Equipment Notice — {obj.title()}",
+            "audit_request": f"Audit Review Request: {obj.title()}",
+            "case_assignment": f"Case Assignment — {obj.title()}",
+            "service_change": f"{area} Service Change",
+            "quality_review": f"Quality Review: {obj.title()}",
+            "document_correction": f"Document Correction: {obj.title()}",
+        }
+        intros = {
+            "policy_acknowledgement": f"A revised procedure for {obj} has been published by {area}.",
+            "incident_followup": f"A follow-up item for {obj} was reopened after an initial review by {area}.",
+            "training_completion": f"The training register shows an outstanding requirement linked to {obj}.",
+            "schedule_revision": f"The timing for {obj} has changed and the department needs acknowledgement.",
+            "equipment_notice": f"An operational update has been logged for {obj} within {area}.",
+            "audit_request": f"The quality review selected {obj} for the current audit sample.",
+            "case_assignment": f"An item concerning {obj} has been assigned to you through {area}.",
+            "service_change": f"A service change in {area} will affect the workflow for {obj}.",
+            "quality_review": f"A new observation has been added to the quality review for {obj}.",
+            "document_correction": f"A minor discrepancy was identified in the {obj} document and needs review.",
+        }
+        subject = subjects[structure]
+        intro = intros[structure]
+        closing = _V35_RNG.choice([
+            "If the item is not assigned to you, notify the approved coordinator through the official directory.",
+            "Do not send clinical or patient information by email.",
+            "The item will remain open until the department records a response.",
+        ])
+
+    # Channel-specific message and grounded indicators.
+    indicators = [
+        _v30_indicator(
+            1, "domain",
+            "نطاق مرسل مشابه لكنه غير رسمي" if ar else "Look-alike sender domain",
+            (f"النطاق {domain} يشبه نطاق خدمة داخلية لكنه ليس hospital.org."
+             if ar else f"The domain {domain} resembles an internal service but is not hospital.org."),
+            domain, "from"
+        )
+    ]
+
+    if channel == "button":
+        medium_channel = "button"
+        suspicious_link = link
+        label = "فتح المهمة" if ar else _V35_RNG.choice(["Open task", "Review item", "View update"])
+        request = (f"يرجى {action} {deadline} من خلال صفحة المتابعة."
+                   if ar else f"Please {action} {deadline} through the review workspace.")
+        body = f"{greeting}،\n\n{intro} {request}\n\n[{label}]({link})\n\n{closing}\n\nمع التحية،\n{signature}" if ar else \
+               f"{greeting},\n\n{intro} {request}\n\n[{label}]({link})\n\n{closing}\n\nKind regards,\n{signature}"
+        indicators += [
+            _v30_indicator(2, "workflow",
+                "تسجيل دخول عبر مسار غير معتاد" if ar else "Unusual external workflow",
+                "توجّه الرسالة المستخدم إلى مساحة متابعة واردة عبر البريد بدل النظام المحفوظ." if ar else
+                "The email directs the recipient to an emailed workspace instead of the bookmarked internal system.",
+                request, "body"),
+            _v30_indicator(3, "link",
+                "زر يقود إلى نطاق غير معتمد" if ar else "Button leads to an unapproved domain",
+                f"وجهة الزر هي {domain} وليست نطاق المستشفى الرسمي." if ar else
+                f"The button resolves to {domain}, not the hospital's official domain.",
+                link, "link"),
+        ]
+    elif channel == "visible_link":
+        medium_channel = "link"
+        suspicious_link = link
+        request = (f"يمكن مراجعة البند {deadline} عبر عنوان المتابعة أدناه."
+                   if ar else f"The item can be reviewed {deadline} using the address below.")
+        body = f"{greeting}،\n\n{intro} {request}\n\n{link}\n\n{closing}\n\nمع التحية،\n{signature}" if ar else \
+               f"{greeting},\n\n{intro} {request}\n\n{link}\n\n{closing}\n\nRegards,\n{signature}"
+        indicators += [
+            _v30_indicator(2, "deadline",
+                "مهلة مهنية تضغط على المستلم" if ar else "Plausible deadline pressure",
+                "المهلة تبدو معقولة لكنها تُستخدم لدفع المستخدم إلى اتخاذ إجراء سريع." if ar else
+                "The deadline sounds reasonable but is used to encourage action before independent verification.",
+                deadline, "body"),
+            _v30_indicator(3, "link",
+                "رابط نصي خارجي" if ar else "External text link",
+                f"الرابط الظاهر يستخدم النطاق {domain} غير المعتمد." if ar else
+                f"The visible URL uses the unapproved domain {domain}.",
+                link, "link"),
+        ]
+    elif channel == "pdf_attachment":
+        medium_channel = "none"
+        attachment = re.sub(r"[^a-z0-9]+", "_", plan["family_id"].lower()).strip("_") + f"_{_V35_RNG.randrange(10,99)}.pdf"
+        request = (f"يرجى مراجعة الملخص المرفق {deadline} وإضافة ملاحظتك في النظام المعتاد."
+                   if ar else f"Please review the attached summary {deadline} and record your comment in the usual system.")
+        body = f"{greeting}،\n\n{intro} {request}\n\n{closing}\n\nمع التحية،\n{signature}" if ar else \
+               f"{greeting},\n\n{intro} {request}\n\n{closing}\n\nBest regards,\n{signature}"
+        indicators += [
+            _v30_indicator(2, "attachment",
+                "مرفق PDF غير متوقع" if ar else "Unexpected PDF attachment",
+                "تستخدم الرسالة مرفق PDF لم يطلبه المستلم ويجب التحقق منه قبل فتحه." if ar else
+                "The email includes an unsolicited PDF that should be verified before opening.",
+                attachment, "attachment"),
+            _v30_indicator(3, "deadline",
+                "مهلة مراجعة غير متوقعة" if ar else "Unexpected review deadline",
+                "تطلب الرسالة إتمام المراجعة ضمن مهلة لم يتم تأكيدها عبر القناة الداخلية." if ar else
+                "The message introduces a deadline that was not confirmed through the normal internal workflow.",
+                deadline, "body"),
+        ]
+    elif channel == "sharepoint_button":
+        medium_channel = "button"
+        suspicious_link = link
+        label = "فتح المجلد المشترك" if ar else "Open shared folder"
+        request = (f"تمت مشاركة نسخة العمل مع القسم للمراجعة {deadline}."
+                   if ar else f"A working copy has been shared with the department for review {deadline}.")
+        body = f"{greeting}،\n\n{intro} {request}\n\n[{label}]({link})\n\n{closing}\n\nمع التقدير،\n{signature}" if ar else \
+               f"{greeting},\n\n{intro} {request}\n\n[{label}]({link})\n\n{closing}\n\nKind regards,\n{signature}"
+        indicators += [
+            _v30_indicator(2, "sharepoint",
+                "مشاركة ملفات خارج البيئة الرسمية" if ar else "Unverified shared-document workflow",
+                "تدّعي الرسالة مشاركة ملف عبر مساحة تشبه SharePoint دون استخدام المسار الرسمي المعروف." if ar else
+                "The email claims a shared-document workflow without using the known official SharePoint route.",
+                request, "body"),
+            _v30_indicator(3, "link",
+                "وجهة مشاركة غير رسمية" if ar else "Unapproved shared-folder destination",
+                f"زر المجلد المشترك يقود إلى {domain}، وليس نطاق Microsoft أو المستشفى المعتمد." if ar else
+                f"The shared-folder button resolves to {domain}, not an approved hospital or Microsoft domain.",
+                link, "link"),
+        ]
+    else:  # internal_reply
+        medium_channel = "none"
+        requested = "رقم الموظف والقسم" if ar else "your employee ID and department"
+        request = (f"لتحديث سجل التوزيع، يرجى الرد على هذه الرسالة بذكر {requested} {deadline}."
+                   if ar else f"To update the assignment record, reply with {requested} {deadline}.")
+        body = f"{greeting}،\n\n{intro} {request}\n\n{closing}\n\nمع التحية،\n{signature}" if ar else \
+               f"{greeting},\n\n{intro} {request}\n\n{closing}\n\nRegards,\n{signature}"
+        indicators += [
+            _v30_indicator(2, "reply_request",
+                "طلب معلومات عبر الرد على البريد" if ar else "Unusual reply-based information request",
+                "تطلب الرسالة إرسال معلومات موظف عبر الرد بدل تحديثها في النظام الرسمي." if ar else
+                "The message asks for employee information by email reply instead of through the official system.",
+                request, "body"),
+            _v30_indicator(3, "workflow",
+                "مسار عمل غير قياسي" if ar else "Non-standard workflow",
+                "طلب تحديث سجل داخلي عبر البريد لا يطابق الإجراء المعتاد." if ar else
+                "Updating an internal assignment record by email does not match the normal workflow.",
+                requested, "body"),
+        ]
+
+    body = _v35_compact(body)
+    # Dynamic tutor text based on the actual indicator titles.
+    titles = [str(i.get("title", "")).strip() for i in indicators]
+    if ar:
+        why = "تبدو الرسالة مرتبطة بالعمل، لكن " + "، و".join(titles) + " تجعل الطلب غير موثوق دون تحقق مستقل."
+        tip = {
+            "button": "افتح النظام الرسمي من الاختصار المحفوظ بدل استخدام زر وصل عبر البريد.",
+            "visible_link": "قارن النطاق حرفًا بحرف مع النطاق الرسمي قبل فتح أي رابط.",
+            "pdf_attachment": "تحقق من المرفق مع القسم عبر قناة موثوقة قبل فتحه.",
+            "sharepoint_button": "افتح SharePoint من بوابة Microsoft الرسمية، لا من زر داخل رسالة غير متوقعة.",
+            "internal_reply": "لا ترسل بيانات الموظف عبر الرد؛ استخدم النظام الرسمي أو اتصل بالقسم.",
+        }[channel]
+    else:
+        why = "The message is workplace-relevant, but " + ", ".join(titles) + " make the request unsafe without independent verification."
+        tip = {
+            "button": "Open the official system from a saved bookmark rather than using an emailed button.",
+            "visible_link": "Compare the destination domain character by character with the official hospital domain.",
+            "pdf_attachment": "Verify the attachment with the department through a trusted channel before opening it.",
+            "sharepoint_button": "Open SharePoint through the official Microsoft or hospital portal, not an unexpected email button.",
+            "internal_reply": "Do not send employee details by reply; use the official system or contact the department directly.",
+        }[channel]
+
+    return {
+        "from": sender,
+        "to": recipient,
+        "subject": subject,
+        "body": body,
+        "attachment": attachment,
+        "suspicious_link": suspicious_link,
+        "suspicious_text": next((i["evidence"] for i in indicators if i.get("target") == "body"), ""),
+        "indicators": indicators,
+        "why_risky": why,
+        "learning_tip": tip,
+        "is_phishing": True,
+        "email_type": "Phishing",
+        "attack_type": {
+            "button": "Look-alike portal",
+            "visible_link": "External review link",
+            "pdf_attachment": "Malicious PDF lure",
+            "sharepoint_button": "Fake shared document",
+            "internal_reply": "Reply-based information harvesting",
+        }[channel],
+        "risk_level": "medium",
+        "scenario_id": plan["fingerprint"] + ":" + channel + ":" + structure,
+        "scenario_meta": dict(plan, medium_channel_type=channel, writer_style=structure),
+        "medium_channel": medium_channel,
+        "display_time": _V35_RNG.choice([
+            "Monday, 9:18 AM", "Tuesday, 1:26 PM", "Wednesday, 11:04 AM",
+            "Thursday, 8:47 AM", "Friday, 2:12 PM", "Yesterday, 3:39 PM"
+        ]),
+    }
+
+def _v35_validate_medium(result):
+    if not isinstance(result, dict) or not result.get("is_phishing"):
+        return False
+    body = str(result.get("body", ""))
+    link = str(result.get("suspicious_link", "") or "")
+    attachment = str(result.get("attachment", "") or "")
+    channel = str(result.get("scenario_meta", {}).get("medium_channel_type", ""))
+    inds = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
+    if len(inds) != 3:
+        return False
+    if "[QR" in body.upper():
+        return False
+    has_button = bool(re.search(r"\[[^\]]+\]\s*\(\s*https?://", body))
+    visible_urls = re.findall(r"https?://[^\s\)\]]+", body)
+    if channel in {"button", "sharepoint_button"}:
+        if not has_button or not link or len(visible_urls) != 1:
+            return False
+    elif channel == "visible_link":
+        if has_button or not link or body.count(link) != 1:
+            return False
+    elif channel == "pdf_attachment":
+        if has_button or link or not attachment.lower().endswith(".pdf"):
+            return False
+    elif channel == "internal_reply":
+        if has_button or link or attachment:
+            return False
+    else:
+        return False
+    # Grounding: every evidence string exists in its declared field.
+    sources = {
+        "from": str(result.get("from", "")),
+        "body": body,
+        "link": link,
+        "attachment": attachment,
+        "greeting": body,
+        "subject": str(result.get("subject", "")),
+    }
+    for item in inds:
+        evidence = str(item.get("evidence", "")).strip()
+        location = str(item.get("location", item.get("target", "body")))
+        if evidence and evidence.lower() not in sources.get(location, body).lower():
+            return False
+    return True
+
+_V35_BASE_V33_GENERATE = _v33_generate
+
+def _v35_generate(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    diff = str(difficulty or "medium").lower()
+    if diff != "medium" or not is_phishing:
+        return _V35_BASE_V33_GENERATE(role, index, language, difficulty, is_phishing, assessment)
+    phase = "assess" if assessment else "learn"
+    result = None
+    for attempt in range(18):
+        plan = _v33_plan(role, index + attempt * 104729, language, "medium", phase, True)
+        result = _v35_medium_phishing(plan, role, index)
+        if _v35_validate_medium(result):
+            try:
+                evaluate_and_log_auto_scores(result, "medium", language, is_phishing=True)
+            except Exception:
+                pass
+            return result
+    return result
+
+def generate_email(role, index, language, difficulty="medium"):
+    return _v35_generate(role, index, language, difficulty, True, False)
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    return _v35_generate(role, index, language, difficulty, bool(is_phishing), True)
+
+# =============================================================
+# END MEDIUM GENERATION ENGINE v35
+# =============================================================
+
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
