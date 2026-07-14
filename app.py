@@ -11080,6 +11080,344 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
 # END MEDIUM GENERATION ENGINE v36 — PHASE 1
 # =============================================================
 
+
+# =============================================================
+# MEDIUM GENERATION ENGINE v40 — SINGLE-FILE SAFE REBUILD
+# -------------------------------------------------------------
+# Scope: Medium phishing only. Easy, Hard, legitimate messages,
+# UI, reports, authentication, providers and storage are untouched.
+# v36/v35 remain available as automatic fallback.
+# =============================================================
+
+V40_ENABLED = True
+V40_USE_API_TEXT = True
+_V40_RNG = random.SystemRandom()
+_V40_FALLBACK = _v36_generate
+
+V40_ACTIONS = {
+    "button": 20,
+    "visible_link": 17,
+    "pdf_attachment": 17,
+    "sharepoint": 15,
+    "internal_workspace": 16,
+    "reply_request": 15,
+}
+
+V40_GOALS = {
+    "button": ["review", "approve", "verify", "confirm", "acknowledge", "check"],
+    "visible_link": ["review", "verify", "read", "update", "check", "confirm"],
+    "pdf_attachment": ["review", "read", "download", "check", "approve"],
+    "sharepoint": ["review", "read", "approve", "confirm", "acknowledge"],
+    "internal_workspace": ["review", "update", "confirm", "check", "approve"],
+    "reply_request": ["confirm", "verify", "submit", "acknowledge", "update"],
+}
+
+V40_STYLES = [
+    "formal_notice", "brief_operational", "follow_up", "system_alert",
+    "department_request", "meeting_reference", "handover_note",
+    "quality_escalation", "shared_document_notice", "vendor_style",
+]
+
+V40_SCENARIOS = {
+    "clinical": [
+        {"id":"medication_safety","area":"Medication Safety","senders":["Medication Safety Office","Clinical Pharmacy","Pharmacy Quality Unit"],
+         "events":["dose clarification pending","high-alert medication review","formulary exception follow-up","medication reconciliation discrepancy","antimicrobial approval note"],
+         "objects":["insulin order","anticoagulant record","discharge medication list","restricted antibiotic request","infusion concentration"]},
+        {"id":"laboratory","area":"Laboratory Services","senders":["Laboratory Quality","Pathology Coordination","Diagnostic Services"],
+         "events":["specimen exception review","critical-result acknowledgement","sample rejection follow-up","reference range update","external test reconciliation"],
+         "objects":["blood culture specimen","histopathology slide","coagulation sample","molecular test request","critical potassium result"]},
+        {"id":"radiology","area":"Radiology","senders":["Radiology Operations","Imaging Quality","PACS Coordination"],
+         "events":["report addendum pending","contrast checklist correction","image-routing exception","urgent finding acknowledgement","protocol change notice"],
+         "objects":["CT pulmonary angiogram","MRI safety form","portable chest image","ultrasound referral","contrast administration record"]},
+        {"id":"infection_control","area":"Infection Prevention","senders":["Infection Prevention","IPC Surveillance","Occupational Health"],
+         "events":["exposure follow-up","isolation audit finding","screening list correction","outbreak contact review","hand-hygiene observation"],
+         "objects":["MRSA screening record","needle-stick exposure","isolation room log","staff vaccination status","contact tracing list"]},
+        {"id":"patient_safety","area":"Patient Safety","senders":["Patient Safety Office","Clinical Governance","Risk Management"],
+         "events":["incident follow-up","near-miss clarification","safety action acknowledgement","case-review assignment","root-cause evidence request"],
+         "objects":["fall incident","medication near miss","wrong-label event","handover omission","delayed escalation case"]},
+        {"id":"referral","area":"Referral Coordination","senders":["Referral Management","Care Coordination","Transfer Centre"],
+         "events":["referral returned for correction","transfer acceptance pending","specialist response requested","appointment pathway update","external facility note"],
+         "objects":["cardiology referral","oncology transfer","neonatal consultation","rehabilitation request","tertiary-care referral"]},
+        {"id":"equipment","area":"Biomedical Engineering","senders":["Biomedical Engineering","Medical Devices Unit","Clinical Engineering"],
+         "events":["device recall acknowledgement","maintenance slot confirmation","calibration exception","service bulletin review","asset-location verification"],
+         "objects":["infusion pump","ventilator","defibrillator","patient monitor","laboratory analyser"]},
+        {"id":"training","area":"Clinical Education","senders":["Clinical Education","Simulation Centre","Competency Office"],
+         "events":["competency evidence pending","mandatory module follow-up","simulation booking change","certificate correction","annual skills validation"],
+         "objects":["basic life support certificate","medication competency","infection-control module","device training record","emergency response drill"]},
+    ],
+    "admin": [
+        {"id":"hr","area":"Human Resources","senders":["HR Operations","Workforce Services","Employee Relations"],
+         "events":["employee record verification","leave balance correction","benefit enrolment follow-up","contract detail confirmation","attendance exception"],
+         "objects":["bank information record","annual leave request","housing allowance","employment contract","attendance log"]},
+        {"id":"finance","area":"Finance","senders":["Finance Operations","Accounts Payable","Revenue Cycle"],
+         "events":["invoice exception review","payment batch confirmation","cost-centre correction","refund approval follow-up","reconciliation item"],
+         "objects":["medical supplier invoice","insurance remittance","patient refund","purchase order","monthly reconciliation file"]},
+        {"id":"procurement","area":"Procurement","senders":["Procurement Office","Supply Chain","Vendor Management"],
+         "events":["supplier document renewal","quotation clarification","delivery discrepancy","contract review","vendor onboarding update"],
+         "objects":["surgical consumables contract","laboratory reagent order","PPE delivery","maintenance agreement","pharmacy supplier profile"]},
+        {"id":"insurance","area":"Insurance Coordination","senders":["Insurance Office","Claims Management","Revenue Integrity"],
+         "events":["claim documentation correction","coverage verification","pre-authorisation follow-up","rejected claim review","payer rule update"],
+         "objects":["inpatient claim","day-surgery approval","radiology authorisation","pharmacy claim","emergency admission record"]},
+        {"id":"records","area":"Health Information Management","senders":["Medical Records","Document Control","Health Information Management"],
+         "events":["record completion reminder","scanning discrepancy","release request follow-up","retention notice","coding clarification"],
+         "objects":["discharge summary","consent form","patient file index","coding worksheet","record release form"]},
+        {"id":"audit","area":"Internal Audit","senders":["Internal Audit","Compliance Office","Quality Assurance"],
+         "events":["sample evidence request","audit finding response","control-owner confirmation","policy exception review","closure evidence reminder"],
+         "objects":["cash handling control","patient identity audit","procurement sample","access review","document retention control"]},
+        {"id":"schedule","area":"Workforce Scheduling","senders":["Scheduling Office","Operations Planning","Roster Coordination"],
+         "events":["roster revision","coverage gap follow-up","overtime confirmation","shift-swap exception","holiday schedule update"],
+         "objects":["weekend coverage","Ramadan roster","on-call schedule","clinic reception rota","annual leave coverage"]},
+    ],
+    "it": [
+        {"id":"access","area":"Identity and Access","senders":["Identity Services","Access Governance","IT Security"],
+         "events":["access recertification","privileged account review","inactive account follow-up","role assignment correction","MFA registration notice"],
+         "objects":["EMR access","PACS account","VPN profile","shared mailbox permission","administrator role"]},
+        {"id":"network","area":"Network Operations","senders":["Network Operations","Infrastructure Services","NOC Team"],
+         "events":["gateway maintenance notice","certificate update","wireless profile change","firewall exception review","remote access follow-up"],
+         "objects":["clinical Wi-Fi profile","VPN gateway","patient portal certificate","firewall rule","remote support session"]},
+        {"id":"service_desk","area":"IT Service Desk","senders":["IT Service Desk","Technical Support","Endpoint Services"],
+         "events":["ticket closure confirmation","device compliance alert","software deployment notice","remote support request","asset assignment correction"],
+         "objects":["laptop encryption status","clinical workstation","printer driver","antivirus agent","mobile device enrolment"]},
+        {"id":"backup","area":"Data Protection","senders":["Backup Operations","Data Protection","Infrastructure Reliability"],
+         "events":["backup failure review","restore test confirmation","retention policy update","storage quota alert","replication exception"],
+         "objects":["EMR backup job","radiology archive","shared drive snapshot","database restore test","cloud backup account"]},
+        {"id":"change","area":"Change Management","senders":["Change Advisory Board","Release Management","Clinical Systems"],
+         "events":["change approval pending","release window confirmation","rollback plan review","emergency change notice","post-change validation"],
+         "objects":["EMR upgrade","pharmacy interface","laboratory middleware","patient portal release","network core update"]},
+    ],
+    "other": [
+        {"id":"policy","area":"Hospital Operations","senders":["Hospital Operations","Policy Office","Corporate Services"],
+         "events":["policy acknowledgement","service update","department contact verification","facility notice","staff information update"],
+         "objects":["visitor policy","parking permit","staff directory","emergency contact list","facility access notice"]},
+        {"id":"training","area":"Staff Development","senders":["Staff Development","Learning Office","Training Coordination"],
+         "events":["training completion follow-up","certificate review","course booking change","attendance confirmation","learning record correction"],
+         "objects":["mandatory induction","cybersecurity module","fire safety course","patient privacy training","annual competency record"]},
+    ],
+}
+
+V40_AR_TERMS = {
+    "Medication Safety":"سلامة الدواء", "Laboratory Services":"خدمات المختبر", "Radiology":"الأشعة",
+    "Infection Prevention":"مكافحة العدوى", "Patient Safety":"سلامة المرضى", "Referral Coordination":"تنسيق الإحالات",
+    "Biomedical Engineering":"الهندسة الطبية", "Clinical Education":"التعليم السريري", "Human Resources":"الموارد البشرية",
+    "Finance":"المالية", "Procurement":"المشتريات", "Insurance Coordination":"تنسيق التأمين",
+    "Health Information Management":"إدارة المعلومات الصحية", "Internal Audit":"التدقيق الداخلي",
+    "Workforce Scheduling":"جدولة القوى العاملة", "Identity and Access":"الهوية والصلاحيات",
+    "Network Operations":"عمليات الشبكة", "IT Service Desk":"مكتب خدمات تقنية المعلومات",
+    "Data Protection":"حماية البيانات", "Change Management":"إدارة التغيير", "Hospital Operations":"عمليات المستشفى",
+    "Staff Development":"تطوير الموظفين",
+}
+
+
+def _v40_memory(role_type, language, phase):
+    key = f"v40_history_{role_type}_{language}_{phase}"
+    return st.session_state.setdefault(key, {k: [] for k in ["family","event","object","action","goal","style","combo","subject"]})
+
+
+def _v40_weighted_action(mem):
+    items = list(V40_ACTIONS.items())
+    recent = mem["action"][-3:]
+    if len(recent) >= 2 and recent[-1] == recent[-2]:
+        items = [(k,w) for k,w in items if k != recent[-1]]
+    total = sum(w for _,w in items); pick = _V40_RNG.uniform(0,total); acc=0
+    for k,w in items:
+        acc += w
+        if pick <= acc: return k
+    return items[-1][0]
+
+
+def _v40_choose_fresh(options, history, window=8):
+    recent = set(history[-window:])
+    fresh = [x for x in options if x not in recent]
+    return _V40_RNG.choice(fresh or options)
+
+
+def _v40_plan(role, index, language, phase):
+    role_type = _v30_role_type(role)
+    bank = V40_SCENARIOS.get(role_type, V40_SCENARIOS["other"])
+    mem = _v40_memory(role_type, language, phase)
+    families = [x for x in bank if x["id"] not in set(mem["family"][-5:])] or bank
+    family = _V40_RNG.choice(families)
+    event = _v40_choose_fresh(family["events"], mem["event"], 14)
+    obj = _v40_choose_fresh(family["objects"], mem["object"], 14)
+    action = _v40_weighted_action(mem)
+    goal = _v40_choose_fresh(V40_GOALS[action], mem["goal"], 6)
+    style = _v40_choose_fresh(V40_STYLES, mem["style"], 7)
+    combo = f"{family['id']}|{event}|{obj}|{action}|{goal}|{style}"
+    for _ in range(30):
+        if combo not in mem["combo"][-100:]: break
+        event = _V40_RNG.choice(family["events"]); obj = _V40_RNG.choice(family["objects"])
+        action = _v40_weighted_action(mem); goal = _V40_RNG.choice(V40_GOALS[action]); style = _V40_RNG.choice(V40_STYLES)
+        combo = f"{family['id']}|{event}|{obj}|{action}|{goal}|{style}"
+    for k,v in [("family",family["id"]),("event",event),("object",obj),("action",action),("goal",goal),("style",style),("combo",combo)]:
+        mem[k].append(v); mem[k] = mem[k][-120:]
+    return {"role_type":role_type,"family":family,"event":event,"object":obj,"action":action,"goal":goal,"style":style,"combo":combo,"phase":phase,"language":language}
+
+
+def _v40_deadline(language):
+    if language == "Arabic":
+        return _V40_RNG.choice(["قبل نهاية دوام الغد","خلال يومي عمل","قبل اجتماع القسم القادم","بحلول ظهر الخميس","ضمن نافذة المراجعة الحالية","قبل إغلاق قائمة المتابعة"])
+    return _V40_RNG.choice(["by the end of tomorrow's shift","within two business days","before the next department meeting","by Thursday noon","during the current review window","before the follow-up list closes"])
+
+
+def _v40_domain():
+    return _V40_RNG.choice([
+        "care-workflow.org","clinical-review.net","hospital-tasks.com","med-docs.org",
+        "staff-services.net","health-workspace.com","carecoordination.org","moh-services.net",
+        "hospital-share.org","clinical-portal.net","medsupport-services.com","health-records.org"
+    ])
+
+
+def _v40_goal_label(goal, language):
+    en={"review":"Review","approve":"Approve","verify":"Verify","confirm":"Confirm","download":"Download","read":"Read","update":"Update","check":"Check","acknowledge":"Acknowledge","submit":"Submit"}
+    ar={"review":"مراجعة","approve":"اعتماد","verify":"تحقق","confirm":"تأكيد","download":"تنزيل","read":"قراءة","update":"تحديث","check":"فحص","acknowledge":"إقرار","submit":"إرسال"}
+    return (ar if language=="Arabic" else en)[goal]
+
+
+def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase):
+    ar = plan["language"] == "Arabic"; fam=plan["family"]; area=fam["area"]
+    sender=_V40_RNG.choice(fam["senders"]); event=plan["event"]; obj=plan["object"]; goal=_v40_goal_label(plan["goal"],plan["language"]); deadline=_v40_deadline(plan["language"])
+    if ar:
+        area_ar=V40_AR_TERMS.get(area,area)
+        greetings=[f"فريق {area_ar}","الزملاء الكرام","صباح الخير","الزملاء المعنيون","تحية طيبة"]
+        g=_V40_RNG.choice(greetings)
+        subject=_V40_RNG.choice([f"متابعة مطلوبة: {obj}",f"تحديث {area_ar} — {obj}",f"إجراء معلق بخصوص {obj}",f"مراجعة تشغيلية: {obj}"])
+        intro=_V40_RNG.choice([f"بعد مراجعة سجل {obj}، ظهر بند متعلق بـ {event}.",f"أحال فريق {area_ar} بندًا يخص {obj} للمتابعة.",f"تم تسجيل تحديث تشغيلي بخصوص {obj} ضمن {area_ar}.",f"إشارة إلى المتابعة الأخيرة، ما زال بند {obj} بحاجة إلى استكمال."])
+        req=f"يرجى {goal} البند {deadline}. {evidence_phrase}"
+        sign=_V40_RNG.choice([sender,f"وحدة {area_ar}","فريق التنسيق","مكتب الجودة"])
+        closing=_V40_RNG.choice(["إذا لم يكن البند ضمن مسؤوليتك، تحقق من الجهة عبر الدليل الرسمي.","استخدم القناة الداخلية المعتادة لأي معلومات حساسة.","سيتم تحديث سجل المتابعة بعد استلام الإجراء."])
+        body=f"{g}،\n\n{intro}\n\n{req}\n\n{closing}\n\nمع التحية،\n{sign}"
+    else:
+        greetings=[f"Dear {area} Team","Good morning","Dear colleagues",f"Hello {area}","Attention team"]
+        g=_V40_RNG.choice(greetings)
+        subject=_V40_RNG.choice([f"Follow-up Required: {obj.title()}",f"{area} Update — {obj.title()}",f"Pending Action: {obj.title()}",f"Operational Review: {obj.title()}"])
+        intro=_V40_RNG.choice([f"A review of the {obj} record identified an item related to {event}.",f"The {area} team has referred an item concerning {obj} for follow-up.",f"An operational update was logged for {obj} within {area}.",f"Following the latest handover, the {obj} item still requires completion."])
+        req=f"Please {goal.lower()} the item {deadline}. {evidence_phrase}"
+        sign=_V40_RNG.choice([sender,f"{area} Coordination","Quality Office","Operations Support"])
+        closing=_V40_RNG.choice(["If this is not assigned to you, verify the owner through the official directory.","Use the usual internal system for any sensitive information.","The tracking record will update after the requested action is received."])
+        body=f"{g},\n\n{intro}\n\n{req}\n\n{closing}\n\nKind regards,\n{sign}"
+    return subject,body,sender,deadline
+
+
+def _v40_api_copy(plan, recipient, domain, link, attachment, evidence_phrase):
+    if not V40_USE_API_TEXT: return None
+    ar=plan["language"]=="Arabic"; fam=plan["family"]
+    instruction = f"""Write ONE realistic {'Arabic' if ar else 'English'} workplace email for a Saudi hospital employee.
+Return JSON only with keys subject and body.
+Scenario area: {fam['area']}
+Specific event: {plan['event']}
+Object: {plan['object']}
+Goal: {plan['goal']}
+Writing style: {plan['style']}
+Action type: {plan['action']}
+Recipient: {recipient}
+MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}
+Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action."""
+    try:
+        raw=call_ai(instruction,max_tokens=900)
+        obj=parse_json_response(raw)
+        if isinstance(obj,dict):
+            subject=str(obj.get("subject","")).strip(); body=str(obj.get("body","")).strip()
+            if subject and body and evidence_phrase in body and len(body.split())>=35:
+                return subject,body
+    except Exception as e:
+        try: _store_debug("v40_api_copy",str(e))
+        except Exception: pass
+    return None
+
+
+def _v40_build(role,index,language,phase):
+    plan=_v40_plan(role,index,language,phase); ar=language=="Arabic"
+    recipient=_v30_recipient(role,index,language,phase); domain=_v40_domain(); link=f"https://{domain}/{_V40_RNG.choice(['review','workspace','documents','task','shared'])}/{_V40_RNG.randrange(1000,9999)}"
+    action=plan["action"]; attachment=""; suspicious_link=""; medium_channel="none"
+    label=_v40_goal_label(plan["goal"],language)
+    if action=="button": evidence_phrase=f"[{label} item]({link})" if not ar else f"[{label} البند]({link})"; suspicious_link=link; medium_channel="button"
+    elif action=="visible_link": evidence_phrase=link; suspicious_link=link; medium_channel="link"
+    elif action=="sharepoint": evidence_phrase=f"[Open shared document]({link})" if not ar else f"[فتح المستند المشترك]({link})"; suspicious_link=link; medium_channel="button"
+    elif action=="internal_workspace": evidence_phrase=f"[{label} in workspace]({link})" if not ar else f"[{label} في مساحة العمل]({link})"; suspicious_link=link; medium_channel="button"
+    elif action=="pdf_attachment":
+        attachment=f"{plan['family']['id']}_{_V40_RNG.randrange(100,999)}.pdf"; evidence_phrase=(f"The supporting summary is attached as {attachment}." if not ar else f"الملخص الداعم مرفق باسم {attachment}.")
+    else:
+        evidence_phrase=("Reply to this email with your employee number and department." if not ar else "يرجى الرد على هذه الرسالة برقم الموظف والقسم.")
+    local_subject,local_body,sender_name,deadline=_v40_local_copy(plan,recipient,domain,link,attachment,evidence_phrase)
+    api=_v40_api_copy(plan,recipient,domain,link,attachment,evidence_phrase)
+    subject,body=api if api else (local_subject,local_body)
+    mailbox=_V40_RNG.choice(["coordination","workflow","quality","operations","records","updates"])
+    sender=f"{sender_name} <{mailbox}@{domain}>"
+    inds=[_v30_indicator(1,"domain","نطاق مرسل غير معتمد" if ar else "Unapproved sender domain",f"النطاق {domain} ليس نطاق المستشفى الرسمي." if ar else f"The sender uses {domain}, not the hospital's official domain.",domain,"from")]
+    if action=="pdf_attachment":
+        inds += [_v30_indicator(2,"attachment","مرفق PDF غير متوقع" if ar else "Unexpected PDF attachment","المرفق لم يُطلب عبر المسار المعتاد ويجب التحقق منه قبل فتحه." if ar else "The PDF was not requested through the usual workflow and should be verified before opening.",attachment,"attachment"),
+                 _v30_indicator(3,"workflow","طلب مراجعة خارج المسار المعتاد" if ar else "Unexpected document workflow","تطلب الرسالة التعامل مع مستند وصل بالبريد بدل النظام الداخلي." if ar else "The message moves a work item into an emailed attachment instead of the normal internal system.",evidence_phrase,"body")]
+    elif action=="reply_request":
+        inds += [_v30_indicator(2,"reply_request","طلب معلومات عبر الرد" if ar else "Reply-based information request","تطلب الرسالة بيانات موظف عبر الرد بدل النظام الرسمي." if ar else "The email asks for employee information by reply rather than through the official system.",evidence_phrase,"body"),
+                 _v30_indicator(3,"workflow","مسار تحقق غير قياسي" if ar else "Non-standard verification workflow","رقم الموظف والقسم لا يُفترض تأكيدهما عبر رسالة غير متوقعة." if ar else "Employee identity details should not be verified through an unexpected email reply.","رقم الموظف والقسم" if ar else "employee number and department","body")]
+    elif action=="sharepoint":
+        inds += [_v30_indicator(2,"sharepoint","إشعار مشاركة غير متوقع" if ar else "Unexpected shared-document notice","تدعي الرسالة مشاركة مستند دون سياق مؤكد من داخل النظام." if ar else "The message claims a shared document without a confirmed internal context.",evidence_phrase,"body"),
+                 _v30_indicator(3,"link","وجهة مشاركة خارجية" if ar else "Unapproved sharing destination",f"الزر يقود إلى {domain} وليس Microsoft أو نطاق المستشفى." if ar else f"The shared-document button resolves to {domain}, not an approved Microsoft or hospital domain.",link,"link")]
+    elif action=="internal_workspace":
+        inds += [_v30_indicator(2,"workflow","مساحة عمل غير معروفة" if ar else "Unrecognized internal workspace","تستخدم الرسالة اسم مساحة عمل عامة بدل نظام معروف ومحفوظ." if ar else "The email references a generic workspace rather than a known bookmarked hospital system.",evidence_phrase,"body"),
+                 _v30_indicator(3,"link","زر إلى نطاق خارجي" if ar else "Workspace button leads externally",f"وجهة مساحة العمل هي {domain}." if ar else f"The workspace button resolves to the external domain {domain}.",link,"link")]
+    elif action=="visible_link":
+        inds += [_v30_indicator(2,"deadline","ضغط زمني معقول ظاهريًا" if ar else "Plausible time pressure","المهلة تبدو مهنية لكنها تشجع على التصرف قبل التحقق المستقل." if ar else "The deadline sounds routine but encourages action before independent verification.",deadline,"body"),
+                 _v30_indicator(3,"link","رابط خارجي ظاهر" if ar else "Visible external link",f"الرابط الظاهر يستخدم النطاق غير المعتمد {domain}." if ar else f"The visible URL uses the unapproved domain {domain}.",link,"link")]
+    else:
+        inds += [_v30_indicator(2,"workflow","إجراء عبر زر غير متوقع" if ar else "Unexpected button-based workflow","الطلب يحول إجراء داخلي إلى زر داخل رسالة غير متوقعة." if ar else "The message converts an internal work process into an unexpected emailed button.",evidence_phrase,"body"),
+                 _v30_indicator(3,"link","وجهة زر غير معتمدة" if ar else "Button leads to an unapproved domain",f"الزر يقود إلى {domain} بدل النظام الرسمي." if ar else f"The button resolves to {domain}, not the official hospital system.",link,"link")]
+    why=("ترتبط الرسالة بسياق صحي واقعي، لكن الأدلة المحددة أعلاه لا تتوافق مع مسار العمل الرسمي، لذلك يجب التحقق منها عبر قناة مستقلة." if ar else "The email uses a realistic healthcare context, but the specific evidence above does not match the approved workflow and should be verified independently.")
+    tip=("افتح النظام الرسمي من الاختصار المحفوظ أو اتصل بالقسم عبر الدليل الداخلي، ولا تستخدم الإجراء الموجود في الرسالة." if ar else "Open the official system from a saved bookmark or contact the department through the internal directory instead of using the email action.")
+    return {"from":sender,"to":recipient,"subject":subject,"body":_v35_compact(body),"attachment":attachment,"suspicious_link":suspicious_link,"suspicious_text":next((i.get("evidence","") for i in inds if i.get("target")=="body"),""),"indicators":inds,"why_risky":why,"learning_tip":tip,"is_phishing":True,"email_type":"Phishing","attack_type":{"button":"Look-alike workflow button","visible_link":"External review link","pdf_attachment":"Unexpected PDF lure","sharepoint":"Fake shared document","internal_workspace":"Fake internal workspace","reply_request":"Reply-based information harvesting"}[action],"risk_level":"medium","scenario_id":"v40:"+plan["combo"],"scenario_meta":{"engine":"v40","medium_channel_type":{"button":"button","visible_link":"visible_link","pdf_attachment":"pdf_attachment","sharepoint":"sharepoint_button","internal_workspace":"button","reply_request":"internal_reply"}[action],"action_type":action,"goal":plan["goal"],"style":plan["style"],"family_id":plan["family"]["id"],"event":plan["event"],"object":plan["object"]},"medium_channel":medium_channel,"display_time":_V40_RNG.choice(["Monday, 9:18 AM","Tuesday, 1:26 PM","Wednesday, 11:04 AM","Thursday, 8:47 AM","Friday, 2:12 PM","Yesterday, 3:39 PM"])}
+
+
+def _v40_validate(result):
+    if not isinstance(result,dict) or not result.get("is_phishing"): return False
+    body=str(result.get("body",'')); link=str(result.get("suspicious_link",'') or ''); att=str(result.get("attachment",'') or ''); inds=result.get("indicators",[])
+    if len(inds) != 3 or "[QR" in body.upper(): return False
+    if _DIRECT_PASSWORD_RE.search(body) or _DIRECT_THREAT_RE.search(body): return False
+    action=str(result.get("scenario_meta",{}).get("action_type",'')); buttons=re.findall(r"\[[^\]]+\]\(https?://[^\)]+\)",body); urls=re.findall(r"https?://[^\s\)\]]+",body)
+    if action in {"button","sharepoint","internal_workspace"} and (len(buttons)!=1 or not link or att): return False
+    if action=="visible_link" and (buttons or not link or body.count(link)!=1 or att): return False
+    if action=="pdf_attachment" and (buttons or link or not att.lower().endswith('.pdf')): return False
+    if action=="reply_request" and (buttons or link or att): return False
+    sources={"from":str(result.get("from",'')),"body":body,"link":link,"attachment":att,"subject":str(result.get("subject",''))}
+    seen=set()
+    for i,item in enumerate(inds,1):
+        if int(item.get("number",i)) != i: return False
+        ev=str(item.get("evidence",'')).strip(); loc=str(item.get("location",item.get("target","body")))
+        if not ev or ev.lower() not in sources.get(loc,body).lower(): return False
+        key=(loc,ev.lower())
+        if key in seen: return False
+        seen.add(key)
+    return True
+
+
+def _v40_generate(role,index,language,difficulty="medium",is_phishing=True,assessment=False):
+    diff=str(difficulty or "medium").lower()
+    if not V40_ENABLED or diff!="medium" or not is_phishing:
+        return _V40_FALLBACK(role,index,language,difficulty,is_phishing,assessment)
+    phase="assess" if assessment else "learn"
+    for attempt in range(4):
+        try:
+            result=_v40_build(role,index + attempt*1009,language,phase)
+            if _v40_validate(result):
+                try: evaluate_and_log_auto_scores(result,"medium",language,True)
+                except Exception: pass
+                return result
+        except Exception as e:
+            try: _store_debug("v40_generation",str(e))
+            except Exception: pass
+    return _V40_FALLBACK(role,index,language,difficulty,is_phishing,assessment)
+
+
+def generate_email(role,index,language,difficulty="medium"):
+    return _v40_generate(role,index,language,difficulty,True,False)
+
+
+def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
+    return _v40_generate(role,index,language,difficulty,bool(is_phishing),True)
+
+# =============================================================
+# END MEDIUM GENERATION ENGINE v40
+# =============================================================
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
