@@ -10814,6 +10814,272 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
 # =============================================================
 
 
+
+# =============================================================
+# MEDIUM GENERATION ENGINE v36 — PHASE 1
+# Scenario Engine + Action Engine + Goal Engine
+# -------------------------------------------------------------
+# Safety scope:
+#   * Medium phishing only.
+#   * v35 remains intact and is used as the composer/fallback.
+#   * Easy, Hard, legitimate messages, UI and all other systems
+#     remain unchanged.
+# =============================================================
+
+_V36_RNG = random.SystemRandom()
+
+# Scenario families are semantic building blocks, not email templates.
+# Each generated plan combines a family, event, object, sender and signature.
+V36_SCENARIO_BANK = {
+    "clinical": [
+        {"id":"medication_safety","area_en":"Medication Safety","area_ar":"سلامة الدواء",
+         "events_en":["a medication reconciliation exception","a high-alert medicine review","a formulary safety update","a dispensing variance follow-up"],
+         "events_ar":["استثناء في مطابقة الأدوية","مراجعة دواء عالي الخطورة","تحديث سلامة قائمة الأدوية","متابعة اختلاف في صرف الدواء"],
+         "objects_en":["medication reconciliation record","high-alert medication checklist","dose variance note","pharmacy intervention summary"],
+         "objects_ar":["سجل مطابقة الأدوية","قائمة تحقق الأدوية عالية الخطورة","ملاحظة اختلاف الجرعة","ملخص تدخل الصيدلية"],
+         "senders_en":["Medication Safety Office","Clinical Pharmacy Coordination","Pharmacy Quality Unit"],
+         "senders_ar":["مكتب سلامة الدواء","تنسيق الصيدلة السريرية","وحدة جودة الصيدلية"]},
+        {"id":"patient_referral","area_en":"Referral Coordination","area_ar":"تنسيق الإحالات",
+         "events_en":["a returned referral","a specialist acceptance update","an incomplete referral packet","a transfer-of-care follow-up"],
+         "events_ar":["إحالة معادة","تحديث قبول من اختصاصي","ملف إحالة غير مكتمل","متابعة انتقال الرعاية"],
+         "objects_en":["patient referral summary","specialist acceptance record","transfer note","referral documentation set"],
+         "objects_ar":["ملخص إحالة المريض","سجل قبول الاختصاصي","ملاحظة نقل الرعاية","حزمة مستندات الإحالة"],
+         "senders_en":["Referral Coordination","Patient Flow Office","Care Transition Team"],
+         "senders_ar":["تنسيق الإحالات","مكتب تدفق المرضى","فريق انتقال الرعاية"]},
+        {"id":"infection_control","area_en":"Infection Prevention","area_ar":"مكافحة العدوى",
+         "events_en":["an exposure follow-up","an isolation-practice review","a surveillance finding","a hand-hygiene audit exception"],
+         "events_ar":["متابعة تعرض مهني","مراجعة ممارسات العزل","نتيجة ترصد","استثناء في تدقيق نظافة اليدين"],
+         "objects_en":["exposure review record","isolation checklist","surveillance summary","infection-control audit note"],
+         "objects_ar":["سجل مراجعة التعرض","قائمة تحقق العزل","ملخص الترصد","ملاحظة تدقيق مكافحة العدوى"],
+         "senders_en":["Infection Prevention Unit","Occupational Health","Clinical Surveillance Team"],
+         "senders_ar":["وحدة مكافحة العدوى","الصحة المهنية","فريق الترصد السريري"]},
+        {"id":"laboratory","area_en":"Laboratory Services","area_ar":"خدمات المختبر",
+         "events_en":["a specimen rejection follow-up","a corrected-result notice","a quality-control exception","a critical-result workflow update"],
+         "events_ar":["متابعة رفض عينة","إشعار نتيجة مصححة","استثناء في ضبط الجودة","تحديث مسار نتيجة حرجة"],
+         "objects_en":["specimen exception record","corrected laboratory report","quality-control summary","critical-result acknowledgement"],
+         "objects_ar":["سجل استثناء العينة","تقرير مختبر مصحح","ملخص ضبط الجودة","إقرار نتيجة حرجة"],
+         "senders_en":["Laboratory Quality","Pathology Coordination","Critical Results Desk"],
+         "senders_ar":["جودة المختبر","تنسيق علم الأمراض","مكتب النتائج الحرجة"]},
+        {"id":"radiology","area_en":"Radiology Services","area_ar":"خدمات الأشعة",
+         "events_en":["a protocol clarification","a report amendment","a contrast-safety follow-up","an imaging-priority change"],
+         "events_ar":["توضيح بروتوكول","تعديل تقرير","متابعة سلامة مادة التباين","تغيير أولوية تصوير"],
+         "objects_en":["imaging protocol note","amended radiology report","contrast screening form","priority imaging request"],
+         "objects_ar":["ملاحظة بروتوكول تصوير","تقرير أشعة معدل","نموذج فحص مادة التباين","طلب تصوير ذي أولوية"],
+         "senders_en":["Radiology Coordination","Imaging Quality Office","Diagnostic Services"],
+         "senders_ar":["تنسيق الأشعة","مكتب جودة التصوير","الخدمات التشخيصية"]},
+        {"id":"clinical_training","area_en":"Clinical Education","area_ar":"التعليم السريري",
+         "events_en":["a competency renewal","a simulation-session follow-up","a mandatory module update","a skills-validation exception"],
+         "events_ar":["تجديد كفاءة","متابعة جلسة محاكاة","تحديث وحدة إلزامية","استثناء في التحقق من المهارة"],
+         "objects_en":["competency record","simulation attendance","training module","skills validation form"],
+         "objects_ar":["سجل الكفاءة","حضور المحاكاة","وحدة تدريبية","نموذج التحقق من المهارة"],
+         "senders_en":["Clinical Education","Nursing Development","Medical Training Office"],
+         "senders_ar":["التعليم السريري","تطوير التمريض","مكتب التدريب الطبي"]},
+    ],
+    "admin": [
+        {"id":"hr","area_en":"Human Resources","area_ar":"الموارد البشرية","events_en":["an employee-file correction","a benefits enrolment change","a leave-balance exception","a credentialing renewal"],"events_ar":["تصحيح ملف موظف","تغيير تسجيل المزايا","استثناء في رصيد الإجازات","تجديد اعتماد وظيفي"],"objects_en":["employee profile","benefits selection","leave balance record","credentialing document"],"objects_ar":["ملف الموظف","اختيار المزايا","سجل رصيد الإجازات","مستند الاعتماد الوظيفي"],"senders_en":["HR Operations","Workforce Services","Employee Relations"],"senders_ar":["عمليات الموارد البشرية","خدمات القوى العاملة","علاقات الموظفين"]},
+        {"id":"audit","area_en":"Internal Audit","area_ar":"التدقيق الداخلي","events_en":["a sample-selection notice","a control-evidence request","an unresolved audit item","a compliance follow-up"],"events_ar":["إشعار اختيار عينة","طلب دليل رقابي","بند تدقيق غير مغلق","متابعة امتثال"],"objects_en":["audit sample","control evidence pack","open audit observation","compliance response"],"objects_ar":["عينة التدقيق","حزمة الأدلة الرقابية","ملاحظة تدقيق مفتوحة","استجابة الامتثال"],"senders_en":["Internal Audit","Compliance Review","Governance Office"],"senders_ar":["التدقيق الداخلي","مراجعة الامتثال","مكتب الحوكمة"]},
+        {"id":"procurement","area_en":"Medical Procurement","area_ar":"المشتريات الطبية","events_en":["a supplier-document correction","a purchase-order hold","a contract-review request","a delivery discrepancy"],"events_ar":["تصحيح مستند مورد","تعليق أمر شراء","طلب مراجعة عقد","اختلاف في التسليم"],"objects_en":["supplier record","purchase order","service contract","delivery note"],"objects_ar":["سجل المورد","أمر الشراء","عقد الخدمة","إشعار التسليم"],"senders_en":["Medical Procurement","Supply Chain","Vendor Management"],"senders_ar":["المشتريات الطبية","سلسلة الإمداد","إدارة الموردين"]},
+        {"id":"insurance","area_en":"Insurance Coordination","area_ar":"تنسيق التأمين","events_en":["a rejected-claim follow-up","a coverage verification","a pre-authorisation exception","a payer-document update"],"events_ar":["متابعة مطالبة مرفوضة","تحقق من التغطية","استثناء موافقة مسبقة","تحديث مستند جهة دافعة"],"objects_en":["claim record","coverage profile","pre-authorisation request","payer document"],"objects_ar":["سجل المطالبة","ملف التغطية","طلب الموافقة المسبقة","مستند جهة الدفع"],"senders_en":["Insurance Coordination","Revenue Cycle","Patient Financial Services"],"senders_ar":["تنسيق التأمين","دورة الإيرادات","الخدمات المالية للمرضى"]},
+        {"id":"schedule","area_en":"Workforce Scheduling","area_ar":"جدولة القوى العاملة","events_en":["a roster revision","an overtime exception","a coverage-gap notice","a shift-allocation update"],"events_ar":["تعديل جدول","استثناء عمل إضافي","إشعار فجوة تغطية","تحديث توزيع مناوبات"],"objects_en":["department roster","overtime request","coverage plan","shift allocation"],"objects_ar":["جدول القسم","طلب العمل الإضافي","خطة التغطية","توزيع المناوبات"],"senders_en":["Workforce Scheduling","Operations Coordination","Staffing Office"],"senders_ar":["جدولة القوى العاملة","تنسيق العمليات","مكتب التوظيف"]},
+    ],
+    "it": [
+        {"id":"incident","area_en":"Security Operations","area_ar":"عمليات الأمن السيبراني","events_en":["an endpoint alert follow-up","a privileged-access review","a suspicious-session investigation","a service-account exception"],"events_ar":["متابعة تنبيه جهاز","مراجعة وصول مميز","تحقيق جلسة مشبوهة","استثناء حساب خدمة"],"objects_en":["endpoint alert","privileged access record","session investigation","service account"],"objects_ar":["تنبيه جهاز","سجل الوصول المميز","تحقيق الجلسة","حساب الخدمة"],"senders_en":["Security Operations","Cyber Defence","Identity Security"],"senders_ar":["عمليات الأمن السيبراني","الدفاع السيبراني","أمن الهوية"]},
+        {"id":"service_change","area_en":"IT Service Management","area_ar":"إدارة خدمات تقنية المعلومات","events_en":["a change-window update","a service restoration notice","a configuration exception","a maintenance follow-up"],"events_ar":["تحديث نافذة تغيير","إشعار استعادة خدمة","استثناء إعداد","متابعة صيانة"],"objects_en":["change record","service restoration task","configuration item","maintenance ticket"],"objects_ar":["سجل التغيير","مهمة استعادة الخدمة","عنصر الإعداد","تذكرة الصيانة"],"senders_en":["IT Service Management","Infrastructure Operations","Technical Support"],"senders_ar":["إدارة خدمات تقنية المعلومات","عمليات البنية التحتية","الدعم التقني"]},
+        {"id":"access","area_en":"Identity and Access","area_ar":"الهوية والوصول","events_en":["an access recertification","a role-assignment exception","a dormant-account review","an application-access change"],"events_ar":["إعادة اعتماد وصول","استثناء تعيين صلاحية","مراجعة حساب خامل","تغيير وصول لتطبيق"],"objects_en":["access review","role assignment","dormant account","application entitlement"],"objects_ar":["مراجعة الوصول","تعيين الصلاحية","الحساب الخامل","استحقاق التطبيق"],"senders_en":["Identity and Access","Directory Services","Application Security"],"senders_ar":["الهوية والوصول","خدمات الدليل","أمن التطبيقات"]},
+        {"id":"backup","area_en":"Data Protection","area_ar":"حماية البيانات","events_en":["a failed-backup follow-up","a restore-test exception","a retention-policy update","a storage-capacity notice"],"events_ar":["متابعة فشل نسخ احتياطي","استثناء اختبار استعادة","تحديث سياسة الاحتفاظ","إشعار سعة تخزين"],"objects_en":["backup job","restore test","retention setting","storage allocation"],"objects_ar":["مهمة النسخ الاحتياطي","اختبار الاستعادة","إعداد الاحتفاظ","تخصيص التخزين"],"senders_en":["Data Protection","Backup Operations","Infrastructure Reliability"],"senders_ar":["حماية البيانات","عمليات النسخ الاحتياطي","موثوقية البنية التحتية"]},
+    ],
+}
+# Other inherits a balanced mix without changing role selection elsewhere.
+V36_SCENARIO_BANK["other"] = (
+    V36_SCENARIO_BANK["clinical"][:2] +
+    V36_SCENARIO_BANK["admin"][:2] +
+    V36_SCENARIO_BANK["it"][:2]
+)
+
+V36_ACTION_WEIGHTS = [
+    ("button", 18), ("visible_link", 17), ("pdf_attachment", 16),
+    ("sharepoint", 16), ("internal_workspace", 17), ("reply_request", 16),
+]
+
+V36_GOALS = {
+    "button": ["review", "approve", "verify", "confirm", "update", "check"],
+    "visible_link": ["review", "verify", "confirm", "read", "check", "update"],
+    "pdf_attachment": ["review", "read", "download", "check", "confirm"],
+    "sharepoint": ["review", "read", "approve", "confirm", "check"],
+    "internal_workspace": ["review", "approve", "update", "check", "confirm"],
+    "reply_request": ["confirm", "verify", "acknowledge", "submit", "update"],
+}
+V36_GOAL_TEXT = {
+    "English": {"review":"review", "approve":"approve", "verify":"verify", "confirm":"confirm", "download":"download", "read":"read", "update":"update", "check":"check", "acknowledge":"acknowledge", "submit":"submit"},
+    "Arabic": {"review":"مراجعة", "approve":"اعتماد", "verify":"التحقق من", "confirm":"تأكيد", "download":"تنزيل", "read":"قراءة", "update":"تحديث", "check":"فحص", "acknowledge":"الإقرار بـ", "submit":"إرسال"},
+}
+
+
+def _v36_memory(role_type, language, phase):
+    cycle = st.session_state.get("v18_cycle_id", "default")
+    key = f"v36_phase1_memory_{cycle}_{role_type}_{language}_{phase}"
+    return st.session_state.setdefault(key, {
+        "families": [], "events": [], "objects": [], "actions": [], "goals": [], "combinations": []
+    })
+
+
+def _v36_fresh_choice(values, recent, window=10):
+    vals = list(values)
+    blocked = set(recent[-window:])
+    fresh = [v for v in vals if v not in blocked]
+    return _V36_RNG.choice(fresh or vals)
+
+
+def _v36_action_engine(mem):
+    # Weighted selection with anti-streak and short-window variety.
+    candidates = list(V36_ACTION_WEIGHTS)
+    if len(mem["actions"]) >= 2 and mem["actions"][-1] == mem["actions"][-2]:
+        candidates = [(a, w) for a, w in candidates if a != mem["actions"][-1]]
+    recent = set(mem["actions"][-4:])
+    fresh = [(a, w) for a, w in candidates if a not in recent]
+    return _v35_weighted_choice(fresh or candidates)
+
+
+def _v36_goal_engine(action_type, mem):
+    goals = V36_GOALS[action_type]
+    return _v36_fresh_choice(goals, mem["goals"], window=6)
+
+
+def _v36_scenario_engine(role, index, language, phase):
+    role_type = _v30_role_type(role)
+    mem = _v36_memory(role_type, language, phase)
+    bank = V36_SCENARIO_BANK.get(role_type, V36_SCENARIO_BANK["other"])
+    recent_families = set(mem["families"][-5:])
+    choices = [f for f in bank if f["id"] not in recent_families] or bank
+    family = _V36_RNG.choice(choices)
+    ar = language == "Arabic"
+    event = _v36_fresh_choice(family["events_ar" if ar else "events_en"], mem["events"], 12)
+    obj = _v36_fresh_choice(family["objects_ar" if ar else "objects_en"], mem["objects"], 12)
+    sender = _V36_RNG.choice(family["senders_ar" if ar else "senders_en"])
+    area = family["area_ar" if ar else "area_en"]
+    signature = sender
+    action_type = _v36_action_engine(mem)
+    goal = _v36_goal_engine(action_type, mem)
+    combo = f"{family['id']}|{event}|{obj}|{action_type}|{goal}"
+    # Avoid exact semantic combinations in the active cycle.
+    for _ in range(30):
+        if combo not in mem["combinations"]:
+            break
+        action_type = _v36_action_engine(mem)
+        goal = _v36_goal_engine(action_type, mem)
+        event = _V36_RNG.choice(family["events_ar" if ar else "events_en"])
+        obj = _V36_RNG.choice(family["objects_ar" if ar else "objects_en"])
+        combo = f"{family['id']}|{event}|{obj}|{action_type}|{goal}"
+    mem["families"].append(family["id"]); mem["events"].append(event)
+    mem["objects"].append(obj); mem["actions"].append(action_type)
+    mem["goals"].append(goal); mem["combinations"].append(combo)
+    for k in mem:
+        mem[k] = mem[k][-80:]
+    return {
+        "role_type": role_type, "family_id": family["id"], "area": area,
+        "event": event, "object": obj, "sender": sender, "signature": signature,
+        "action_type": action_type, "goal": goal, "semantic_combo": combo,
+    }
+
+
+def _v36_to_v35_channel(action_type):
+    return {
+        "button": "button", "visible_link": "visible_link",
+        "pdf_attachment": "pdf_attachment", "sharepoint": "sharepoint_button",
+        "internal_workspace": "button", "reply_request": "internal_reply",
+    }[action_type]
+
+
+def _v36_apply_goal_text(result, action_type, goal, language):
+    """Small, schema-safe goal pass. It changes only CTA wording and metadata."""
+    if not isinstance(result, dict):
+        return result
+    ar = language == "Arabic"
+    body = str(result.get("body", ""))
+    labels_en = {
+        "review":"Review item", "approve":"Approve item", "verify":"Verify details",
+        "confirm":"Confirm update", "download":"Download document", "read":"Read notice",
+        "update":"Update record", "check":"Check item", "acknowledge":"Acknowledge notice",
+        "submit":"Submit response",
+    }
+    labels_ar = {
+        "review":"مراجعة البند", "approve":"اعتماد البند", "verify":"التحقق من التفاصيل",
+        "confirm":"تأكيد التحديث", "download":"تنزيل المستند", "read":"قراءة الإشعار",
+        "update":"تحديث السجل", "check":"فحص البند", "acknowledge":"الإقرار بالإشعار",
+        "submit":"إرسال الرد",
+    }
+    label = (labels_ar if ar else labels_en)[goal]
+    if action_type in {"button", "internal_workspace", "sharepoint"}:
+        body = re.sub(r"\[([^\]]+)\](\(https?://[^\)]+\))", lambda m: f"[{label}]{m.group(2)}", body, count=1)
+    if action_type == "internal_workspace":
+        result["attack_type"] = "Fake internal workspace"
+    result["body"] = body
+    meta = dict(result.get("scenario_meta") or {})
+    meta.update({"v36_action_type": action_type, "v36_goal": goal})
+    result["scenario_meta"] = meta
+    result["scenario_id"] = str(result.get("scenario_id", "")) + f":{action_type}:{goal}"
+    return result
+
+
+_V36_BASE_V35_GENERATE = _v35_generate
+
+
+def _v36_generate(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
+    diff = str(difficulty or "medium").lower()
+    if diff != "medium" or not is_phishing:
+        return _V36_BASE_V35_GENERATE(role, index, language, difficulty, is_phishing, assessment)
+    phase = "assess" if assessment else "learn"
+    last_result = None
+    for attempt in range(20):
+        scenario = _v36_scenario_engine(role, index + attempt * 7919, language, phase)
+        base_plan = _v33_plan(role, index + attempt * 104729, language, "medium", phase, True)
+        goal_text = V36_GOAL_TEXT[language][scenario["goal"]]
+        plan = dict(base_plan)
+        plan.update({
+            "role_type": scenario["role_type"], "family_id": scenario["family_id"],
+            "area": scenario["area"], "event": scenario["event"],
+            "object": scenario["object"], "sender": scenario["sender"],
+            "signature": scenario["signature"], "action": goal_text,
+            "v36_action_type": scenario["action_type"], "v36_goal": scenario["goal"],
+            "v36_semantic_combo": scenario["semantic_combo"],
+        })
+        # v35 channel selection is session-based. Supply a temporary exact channel
+        # for this generation only, then restore state immediately.
+        cycle = st.session_state.get("v18_cycle_id", "default")
+        ch_key = f"v35_medium_channels_{cycle}_{phase}"
+        old_channels = list(st.session_state.get(ch_key, []))
+        forced = _v36_to_v35_channel(scenario["action_type"])
+        channels = list(old_channels)
+        while len(channels) <= int(index):
+            channels.append(forced)
+        channels[int(index)] = forced
+        st.session_state[ch_key] = channels
+        try:
+            last_result = _v35_medium_phishing(plan, role, index)
+        finally:
+            st.session_state[ch_key] = old_channels
+        last_result = _v36_apply_goal_text(last_result, scenario["action_type"], scenario["goal"], language)
+        if _v35_validate_medium(last_result):
+            try:
+                evaluate_and_log_auto_scores(last_result, "medium", language, is_phishing=True)
+            except Exception:
+                pass
+            return last_result
+    # Safe fallback: never expose a failed v36 candidate.
+    return _V36_BASE_V35_GENERATE(role, index, language, difficulty, is_phishing, assessment)
+
+
+def generate_email(role, index, language, difficulty="medium"):
+    return _v36_generate(role, index, language, difficulty, True, False)
+
+
+def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
+    return _v36_generate(role, index, language, difficulty, bool(is_phishing), True)
+
+# =============================================================
+# END MEDIUM GENERATION ENGINE v36 — PHASE 1
+# =============================================================
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR — زر القفل السري في الأسفل
 # ══════════════════════════════════════════════════════════════
