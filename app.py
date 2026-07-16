@@ -1860,6 +1860,9 @@ def render_email_window(email, is_arabic, show_badges=False):
         body_raw = re.sub(rf'^\s*{att_escaped}\s*$', '', body_raw, flags=re.MULTILINE)
         body_raw = re.sub(r'[ \t]*\n[ \t]*\n[ \t]*\n+', '\n\n', body_raw).strip()
 
+    if _difficulty == "medium":
+        body_raw = re.sub(r'\n\s*\n+', '\n', body_raw).strip()
+
     body_html = html_lib.escape(body_raw)
 
     def make_badge(n, color="#DC2626"):
@@ -1890,9 +1893,6 @@ def render_email_window(email, is_arabic, show_badges=False):
                     f'box-decoration-break:clone;-webkit-box-decoration-break:clone;">'
                     f'{make_badge(_num)}{_safe}</span>', 1)
 
-    if _difficulty == "medium":
-        body_raw = re.sub(r'\n\s*\n+', '\n', body_raw).strip()
-        body_html = html_lib.escape(body_raw)
     body_html = body_html.replace("\n","<br>")
 
     # --------------------------------------------------------
@@ -1935,6 +1935,15 @@ def render_email_window(email, is_arabic, show_badges=False):
         # Use the existing grounded link indicator number.
         _link_num = _badge_for_target("link") or _badge_for_key("link")
         link_badge = make_badge(_link_num) if show_badges and _link_num else ""
+        # The button's markdown label is swapped for a token BEFORE the generic
+        # body-badge loop runs, so a "workflow"/"sharepoint"/"button" indicator
+        # (target="body", describing the button itself) can never be matched by
+        # text search here — its evidence text no longer exists in body_html by
+        # this point. Look it up directly by key instead and badge the button
+        # with both numbers, so that indicator isn't silently dropped from the UI.
+        _workflow_num = _badge_for_key("workflow") or _badge_for_key("sharepoint")
+        _already_shown = _workflow_num and f'>{_workflow_num}</span>' in body_html
+        workflow_badge = make_badge(_workflow_num) if show_badges and _workflow_num and _workflow_num != _link_num and not _already_shown else ""
         # Replace generic "Open Link" label with descriptive fallback
         _display_label = link_label
         if _display_label.strip().lower() in ("open link", "click here", "link", "رابط", "اضغط هنا", "فتح الرابط"):
@@ -1948,7 +1957,7 @@ def render_email_window(email, is_arabic, show_badges=False):
             font-size:.92rem;font-weight:700;cursor:pointer;font-family:inherit;
             box-shadow:0 2px 6px rgba(0,120,212,.4);"
      onmouseover="this.style.background='#006CBE'" onmouseout="this.style.background='#0078D4'">
-    {link_badge}🔗 {safe_label}
+    {workflow_badge}{link_badge}🔗 {safe_label}
   </button>
 </div>"""
 
@@ -1980,10 +1989,10 @@ def render_email_window(email, is_arabic, show_badges=False):
     tl = t("To:","إلى:")
     sl = t("Subject:","الموضوع:")
 
-    _n_from = _badge_for_target("from")
+    _from_nums = [int(_it.get("number")) for _it in _inds if isinstance(_it, dict) and _it.get("target") == "from" and str(_it.get("number","")).strip()]
     _n_subj = _badge_for_target("subject")
     _n_att  = _badge_for_target("attachment")
-    b_from = make_badge(_n_from) if show_badges and _n_from else ""
+    b_from = "".join(make_badge(_n) for _n in _from_nums) if show_badges and _from_nums else ""
     b_subj = make_badge(_n_subj) if show_badges and _n_subj else ""
     b_att  = make_badge(_n_att) if show_badges and _n_att else ""
 
@@ -8310,7 +8319,7 @@ def _v40_goal_label(goal, language):
     return (ar if language=="Arabic" else en)[goal]
 
 
-def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase):
+def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase, workflow_note=None):
     ar = plan["language"] == "Arabic"; fam=plan["family"]; area=fam["area"]
     _sidx=_V40_RNG.randrange(len(fam["senders"]))
     sender=(fam.get("senders_ar",fam["senders"])[_sidx] if ar else fam["senders"][_sidx])
@@ -8325,7 +8334,10 @@ def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase):
         req=f"يرجى {goal} البند {deadline}. {evidence_phrase}"
         sign=_V40_RNG.choice([sender,f"وحدة {area_ar}","فريق التنسيق","مكتب الجودة"])
         closing=_V40_RNG.choice(["إذا لم يكن البند ضمن مسؤوليتك، تحقق من الجهة عبر الدليل الرسمي بدل الرد على هذه الرسالة.","استخدم النظام الداخلي المعتاد لأي معلومات حساسة بدل الرابط أو المرفق هنا.","سيتم تحديث سجل المتابعة داخل النظام الرسمي بعد استلام الإجراء."])
-        body=f"{g}،\n\n{intro}\n\n{req}\n\n{closing}\n\nمع التحية،\n{sign}"
+        parts = [f"{g}،", intro, req]
+        if workflow_note: parts.append(workflow_note)
+        parts += [closing, f"مع التحية،\n{sign}"]
+        body = "\n\n".join(parts)
     else:
         greetings=[f"Dear {area} Team",f"Hello {area} Team",f"Dear {area} Colleagues",f"Attention {area} Team",f"Good morning {area} Team"]
         g=_V40_RNG.choice(greetings)
@@ -8334,13 +8346,17 @@ def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase):
         req=f"Please {goal.lower()} the item {deadline}. {evidence_phrase}"
         sign=_V40_RNG.choice([sender,f"{area} Coordination","Quality Office","Operations Support"])
         closing=_V40_RNG.choice(["If this is not assigned to you, verify the owner through the official directory instead of replying to this message.","Use the usual internal system for any sensitive information instead of the link or attachment here.","The tracking record will update inside the official system after the requested action is received."])
-        body=f"{g},\n\n{intro}\n\n{req}\n\n{closing}\n\nKind regards,\n{sign}"
+        parts = [f"{g},", intro, req]
+        if workflow_note: parts.append(workflow_note)
+        parts += [closing, f"Kind regards,\n{sign}"]
+        body = "\n\n".join(parts)
     return subject,body,sender,deadline
 
 
-def _v40_api_copy(plan, recipient, domain, link, attachment, evidence_phrase):
+def _v40_api_copy(plan, recipient, domain, link, attachment, evidence_phrase, workflow_note=None):
     if not V40_USE_API_TEXT: return None
     ar=plan["language"]=="Arabic"; fam=plan["family"]
+    second_fragment_rule = f"\nSECOND MANDATORY sentence to include verbatim, as its own separate paragraph (not next to the first fragment): {workflow_note}" if workflow_note else ""
     instruction = f"""Write ONE realistic {'Arabic' if ar else 'English'} workplace email for a Saudi hospital employee.
 Return JSON only with keys subject and body.
 Scenario area: {fam['area']}
@@ -8350,7 +8366,7 @@ Goal: {plan['goal']}
 Writing style: {plan['style']}
 Action type: {plan['action']}
 Recipient: {recipient}
-MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}
+MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}{second_fragment_rule}
 Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action.
 GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT NAME or JOB TITLE only (e.g. "Dear {fam['area']} Team", "Hello Clinical Team") — never by the recipient's personal name and never with a fully generic greeting like "Dear Colleague" with no department reference."""
     try:
@@ -8367,6 +8383,8 @@ GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT N
         if isinstance(obj,dict):
             subject=str(obj.get("subject","")).strip(); body=str(obj.get("body","")).strip()
             if subject and body and evidence_phrase in body and len(body.split())>=35:
+                if workflow_note and workflow_note not in body:
+                    return None
                 # Enforce the medium-difficulty greeting rule even if the model ignored the
                 # instruction: reject a personal-name greeting and fall back to local copy,
                 # which is guaranteed to use a department/role greeting.
@@ -8415,12 +8433,13 @@ def _v41_domain_indicator(domain, area, ar):
     return _v30_indicator(1, "domain", title, desc, domain, "from")
 
 
-def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phrase, deadline, ar):
+def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phrase, deadline, ar, workflow_note=None):
     """Returns the 2-3 action-specific indicator tuples (title, desc, evidence, target, key).
     IMPORTANT: within one email, no indicator's evidence may be a substring of another
-    indicator's evidence (or vice versa) — nested/overlapping spans make the UI unable
-    to render more than one highlighted badge over the same region. Every evidence value
-    below is chosen to be a disjoint, literally-visible substring of the rendered email."""
+    indicator's evidence (or vice versa), and no two indicators may share the same
+    rendered UI element (e.g. a markdown button collapses to one highlightable node) —
+    otherwise the UI can only show one badge for that whole region. workflow_note is a
+    dedicated, separately-rendered sentence used precisely to avoid that collision."""
     _label_match = re.search(r'\[(.*?)\]', evidence_phrase)
     button_label = _label_match.group(1) if _label_match else evidence_phrase
     raw_area = plan["family"]["area"]
@@ -8447,20 +8466,20 @@ def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phra
             out.append(("reply_request","طلب معلومات عبر الرد",
                 _V40_RNG.choice([f"تطلب الرسالة بيانات الموظف عبر الرد بخصوص {event} بدل النظام الرسمي.",
                                   f"يُطلب تأكيد الهوية بالرد على رسالة تخص {obj}، بدل القناة المعتمدة."]),
-                "يرجى الرد على هذه الرسالة", "body"))
+                evidence_phrase, "body"))
             out.append(("workflow","مسار تحقق غير قياسي",
                 _V40_RNG.choice([f"لا يُفترض تأكيد رقم الموظف والقسم عبر رسالة غير متوقعة بخصوص {area}.",
                                   f"مسار {area} المعتمد لا يعتمد على الرد ببيانات شخصية داخل البريد."]),
-                "رقم الموظف والقسم", "body"))
+                workflow_note, "body"))
         else:
             out.append(("reply_request","Reply-based information request",
                 _V40_RNG.choice([f"The email asks for employee details by reply regarding {event}, instead of the official system.",
                                   f"Identity confirmation for {obj} is requested by reply rather than the approved channel."]),
-                "Reply to this email", "body"))
+                evidence_phrase, "body"))
             out.append(("workflow","Non-standard verification workflow",
                 _V40_RNG.choice([f"Employee identity details should not be confirmed through an unexpected email about {area}.",
                                   f"The approved {area} workflow never verifies staff identity by email reply."]),
-                "employee number and department", "body"))
+                workflow_note, "body"))
     elif action == "sharepoint":
         if ar:
             out.append(("sharepoint","إشعار مشاركة غير متوقع",
@@ -8573,8 +8592,24 @@ def _v40_build(role,index,language,phase):
         attachment=f"{plan['family']['id']}_{_V40_RNG.randrange(100,999)}.pdf"; evidence_phrase=(f"The supporting summary is attached as {attachment}." if not ar else f"الملخص الداعم مرفق باسم {attachment}.")
     else:
         evidence_phrase=("Reply to this email with your employee number and department." if not ar else "يرجى الرد على هذه الرسالة برقم الموظف والقسم.")
-    local_subject,local_body,sender_name,deadline=_v40_local_copy(plan,recipient,domain,link,attachment,evidence_phrase)
-    api=_v40_api_copy(plan,recipient,domain,link,attachment,evidence_phrase)
+
+    # A second, fully separate sentence (its own paragraph) for the "workflow anomaly"
+    # indicator on actions whose first evidence renders as one UI element (a button) —
+    # putting two indicators' evidence inside that same element means only one badge
+    # can show. Keeping this sentence on its own line guarantees both indicators are
+    # independently highlightable, and it is required verbatim from both the local and
+    # the API writer so it is present no matter which one produced the final body.
+    _raw_area0 = plan["family"]["area"]; _area_disp0 = V40_AR_TERMS.get(_raw_area0,_raw_area0) if ar else _raw_area0
+    workflow_note = None
+    if action in ("button","sharepoint","internal_workspace"):
+        workflow_note = (f"لم يصل هذا الطلب عبر نظام {_area_disp0} المعتمد." if ar
+                          else f"This request did not come through the standard {_area_disp0} system.")
+    elif action == "reply_request":
+        workflow_note = ("لا يتحقق فريقنا من هوية الموظفين عبر الرد على البريد." if ar
+                          else "Our team never verifies staff identity by email reply.")
+
+    local_subject,local_body,sender_name,deadline=_v40_local_copy(plan,recipient,domain,link,attachment,evidence_phrase,workflow_note)
+    api=_v40_api_copy(plan,recipient,domain,link,attachment,evidence_phrase,workflow_note)
     subject,body=api if api else (local_subject,local_body)
     mailbox=_V40_RNG.choice(["coordination","workflow","quality","operations","records","updates"])
     sender=f"{sender_name} <{mailbox}@{domain}>"
@@ -8582,7 +8617,7 @@ def _v40_build(role,index,language,phase):
     # --- v41: scenario-derived indicators (3, sometimes 4) ---
     _raw_area = plan["family"]["area"]
     inds=[_v41_domain_indicator(domain, (V40_AR_TERMS.get(_raw_area, _raw_area) if ar else _raw_area), ar)]
-    action_tuples = _v41_action_indicators(action, plan, domain, link, attachment, evidence_phrase, deadline, ar)
+    action_tuples = _v41_action_indicators(action, plan, domain, link, attachment, evidence_phrase, deadline, ar, workflow_note)
     n = 2
     for key, title, desc, evidence, target in action_tuples:
         inds.append(_v30_indicator(n, key, title, desc, evidence, target)); n += 1
