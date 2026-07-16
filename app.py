@@ -8317,22 +8317,23 @@ def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase):
     event=plan["event_disp"]; obj=plan["object_disp"]; goal=_v40_goal_label(plan["goal"],plan["language"]); deadline=_v40_deadline(plan["language"])
     if ar:
         area_ar=V40_AR_TERMS.get(area,area)
-        greetings=[f"فريق {area_ar}","الزملاء الكرام","صباح الخير","الزملاء المعنيون","تحية طيبة"]
+        # Medium requires a department/role greeting (never a personal name, never fully generic).
+        greetings=[f"فريق {area_ar} العزيز",f"مرحبًا فريق {area_ar}",f"زملاء {area_ar} الكرام",f"صباح الخير فريق {area_ar}",f"إلى فريق {area_ar}"]
         g=_V40_RNG.choice(greetings)
         subject=_V40_RNG.choice([f"متابعة مطلوبة: {obj}",f"تحديث {area_ar} — {obj}",f"إجراء معلق بخصوص {obj}",f"مراجعة تشغيلية: {obj}"])
         intro=_V40_RNG.choice([f"بعد مراجعة سجل {obj}، ظهر بند متعلق بـ {event}.",f"أحال فريق {area_ar} بندًا يخص {obj} للمتابعة.",f"تم تسجيل تحديث تشغيلي بخصوص {obj} ضمن {area_ar}.",f"إشارة إلى المتابعة الأخيرة، ما زال بند {obj} بحاجة إلى استكمال."])
         req=f"يرجى {goal} البند {deadline}. {evidence_phrase}"
         sign=_V40_RNG.choice([sender,f"وحدة {area_ar}","فريق التنسيق","مكتب الجودة"])
-        closing=_V40_RNG.choice(["إذا لم يكن البند ضمن مسؤوليتك، تحقق من الجهة عبر الدليل الرسمي.","استخدم القناة الداخلية المعتادة لأي معلومات حساسة.","سيتم تحديث سجل المتابعة بعد استلام الإجراء."])
+        closing=_V40_RNG.choice(["إذا لم يكن البند ضمن مسؤوليتك، تحقق من الجهة عبر الدليل الرسمي بدل الرد على هذه الرسالة.","استخدم النظام الداخلي المعتاد لأي معلومات حساسة بدل الرابط أو المرفق هنا.","سيتم تحديث سجل المتابعة داخل النظام الرسمي بعد استلام الإجراء."])
         body=f"{g}،\n\n{intro}\n\n{req}\n\n{closing}\n\nمع التحية،\n{sign}"
     else:
-        greetings=[f"Dear {area} Team","Good morning","Dear colleagues",f"Hello {area}","Attention team"]
+        greetings=[f"Dear {area} Team",f"Hello {area} Team",f"Dear {area} Colleagues",f"Attention {area} Team",f"Good morning {area} Team"]
         g=_V40_RNG.choice(greetings)
         subject=_V40_RNG.choice([f"Follow-up Required: {obj.title()}",f"{area} Update — {obj.title()}",f"Pending Action: {obj.title()}",f"Operational Review: {obj.title()}"])
         intro=_V40_RNG.choice([f"A review of the {obj} record identified an item related to {event}.",f"The {area} team has referred an item concerning {obj} for follow-up.",f"An operational update was logged for {obj} within {area}.",f"Following the latest handover, the {obj} item still requires completion."])
         req=f"Please {goal.lower()} the item {deadline}. {evidence_phrase}"
         sign=_V40_RNG.choice([sender,f"{area} Coordination","Quality Office","Operations Support"])
-        closing=_V40_RNG.choice(["If this is not assigned to you, verify the owner through the official directory.","Use the usual internal system for any sensitive information.","The tracking record will update after the requested action is received."])
+        closing=_V40_RNG.choice(["If this is not assigned to you, verify the owner through the official directory instead of replying to this message.","Use the usual internal system for any sensitive information instead of the link or attachment here.","The tracking record will update inside the official system after the requested action is received."])
         body=f"{g},\n\n{intro}\n\n{req}\n\n{closing}\n\nKind regards,\n{sign}"
     return subject,body,sender,deadline
 
@@ -8350,7 +8351,8 @@ Writing style: {plan['style']}
 Action type: {plan['action']}
 Recipient: {recipient}
 MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}
-Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action."""
+Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action.
+GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT NAME or JOB TITLE only (e.g. "Dear {fam['area']} Team", "Hello Clinical Team") — never by the recipient's personal name and never with a fully generic greeting like "Dear Colleague" with no department reference."""
     try:
         data = call_ai(instruction, max_tokens=900)
         if not isinstance(data, dict) or "error" in data:
@@ -8365,6 +8367,19 @@ Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order a
         if isinstance(obj,dict):
             subject=str(obj.get("subject","")).strip(); body=str(obj.get("body","")).strip()
             if subject and body and evidence_phrase in body and len(body.split())>=35:
+                # Enforce the medium-difficulty greeting rule even if the model ignored the
+                # instruction: reject a personal-name greeting and fall back to local copy,
+                # which is guaranteed to use a department/role greeting.
+                opening = body.strip().splitlines()[0] if body.strip() else ""
+                person_name = _v30_display_name(recipient)
+                name_parts = [p for p in person_name.split() if len(p) > 2]
+                if name_parts and any(p.lower() in opening.lower() for p in name_parts):
+                    return None
+                if fam["area"].lower() not in opening.lower() and not ar:
+                    # English opening must reference the department; otherwise it's too generic.
+                    generic_only = not any(w in opening for w in ["Team", "Colleagues", fam["area"]])
+                    if generic_only:
+                        return None
                 return subject,body
     except Exception as e:
         try: _store_debug("v40_api_copy",str(e))
@@ -8401,7 +8416,13 @@ def _v41_domain_indicator(domain, area, ar):
 
 
 def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phrase, deadline, ar):
-    """Returns the 2-3 action-specific indicator tuples (title, desc, evidence, target, key)."""
+    """Returns the 2-3 action-specific indicator tuples (title, desc, evidence, target, key).
+    IMPORTANT: within one email, no indicator's evidence may be a substring of another
+    indicator's evidence (or vice versa) — nested/overlapping spans make the UI unable
+    to render more than one highlighted badge over the same region. Every evidence value
+    below is chosen to be a disjoint, literally-visible substring of the rendered email."""
+    _label_match = re.search(r'\[(.*?)\]', evidence_phrase)
+    button_label = _label_match.group(1) if _label_match else evidence_phrase
     raw_area = plan["family"]["area"]
     area = V40_AR_TERMS.get(raw_area, raw_area) if ar else raw_area
     event = plan["event_disp"]; obj = plan["object_disp"]
@@ -8425,15 +8446,17 @@ def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phra
         if ar:
             out.append(("reply_request","طلب معلومات عبر الرد",
                 _V40_RNG.choice([f"تطلب الرسالة بيانات الموظف عبر الرد بخصوص {event} بدل النظام الرسمي.",
-                                  f"يُطلب تأكيد الهوية بالرد على رسالة تخص {obj}، بدل القناة المعتمدة."]), evidence_phrase, "body"))
+                                  f"يُطلب تأكيد الهوية بالرد على رسالة تخص {obj}، بدل القناة المعتمدة."]),
+                "يرجى الرد على هذه الرسالة", "body"))
             out.append(("workflow","مسار تحقق غير قياسي",
                 _V40_RNG.choice([f"لا يُفترض تأكيد رقم الموظف والقسم عبر رسالة غير متوقعة بخصوص {area}.",
                                   f"مسار {area} المعتمد لا يعتمد على الرد ببيانات شخصية داخل البريد."]),
-                "رقم الموظف والقسم" if ar else "employee number and department", "body"))
+                "رقم الموظف والقسم", "body"))
         else:
             out.append(("reply_request","Reply-based information request",
                 _V40_RNG.choice([f"The email asks for employee details by reply regarding {event}, instead of the official system.",
-                                  f"Identity confirmation for {obj} is requested by reply rather than the approved channel."]), evidence_phrase, "body"))
+                                  f"Identity confirmation for {obj} is requested by reply rather than the approved channel."]),
+                "Reply to this email", "body"))
             out.append(("workflow","Non-standard verification workflow",
                 _V40_RNG.choice([f"Employee identity details should not be confirmed through an unexpected email about {area}.",
                                   f"The approved {area} workflow never verifies staff identity by email reply."]),
@@ -8442,25 +8465,25 @@ def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phra
         if ar:
             out.append(("sharepoint","إشعار مشاركة غير متوقع",
                 _V40_RNG.choice([f"تدّعي الرسالة مشاركة مستند يخص {obj} دون سياق مؤكد من داخل {area}.",
-                                  f"لا يوجد إشعار مسبق داخل النظام عن مشاركة مستند {event}."]), evidence_phrase, "body"))
+                                  f"لا يوجد إشعار مسبق داخل النظام عن مشاركة مستند {event}."]), button_label, "body"))
             out.append(("link","وجهة مشاركة خارجية",
                 f"الزر يقود إلى {domain} وليس Microsoft أو نطاق المستشفى.", link, "link"))
         else:
             out.append(("sharepoint","Unexpected shared-document notice",
                 _V40_RNG.choice([f"The message claims a shared document about {obj} without confirmed context from {area}.",
-                                  f"There is no prior in-system notice about sharing a {event} document."]), evidence_phrase, "body"))
+                                  f"There is no prior in-system notice about sharing a {event} document."]), button_label, "body"))
             out.append(("link","Unapproved sharing destination",
                 f"The shared-document button resolves to {domain}, not an approved Microsoft or hospital domain.", link, "link"))
     elif action == "internal_workspace":
         if ar:
             out.append(("workflow","مساحة عمل غير معروفة",
                 _V40_RNG.choice([f"تشير الرسالة إلى مساحة عمل عامة بخصوص {obj} بدل نظام {area} المحفوظ.",
-                                  f"لا يوجد اسم نظام معروف يربط {event} بهذه المساحة."]), evidence_phrase, "body"))
+                                  f"لا يوجد اسم نظام معروف يربط {event} بهذه المساحة."]), button_label, "body"))
             out.append(("link","زر إلى نطاق خارجي", f"وجهة مساحة العمل هي {domain}.", link, "link"))
         else:
             out.append(("workflow","Unrecognized internal workspace",
                 _V40_RNG.choice([f"The email references a generic workspace for {obj} rather than a known {area} system.",
-                                  f"No bookmarked hospital system is named for this {event} task."]), evidence_phrase, "body"))
+                                  f"No bookmarked hospital system is named for this {event} task."]), button_label, "body"))
             out.append(("link","Workspace button leads externally", f"The workspace button resolves to the external domain {domain}.", link, "link"))
     elif action == "visible_link":
         if ar:
@@ -8475,12 +8498,12 @@ def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phra
         if ar:
             out.append(("workflow","إجراء عبر زر غير متوقع",
                 _V40_RNG.choice([f"يحول الطلب إجراء {area} الداخلي بخصوص {obj} إلى زر داخل رسالة غير متوقعة.",
-                                  f"عادة لا يُنجز بند {event} عبر زر داخل بريد وارد."]), evidence_phrase, "body"))
+                                  f"عادة لا يُنجز بند {event} عبر زر داخل بريد وارد."]), button_label, "body"))
             out.append(("link","وجهة زر غير معتمدة", f"الزر يقود إلى {domain} بدل نظام {area} الرسمي.", link, "link"))
         else:
             out.append(("workflow","Unexpected button-based workflow",
                 _V40_RNG.choice([f"The message turns an internal {area} process about {obj} into an unexpected emailed button.",
-                                  f"The {event} task is not normally completed through an emailed button."]), evidence_phrase, "body"))
+                                  f"The {event} task is not normally completed through an emailed button."]), button_label, "body"))
             out.append(("link","Button leads to an unapproved domain", f"The button resolves to {domain}, not the official {area} system.", link, "link"))
     return out
 
