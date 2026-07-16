@@ -890,11 +890,6 @@ def _safe_error_text(err, language):
                 "This content couldn't be generated right now. Please tap Try Again.")
     return msg
 
-def go_to_learning(role):
-    st.session_state["role"]          = role
-    st.session_state["page"]          = "learning"
-    st.session_state["example_index"] = 0
-    st.session_state["emails"]        = {}
 
 def clean_foreign_only(text):
     if not text: return text
@@ -1088,21 +1083,7 @@ def get_recipient(role, index, language, phase="learn"):
     order = get_session_random_order(len(pool), order_key)
     return pool[order[index % len(order)]]["email"]
 
-PHISHING_SCENARIOS = [
-    {"key":"link",    "en_type":"Credential Harvesting Link",              "ar_type":"رابط سرقة بيانات الدخول",             "has_attachment":False, "attachment_ext":"", "has_link":True},
-    {"key":"pdf",     "en_type":"Malicious PDF Attachment",                "ar_type":"مرفق PDF خبيث",                        "has_attachment":True,  "attachment_ext":".pdf", "has_link":False},
-    {"key":"xlsx",    "en_type":"Malicious Excel Attachment",              "ar_type":"مرفق Excel خبيث",                     "has_attachment":True,  "attachment_ext":".xlsx","has_link":False},
-    {"key":"docx",    "en_type":"Malicious Word Document - Enable Macros", "ar_type":"مرفق Word مزيف - تفعيل الماكرو",      "has_attachment":True,  "attachment_ext":".docx","has_link":False},
-    {"key":"hr_link", "en_type":"Fake HR Announcement with Link",          "ar_type":"إعلان موارد بشرية مزيف برابط",        "has_attachment":False, "attachment_ext":"", "has_link":True},
-    {"key":"exec",    "en_type":"Executive Impersonation - Urgent Request","ar_type":"انتحال هوية المدير - طلب عاجل",       "has_attachment":False, "attachment_ext":"", "has_link":False},
-]
 
-def get_shuffled_scenario_order():
-    if "scenario_order" not in st.session_state:
-        order = list(range(len(PHISHING_SCENARIOS)))
-        random.shuffle(order)
-        st.session_state["scenario_order"] = order
-    return st.session_state["scenario_order"]
 
 # =============================================================
 # EN: SESSION-RANDOMIZED ORDER HELPER (variety fix)
@@ -1145,93 +1126,6 @@ def get_session_random_order(pool_size, session_key):
 # FIX 7: FORCED SCENARIO DIVERSITY PER INDEX
 # كل مثال له سيناريو محدد مسبقاً — يمنع التكرار نهائياً
 # =============================================================
-FORCED_SCENARIOS = {
-    "admin": [
-        {"en": "SCENARIO: Fake supplier invoice — impersonate a medical equipment supplier requesting urgent payment. IMPORTANT: vary every time — change supplier name (MedSupply Co./Al-Rashid Medical/Gulf Medical Supplies), equipment type (surgical instruments/radiology equipment/lab supplies/ICU monitors), invoice amount (SAR 75,000-200,000), and PDF filename each time.",
-         "ar": "السيناريو: فاتورة مورد مزيفة — انتحل هوية مورد معدات طبية يطلب دفع 150,000 ريال بشكل عاجل. استخدم مرفق PDF باسم invoice.pdf."},
-        {"en": "SCENARIO: Fake health insurance portal — re-verify coverage details via suspicious link. IMPORTANT: vary the insurance provider name (Tawuniya/Bupa Arabia/MedGulf/AXA), specific claim type (annual renewal/coverage update/reimbursement), and suspicious link URL each time.",
-         "ar": "السيناريو: بوابة تأمين صحي مزيفة — ادّعِ أن نظام تأمين الموظفين يحتاج تحديث بيانات التغطية عبر رابط مشبوه. بدون مرفق."},
-        {"en": "SCENARIO: Fake payroll system — update bank account details to avoid delayed salary. IMPORTANT: vary the urgency deadline (end of month/before 15th/within 48 hours), bank detail type requested (IBAN/account number/branch code), and sender name each time.",
-         "ar": "السيناريو: نظام رواتب مزيف — ادّعِ أن نظام صرف الرواتب يحتاج تحديث بيانات الحساب البنكي لتجنب تأخر الراتب. بدون مرفق."},
-        {"en": "SCENARIO: CEO/director impersonation — impersonate the hospital CEO urgently requesting the admin manager to process a financial transfer or share sensitive payroll data immediately. Pure social engineering, NO link, NO attachment.",
-         "ar": "السيناريو: انتحال هوية المدير التنفيذي — تظاهر بأنك المدير التنفيذي وتطلب من المدير الإداري تحويل مالي عاجل أو مشاركة بيانات الرواتب. هندسة اجتماعية فقط."},
-        {"en": "SCENARIO: Fake patient appointment system migration — claim the appointment booking system is being upgraded and staff must verify login credentials through a suspicious link. NO attachment.",
-         "ar": "السيناريو: ترحيل مزيف لنظام حجز المواعيد — ادّعِ أن النظام يُرقَّى ويطلب التحقق من بيانات الدخول عبر رابط مشبوه."},
-        {"en": "SCENARIO: Fake medical procurement portal — impersonate procurement system admin claiming a critical supplier contract expires this week and must be renewed via a suspicious link. NO attachment.",
-         "ar": "السيناريو: بوابة مشتريات طبية مزيفة — انتحل هوية مسؤول المشتريات وادّعِ أن عقد مورد حيوي ينتهي هذا الأسبوع ويجب تجديده عبر رابط مشبوه."},
-        # EN: 4 extra admin scenarios added so the scenario pool has more
-        # raw material to randomly draw from each session (variety fix).
-        # AR: 4 سيناريوهات إدارية إضافية لتوسيع مساحة الاختيار العشوائي كل جلسة.
-        {"en": "SCENARIO: Fake annual leave/vacation balance system — claim the employee's leave balance system needs urgent re-verification via a suspicious link before year-end. NO attachment.",
-         "ar": "السيناريو: نظام رصيد إجازات مزيف — ادّعِ أن نظام الإجازات يحتاج إعادة تحقق عاجلة عبر رابط مشبوه قبل نهاية السنة."},
-        {"en": "SCENARIO: Fake employee benefits enrollment — claim annual benefits enrollment (housing allowance/transportation) is closing soon and requires immediate confirmation via a suspicious portal. NO attachment.",
-         "ar": "السيناريو: تسجيل مزايا موظفين مزيف — ادّعِ أن التسجيل في المزايا السنوية (بدل سكن/نقل) يقفل قريبًا ويحتاج تأكيد فوري عبر بوابة مشبوهة."},
-        {"en": "SCENARIO: Malicious vendor contract Word document — send a fake supplier or vendor contract renewal as a Word attachment requiring macro enablement to view terms.",
-         "ar": "السيناريو: مستند Word خبيث لعقد مورد — أرسل تجديد عقد مورد مزيف كمرفق Word يطلب تفعيل الماكرو لعرض الشروط."},
-        {"en": "SCENARIO: Fake hospital management system migration — claim the administrative records system is migrating to a new platform and staff must re-confirm their login via a suspicious link. NO attachment.",
-         "ar": "السيناريو: ترحيل مزيف لنظام إدارة المستشفى — ادّعِ أن نظام السجلات الإدارية ينتقل لمنصة جديدة ويطلب إعادة تأكيد الدخول عبر رابط مشبوه."},
-    ],
-    "clinical": [
-        {"en": "SCENARIO: Fake EMR system credential harvest — claim the hospital EMR system requires urgent re-verification of login credentials through a suspicious link. IMPORTANT: vary the details every time — change the sender name, the specific system name (EMR/Patient Portal/Clinical System), the suspicious link URL, and the spelling mistake used (choose ONE from: credintials/urgant/acces/imediatly — never reuse recived or procedue).",
-         "ar": "السيناريو: سرقة بيانات نظام السجلات الطبية. مهم: غيّر التفاصيل في كل مرة — اسم المرسل، اسم النظام، الرابط المشبوه، والخطأ الإملائي (اختر من: تسجيـل/عاجلة/وصلت — لا تكرر نفس الخطأ)."},
-        {"en": "SCENARIO: Malicious patient data PDF — send a fake urgent patient lab results update as a PDF attachment. IMPORTANT: vary every time — change the patient department (ICU/oncology/cardiology/radiology/pediatrics), the PDF filename, the doctor name, and the spelling mistake (choose ONE from: recieved/attachement/critcal/paicent — never repeat the same error).",
-         "ar": "السيناريو: مرفق PDF خبيث لنتائج مختبر. مهم: غيّر القسم (ICU/أورام/قلب/أطفال) واسم الملف والطبيب والخطأ الإملائي في كل مرة."},
-        {"en": "SCENARIO: Fake MOH clinical protocol — impersonate MOH sending urgent clinical guidance. IMPORTANT: vary the protocol topic every time (infection control/COVID-19 update/vaccination campaign/MRSA alert/antimicrobial resistance) and use a different suspicious link URL each time.",
-         "ar": "السيناريو: بروتوكول سريري مزيف من وزارة الصحة. مهم: غيّر موضوع البروتوكول (مكافحة العدوى/كوفيد/تطعيمات/MRSA) والرابط في كل مرة."},
-        {"en": "SCENARIO: Medical director impersonation — impersonate the medical director urgently requesting patient data or system access. IMPORTANT: vary the director name, department (Surgery/Internal Medicine/Emergency/ICU), and specific request each time. Pure social engineering — no link needed.",
-         "ar": "السيناريو: انتحال هوية المدير الطبي. مهم: غيّر اسم المدير والتخصص (جراحة/طوارئ/باطنية) والطلب المحدد في كل مرة."},
-        {"en": "SCENARIO: Fake clinical staff schedule Excel — send a malicious Excel file with updated duty roster. IMPORTANT: vary the time period (next month/Ramadan schedule/Q2 roster/holiday coverage), Excel filename, and head nurse name each time.",
-         "ar": "السيناريو: جدول مناوبات مزيف كمرفق Excel. مهم: غيّر الفترة الزمنية (رمضان/الربع الثاني/الإجازات) واسم الملف في كل مرة."},
-        {"en": "SCENARIO: Fake pharmacy or medical system update — claim the pharmacy dispensing system or drug management portal requires urgent login verification. IMPORTANT: vary the system name (Pharmacy System/Drug Dispensing Portal/Medication Management/Blood Bank System) and suspicious link each time.",
-         "ar": "السيناريو: تحديث مزيف لنظام الصيدلية أو بنك الدم. مهم: غيّر اسم النظام (صيدلية/بنك الدم/إدارة الدواء) والرابط في كل مرة."},
-        # EN: 4 extra clinical scenarios added so "example slot #N" doesn't
-        # keep landing on the same scenario across different sessions.
-        # AR: 4 سيناريوهات سريرية إضافية حتى ماتفضل "خانة المثال رقم N"
-        # تطلع لها نفس السيناريو بكل الجلسات.
-        {"en": "SCENARIO: Fake nurse scheduling/shift swap system — claim the shift-swap request system needs urgent credential re-verification via a suspicious link. IMPORTANT: vary the ward name and link each time.",
-         "ar": "السيناريو: نظام تبديل المناوبات مزيف — ادّعِ أن نظام طلبات تبديل المناوبات يحتاج إعادة تحقق عاجلة عبر رابط مشبوه. مهم: غيّر اسم القسم والرابط في كل مرة."},
-        {"en": "SCENARIO: Fake critical patient vitals alert PDF — send an urgent fake patient vitals/monitoring alert as a PDF attachment requiring immediate review. IMPORTANT: vary the ward (ICU/CCU/ER), patient reference, and PDF filename each time.",
-         "ar": "السيناريو: تنبيه حيوي حرج لمريض كمرفق PDF مزيف — أرسل تنبيهًا عاجلاً مزيفًا لمراقبة مريض كمرفق PDF يطلب مراجعة فورية. مهم: غيّر القسم ورقم الحالة واسم الملف في كل مرة."},
-        {"en": "SCENARIO: Fake telemedicine/remote consultation platform — claim the hospital's telemedicine system requires urgent credential re-verification via a suspicious link before today's remote consultations. NO attachment.",
-         "ar": "السيناريو: منصة استشارات طبية عن بعد مزيفة — ادّعِ أن نظام الاستشارات عن بعد يحتاج إعادة تحقق عاجلة عبر رابط مشبوه قبل استشارات اليوم."},
-        {"en": "SCENARIO: Fake blood bank or transfusion system alert — claim an urgent blood bank inventory system update requires immediate login via a suspicious portal. NO attachment.",
-         "ar": "السيناريو: تنبيه نظام بنك دم مزيف — ادّعِ أن تحديث نظام مخزون بنك الدم يحتاج تسجيل دخول فوري عبر بوابة مشبوهة."},
-    ],
-    "it": [
-        {"en": "SCENARIO: Fake VPN credential update — claim the hospital VPN gateway requires urgent re-authentication. IMPORTANT: vary the VPN system name (Cisco AnyConnect/FortiClient/Pulse Secure), the suspicious portal URL, and the urgency reason each time.", "ar": "السيناريو: تحديث مزيف لبيانات الـ VPN. مهم: غيّر اسم النظام (Cisco/FortiClient) والرابط والسبب في كل مرة."},
-        {"en": "SCENARIO: Fake SSL certificate expiry — claim the hospital website or portal SSL certificate has expired. IMPORTANT: vary the affected system (hospital website/patient portal/EMR login/staff intranet), renewal deadline, and suspicious link each time.", "ar": "السيناريو: تنبيه مزيف بانتهاء شهادة SSL. مهم: غيّر النظام المتأثر (موقع/بوابة/EMR) والموعد والرابط في كل مرة."},
-        {"en": "SCENARIO: Fake IT helpdesk remote access — impersonate IT helpdesk claiming a critical server issue requires remote access credentials immediately.", "ar": "السيناريو: مكتب مساعدة مزيف يطلب بيانات الوصول عن بُعد لحل مشكلة خادم حرجة."},
-        {"en": "SCENARIO: CIO impersonation — impersonate the Chief Information Officer urgently requesting server admin credentials or asking to disable security settings.", "ar": "السيناريو: انتحال هوية مدير تقنية المعلومات يطلب بيانات الخادم أو تعطيل إعدادات الأمان."},
-        {"en": "SCENARIO: Fake software license renewal — claim a critical hospital software license is expiring in 24 hours and requires immediate renewal via a suspicious portal.", "ar": "السيناريو: تجديد مزيف لترخيص برنامج حيوي ينتهي خلال 24 ساعة."},
-        {"en": "SCENARIO: Fake firewall policy update — send a malicious Word document claiming to contain a new mandatory firewall security policy requiring macro enablement.", "ar": "السيناريو: سياسة جدار ناري مزيفة — مستند Word يطلب تفعيل الماكرو."},
-        # EN: 4 extra IT scenarios added for more session-to-session variety.
-        # AR: 4 سيناريوهات تقنية إضافية لزيادة التنوع بين الجلسات.
-        {"en": "SCENARIO: Fake cloud backup credential alert — claim the hospital's cloud backup system detected a failed login and requires immediate credential re-verification via a suspicious link. NO attachment.", "ar": "السيناريو: تنبيه مزيف لنظام النسخ الاحتياطي السحابي — ادّعِ أنه رُصد فشل تسجيل دخول ويتطلب إعادة تحقق فورية عبر رابط مشبوه."},
-        {"en": "SCENARIO: Fake Active Directory password expiry — claim the employee's Active Directory/network password expires today and must be reset via a suspicious portal link immediately. NO attachment.", "ar": "السيناريو: انتهاء كلمة مرور Active Directory مزيف — ادّعِ أن كلمة مرور الشبكة تنتهي اليوم ويجب إعادة ضبطها عبر بوابة مشبوهة فورًا."},
-        {"en": "SCENARIO: Malicious database backup script attachment — send a fake urgent database backup verification request as an Excel attachment requiring the recipient to enable macros to run a 'repair script'.", "ar": "السيناريو: مرفق Excel خبيث لنص استعادة قاعدة بيانات — أرسل طلب تحقق نسخة احتياطية عاجل كمرفق Excel يطلب تفعيل الماكرو لتشغيل 'سكربت إصلاح'."},
-        {"en": "SCENARIO: Fake EMR server maintenance window — impersonate the systems team claiming an emergency EMR server maintenance requires staff to re-authenticate via a suspicious link before the maintenance window starts. NO attachment.", "ar": "السيناريو: نافذة صيانة خادم EMR مزيفة — انتحل هوية فريق الأنظمة وادّعِ أن صيانة طارئة لخادم EMR تتطلب إعادة مصادقة الموظفين عبر رابط مشبوه قبل بدء الصيانة."},
-    ],
-    "other": [
-        # 0 — ADMIN: يطابق OTHER_JOB_PROFILES[0] (billing coordinator)
-        {"en": "ADMINISTRATIVE PHISHING — Billing/Payroll: Generate a fake HR payroll email claiming the employee's salary is ON HOLD until they update their IBAN/bank account details. MUST include: fake non-hospital domain, suspicious link to update bank details, deadline threat (end of month/48 hours). VARY each run: HR manager name, bank/IBAN detail type, deadline, suspicious URL. NEVER generate clinical or IT content.",
-         "ar": "تصيد إداري — رواتب: رسالة مزيفة من قسم الموارد البشرية تدّعي أن الراتب موقوف حتى تحديث بيانات الحساب البنكي (الآيبان). يجب تضمين: نطاق مزيف، رابط مشبوه للتحديث، تهديد بالموعد النهائي. غيّر في كل مرة: اسم مدير الموارد البشرية، نوع البيانات البنكية، الموعد، الرابط."},
-        # 1 — IT: يطابق OTHER_JOB_PROFILES[1] (network technician)
-        {"en": "IT/TECHNICAL PHISHING — VPN/Network: Generate a fake IT security alert claiming the employee's hospital network account has detected suspicious login activity and must be re-verified immediately via a suspicious portal. MUST include: fake IT security domain, suspicious portal link, account lockout threat. VARY each run: alert type (suspicious login/account breach/security incident), suspicious link URL, IT security officer name. NEVER generate clinical or administrative content.",
-         "ar": "تصيد تقني — VPN/شبكة: تنبيه أمني مزيف من قسم تقنية المعلومات يدّعي رصد نشاط مشبوه على حساب الموظف في الشبكة ويطلب إعادة التحقق فوراً. يجب تضمين: نطاق تقني مزيف، رابط بوابة مشبوهة، تهديد بتعليق الحساب. غيّر في كل مرة: نوع التنبيه، الرابط، اسم مسؤول الأمن."},
-        # 2 — CLINICAL: يطابق OTHER_JOB_PROFILES[2] (pharmacist/lab)
-        {"en": "CLINICAL PHISHING — Pharmacy/Lab System: Generate a fake pharmacy dispensing system or lab results portal credential harvest. Claim the employee's access to the pharmacy/lab system will be suspended unless they re-verify login credentials immediately. MUST include: fake pharmacy/lab system domain, suspicious credential update link, system suspension threat. VARY each run: system name (pharmacy dispensing/lab portal/medication system), fake domain, suspicious link. NEVER generate administrative or IT content.",
-         "ar": "تصيد سريري — نظام صيدلية/مختبر: سرقة بيانات دخول نظام الصيدلية أو بوابة نتائج المختبر. ادّعِ أن وصول الموظف للنظام سيتوقف ما لم يعيد التحقق من بيانات الدخول فوراً. يجب تضمين: نطاق مزيف لنظام صيدلية/مختبر، رابط مشبوه للتحديث، تهديد بتعليق النظام. غيّر في كل مرة: اسم النظام، النطاق المزيف، الرابط."},
-        # 3 — ADMIN: يطابق OTHER_JOB_PROFILES[3] (procurement officer)
-        {"en": "ADMINISTRATIVE PHISHING — Procurement/Supplier Invoice: Generate a fake urgent supplier invoice email claiming an overdue medical equipment payment (SAR 75,000–200,000) must be approved immediately via a supplier portal link. MUST include: fake supplier company name, suspicious invoice portal link, overdue payment threat. VARY each run: supplier name, equipment type (surgical/lab/radiology/ICU), invoice amount, PDF filename, suspicious portal URL. NEVER generate clinical or IT content.",
-         "ar": "تصيد إداري — مشتريات/فاتورة مورد: فاتورة مورد معدات طبية مزيفة تدّعي وجود مبلغ متأخر (75,000-200,000 ريال) يجب دفعه فوراً عبر بوابة المورد. يجب تضمين: اسم شركة مورد مزيف، رابط بوابة مزيف، تهديد بتعليق العقد. غيّر في كل مرة: اسم المورد، نوع المعدات، المبلغ، اسم ملف PDF، الرابط."},
-        # 4 — IT: يطابق OTHER_JOB_PROFILES[4] (sysadmin)
-        {"en": "IT/TECHNICAL PHISHING — Server/Firewall/CIO: Generate a fake CIO or IT Director impersonation email urgently requesting the employee to provide admin server credentials or disable a security setting immediately. MUST be pure social engineering (no link needed). VARY each run: executive name/title (CIO/CISO/IT Director), specific system (firewall/server/database/Active Directory), urgency reason. NEVER generate clinical or administrative content.",
-         "ar": "تصيد تقني — خادم/جدار ناري/انتحال مدير: انتحال هوية مدير تقنية المعلومات أو المدير التنفيذي للتقنية يطلب تزويده ببيانات دخول الخادم أو تعطيل إعداد أمني فوراً. هندسة اجتماعية بحتة. غيّر في كل مرة: اسم ولقب المدير، النظام المحدد، سبب الاستعجال."},
-        # 5 — CLINICAL: يطابق OTHER_JOB_PROFILES[5] (radiologist)
-        {"en": "CLINICAL PHISHING — PACS/Radiology System: Generate a fake PACS imaging system or radiology portal credential harvest. Claim urgent patient scan results require the employee to log in via a suspicious link, or that the radiology system requires immediate credential re-verification. MUST include: fake radiology/PACS domain, suspicious link, patient urgency. VARY each run: system name (PACS/radiology portal/imaging system), fake domain, patient case reference, suspicious link. NEVER generate administrative or IT content.",
-         "ar": "تصيد سريري — نظام PACS/أشعة: سرقة بيانات دخول نظام التصوير الطبي أو بوابة الأشعة. ادّعِ أن نتائج أشعة مريض عاجلة تتطلب تسجيل الدخول عبر رابط مشبوه، أو أن النظام يحتاج إعادة التحقق الفوري. يجب تضمين: نطاق أشعة مزيف، رابط مشبوه، إلحاح حالة مريض. غيّر في كل مرة: اسم النظام، النطاق، رقم الحالة، الرابط."},
-    ],
-}
 
 # EN: RECIPIENT_POOLS — fixed (name, email) pairs for the generic roles
 # (clinical/admin/it), shared by both the learning-phase prompt
@@ -1312,110 +1206,15 @@ RECIPIENT_POOLS = {
 # هذي الجلسة. هذا يخلي التنوع فعليًا لا محدود بدل ما يكون مسقوف
 # بحجم قائمة ثابتة، مع بقاء الواقعية بفضل الفئة وسياق الدور.
 # =============================================================
-OPEN_CATEGORIES = {
-    "clinical": [
-        {"en": "EMR / patient-records system access", "ar": "نظام السجلات الطبية / الوصول لبيانات المرضى"},
-        {"en": "lab or diagnostic results", "ar": "نتائج مختبر أو فحوصات تشخيصية"},
-        {"en": "MOH clinical protocol or directive", "ar": "بروتوكول أو توجيه طبي من وزارة الصحة"},
-        {"en": "medical staff impersonation (director / chief of staff / consultant)", "ar": "انتحال هوية كادر طبي (مدير طبي/رئيس أطباء/استشاري)"},
-        {"en": "clinical scheduling / duty roster / shift system", "ar": "جدولة سريرية / مناوبات / نظام الشِفتات"},
-        {"en": "specialized clinical system (pharmacy / blood bank / PACS / telemedicine)", "ar": "نظام سريري متخصص (صيدلية/بنك دم/PACS/طب عن بُعد)"},
-    ],
-    "admin": [
-        {"en": "supplier / vendor invoice or procurement", "ar": "فاتورة مورد أو مشتريات"},
-        {"en": "health insurance / employee benefits", "ar": "تأمين صحي / مزايا موظفين"},
-        {"en": "payroll / HR / bank account details", "ar": "رواتب / موارد بشرية / بيانات حساب بنكي"},
-        {"en": "executive (CEO / director) impersonation", "ar": "انتحال هوية مدير تنفيذي"},
-        {"en": "hospital management or records system access", "ar": "نظام إدارة المستشفى أو السجلات الإدارية"},
-        {"en": "leave balance / administrative portal", "ar": "رصيد إجازات / بوابة إدارية"},
-    ],
-    "it": [
-        {"en": "VPN / remote network access", "ar": "VPN / وصول شبكة عن بُعد"},
-        {"en": "SSL certificate / domain / website", "ar": "شهادة SSL / نطاق / موقع"},
-        {"en": "IT helpdesk / remote support request", "ar": "مكتب مساعدة تقني / طلب دعم عن بُعد"},
-        {"en": "executive (CIO / CISO) impersonation", "ar": "انتحال هوية مدير تقنية المعلومات"},
-        {"en": "software license / subscription renewal", "ar": "ترخيص برنامج / تجديد اشتراك"},
-        {"en": "server / backup / database / Active Directory", "ar": "خادم / نسخ احتياطي / قاعدة بيانات / Active Directory"},
-    ],
-}
 
-_USED_TOPICS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "used_topics.json")
-_USED_DOMAINS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "used_domains.json")
 
-def _load_used_store(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
-    return {}
 
-def _save_used_store(path, data):
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-    except Exception:
-        # Read-only filesystem on some hosts — fall back silently to
-        # session-only memory for this run.
-        pass
 
-def get_avoid_list_text(role_type, key_suffix, is_ar):
-    """
-    EN: Returns a formatted "do not repeat these" instruction line built
-    from topics already generated for this role/phase — combining the
-    current session's memory AND a persistent on-disk store, so variety is
-    maintained across page refreshes, logouts, and new sessions too (not
-    just within one browser tab).
-    AR: يرجع سطر تعليمات "لا تكرر هذي" مبني على المواضيع اللي تولّدت
-    لهذا الدور/المرحلة — يجمع بين ذاكرة الجلسة الحالية وملف دائم على القرص،
-    حتى يستمر التنوع بين الجلسات وتسجيلات الخروج، وليس فقط بنفس المتصفح.
-    """
-    key = f"used_topics_{role_type}_{key_suffix}"
-    session_used = st.session_state.get(key, [])
-    persisted = _load_used_store(_USED_TOPICS_PATH).get(key, [])
-    used = list(dict.fromkeys(persisted + session_used))[-25:]
-    if not used:
-        return ""
-    items = "؛ ".join(used) if is_ar else "; ".join(used)
-    if is_ar:
-        return f"\nمواضيع تولّدت سابقًا لهذا الدور — يجب أن يكون موضوعك الجديد مختلفًا عنها تمامًا: {items}\n"
-    return f"\nTopics already generated earlier for this role — your new topic MUST be clearly different from all of these: {items}\n"
 
-def remember_used_topic(role_type, key_suffix, topic_text):
-    """Appends a short topic descriptor to BOTH the session's "used" list and
-    the persistent on-disk store (capped), so future prompts — even from a
-    brand-new session — avoid repeating it."""
-    if not topic_text:
-        return
-    key = f"used_topics_{role_type}_{key_suffix}"
-    entry = str(topic_text)[:80]
-    lst = st.session_state.get(key, [])
-    lst.append(entry)
-    st.session_state[key] = lst[-12:]
-    store = _load_used_store(_USED_TOPICS_PATH)
-    persisted = store.get(key, [])
-    persisted.append(entry)
-    store[key] = persisted[-30:]
-    _save_used_store(_USED_TOPICS_PATH, store)
 
 # FIX 1: build_prompt — upgraded to llama-3.3-70b-versatile
 # and enhanced difficulty rules with more detail
 # =============================================================
-def get_used_domains_text(role_type, key_suffix, is_ar):
-    """Return domains already generated for this role/phase — combining
-    session memory with a persistent on-disk store (see get_avoid_list_text)."""
-    key = f"used_domains_{role_type}_{key_suffix}"
-    session_used = st.session_state.get(key, [])
-    persisted = _load_used_store(_USED_DOMAINS_PATH).get(key, [])
-    used = list(dict.fromkeys(persisted + session_used))[-40:]
-    if not used:
-        return ""
-    items = "، ".join(used) if is_ar else ", ".join(used)
-    if is_ar:
-        return f"\nالنطاقات التي استُخدمت سابقًا لهذا الدور ويُمنع تكرارها أو استخدام نطاق قريب منها: {items}\n"
-    return f"\nDomains already used earlier for this role. Do NOT reuse these domains or close variants: {items}\n"
 
 def extract_domains_from_result(result):
     """Extract domains from generated email fields for session-level anti-repeat memory."""
@@ -1430,26 +1229,6 @@ def extract_domains_from_result(result):
             clean.append(d)
     return clean[:5]
 
-def remember_generated_artifacts(role_type, key_suffix, result):
-    """Remember topic + domains so later generations (this session AND future
-    sessions, via the on-disk store) avoid repetition."""
-    remember_used_topic(role_type, key_suffix, result.get("email_type") or result.get("subject"))
-    domains = extract_domains_from_result(result)
-    if not domains:
-        return
-    key = f"used_domains_{role_type}_{key_suffix}"
-    current = st.session_state.get(key, [])
-    for d in domains:
-        if d not in current:
-            current.append(d)
-    st.session_state[key] = current[-30:]
-    store = _load_used_store(_USED_DOMAINS_PATH)
-    persisted = store.get(key, [])
-    for d in domains:
-        if d not in persisted:
-            persisted.append(d)
-    store[key] = persisted[-60:]
-    _save_used_store(_USED_DOMAINS_PATH, store)
 
 
 def _domain_root(domain):
@@ -1488,261 +1267,13 @@ def _domain_has_obvious_advanced_word(domain):
 # job role (clinical/admin/IT) or violate the documented difficulty
 # framework before the email is shown to the trainee.
 # =============================================================
-_ROLE_KEYWORDS = {
-    "clinical": re.compile(r"\b(patient|clinical|emr|ehr|doctor|nurse|pharmac|medication|lab|radiology|pacs|icu|er|ward|handover|vitals|diagnostic|prescription|blood bank)\b|مريض|سريري|طبيب|ممرض|صيدل|دواء|مختبر|أشعة|مناوبة|قسم|بنك الدم|سجل طبي", re.I),
-    "admin": re.compile(r"\b(invoice|procurement|vendor|supplier|payroll|insurance|billing|appointment|contract|leave|hr|administrative|records office)\b|فاتورة|مورد|مشتريات|رواتب|تأمين|فوترة|مواعيد|عقد|إجازات|إداري", re.I),
-    "it": re.compile(r"\b(vpn|server|network|firewall|ssl|certificate|helpdesk|active directory|backup|database|endpoint|software|license|mfa|otp|cyber|it support)\b|شبكة|خادم|جدار ناري|شهادة|دعم تقني|نسخ احتياطي|قاعدة بيانات|ترخيص|تقنية|أمن سيبراني", re.I),
-}
-_ROLE_FORBIDDEN = {
-    "clinical": re.compile(r"\b(payroll|invoice|vendor|procurement|leave balance|hr portal|vpn|ssl certificate|server|helpdesk|software license|records management team|document collaboration team|security team)\b|رواتب|فاتورة|مورد|مشتريات|إجازات|بوابة الموارد|دعم تقني|شبكة|خادم|فريق الأمن|فريق إدارة السجلات", re.I),
-    "admin": re.compile(r"\b(emr|lab results|clinical handover|patient vitals|medication order|radiology image|vpn|ssl certificate|server|firewall)\b|تسليم سريري|نتائج مختبر|علامات حيوية|أمر دوائي|أشعة|شبكة|خادم", re.I),
-    "it": re.compile(r"\b(lab results|clinical handover|patient vitals|payroll bank|supplier invoice|appointment booking)\b|نتائج مختبر|تسليم سريري|علامات حيوية|فاتورة مورد|رواتب|حجز مواعيد", re.I),
-}
 
-def _current_role_type_for_guardrail():
-    try:
-        role = st.session_state.get("role", "Clinical")
-        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
-    except Exception:
-        return "clinical"
 
-def _role_alignment_issues(result):
-    role_type = _current_role_type_for_guardrail()
-    if role_type == "other":
-        return []
-    text = " ".join(str(result.get(k, "")) for k in ["email_type", "from", "subject", "body", "attachment", "suspicious_text", "suspicious_link"])
-    issues = []
-    if not _ROLE_KEYWORDS[role_type].search(text):
-        issues.append(f"email content is not clearly aligned with the selected {role_type} role")
-    if _ROLE_FORBIDDEN[role_type].search(text):
-        issues.append(f"email drifts into a different role instead of the selected {role_type} role")
-    return issues
 
-def _difficulty_structure_issues(result, difficulty, is_phishing=True):
-    if not is_phishing or not isinstance(result, dict):
-        return []
-    body = str(result.get("body", ""))
-    combined = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
-    issues = []
-    has_qr = bool(re.search(r"\[\s*QR", body, re.I))
-    has_attachment = bool(str(result.get("attachment", "")).strip())
-    link = str(result.get("suspicious_link", "")).strip()
-    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
-    n_ind = len(indicators)
 
-    if difficulty == "easy":
-        if has_qr: issues.append("Beginner/Easy must not contain QR code")
-        if has_attachment: issues.append("Beginner/Easy must not contain attachment")
-        if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
-        if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
-        if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
-    elif difficulty == "medium":
-        if has_qr: issues.append("Intermediate must not contain QR code")
-        if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
-            issues.append("Intermediate urgency is too aggressive")
-        if n_ind and not (2 <= n_ind <= 3): issues.append("Intermediate learning analysis must contain 2-3 indicators")
-        if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
-            issues.append("Intermediate attachment, when used, should be a simple PDF")
-    elif difficulty == "hard":
-        if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
-            issues.append("Advanced/Hard must avoid direct credential requests")
-        if n_ind and not (1 <= n_ind <= 2): issues.append("Advanced/Hard learning analysis must contain only 1-2 subtle indicators")
-        # Hard should vary its advanced vector. At least one subtle channel is required,
-        # but forcing QR + attachment + button in every email makes the level repetitive.
-        if not (has_qr or has_attachment or link or re.search(r"\[[^\]]+\]\(https?://", body)):
-            issues.append("Advanced/Hard needs at least one subtle external channel: attachment, QR, or disguised link/button")
-    return issues
 
-def get_generation_quality_issues(result, difficulty, is_phishing=True):
-    """
-    Lightweight guardrail used before showing generated content.
-    It does not replace the model. It only rejects outputs that clearly violate
-    the difficulty contract or repeat domains within the same session.
-    """
-    if not isinstance(result, dict):
-        return ["result is not a JSON object"]
 
-    body = (result.get("body") or "") or ""
-    subject = (result.get("subject") or "") or ""
-    sender = (result.get("from") or "") or ""
-    link = (result.get("suspicious_link") or "") or ""
-    combined = " ".join([body, subject, sender, link])
-    domains = extract_domains_from_result(result)
-    non_official = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
 
-    issues = []
-    issues.extend(_role_alignment_issues(result))
-    issues.extend(_difficulty_structure_issues(result, difficulty, is_phishing))
-    if is_phishing:
-        if not non_official and not result.get("attachment"):
-            issues.append("phishing item needs a non-official fake domain/link or a suspicious attachment")
-        if difficulty == "easy":
-            if not _has_generic_greeting(body):
-                issues.append("Beginner must use a generic greeting")
-            if not re.search(r'password|credential|login|verify|account|كلمة مرور|بيانات الدخول|تحقق|حساب', combined, re.I):
-                issues.append("Beginner needs an obvious sensitive request")
-            if not re.search(r'urgent|immediately|today|suspended|terminated|locked|عاجل|فورًا|اليوم|تعليق|إيقاف', combined, re.I):
-                issues.append("Beginner needs obvious urgency/threat")
-        elif difficulty == "medium":
-            if _contains_long_all_caps(combined):
-                issues.append("Intermediate must not use aggressive all-caps")
-            if re.search(r'permanent termination|within 1 hour|act now|account closed|إنهاء دائم|خلال ساعة|تصرف الآن', combined, re.I):
-                issues.append("Intermediate threat is too aggressive")
-        elif difficulty == "hard":
-            if _has_generic_greeting(body):
-                issues.append("Advanced must use a personalized greeting, not generic")
-            if _contains_long_all_caps(combined):
-                issues.append("Advanced must not contain all-caps urgency")
-            if re.search(r'act now|failure to comply|account will be closed|enter your password|full credentials|تصرف الآن|سيتم إغلاق|أدخل كلمة المرور|بيانات الدخول كاملة', combined, re.I):
-                issues.append("Advanced contains obvious beginner-style threat or direct password request")
-            if any(_domain_has_obvious_advanced_word(d) for d in non_official):
-                issues.append("Advanced fake domain is too obvious; avoid secure/update/verify/login/reset/password/urgent/emr")
-    else:
-        # Legitimate assessment items must stay genuinely safe.
-        bad = [d for d in domains if _domain_root(d) not in {"hospital.org", "moh.gov.sa"}]
-        if bad:
-            issues.append("Legitimate item must not contain external or fake domains")
-        if re.search(r'password|credential|verify your account|enter your login|كلمة مرور|بيانات الدخول|تحقق من حسابك', combined, re.I):
-            issues.append("Legitimate item must not ask for credentials or account verification")
-        if re.search(r'suspended|terminated|locked|account closed|تعليق|إيقاف|إغلاق الحساب', combined, re.I):
-            issues.append("Legitimate item must not threaten account suspension")
-
-    return issues
-
-def build_retry_guidance(issues, is_ar):
-    if not issues:
-        return ""
-    joined = "؛ ".join(issues) if is_ar else "; ".join(issues)
-    if is_ar:
-        return f"""
-
-تم رفض المحاولة السابقة لأنها خالفت قواعد الجودة التالية:
-{joined}
-
-أعد التوليد الآن من الصفر بفكرة ونطاق ومرسل مختلفين تمامًا، والتزم بمستوى الصعوبة حرفيًا.
-"""
-    return f"""
-
-The previous attempt was rejected because it violated these quality rules:
-{joined}
-
-Regenerate from scratch with a completely different idea, sender, and domain. Follow the difficulty level literally.
-"""
-
-def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
-    """Progressive Difficulty aligned with the approved Easy/Medium/Hard plan."""
-    if not is_phishing:
-        if is_ar:
-            rules = {
-                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط، تحية واضحة، لا روابط خارجية ولا مرفقات ولا QR ولا طلب بيانات حساسة.",
-                "medium": "رسالة شرعية متوسطة: نطاق رسمي، لغة مهنية، موعد طبيعي، تفاصيل قسم واقعية، ولا طلب تسجيل دخول خارجي.",
-                "hard": "رسالة شرعية متقدمة: نطاق رسمي، تحية شخصية كاملة، سياق داخلي دقيق، ولغة طبيعية احترافية بلا مؤشرات تصيد.",
-            }
-        else:
-            rules = {
-                "easy": "Legitimate Easy: official domain only; clear greeting; no external link, attachment, QR, or sensitive-data request.",
-                "medium": "Legitimate Intermediate: official domain, professional language, normal deadline, realistic department detail, no external sign-in.",
-                "hard": "Legitimate Advanced: official domain, fully personalised greeting, precise internal context, polished natural language, and no phishing cues.",
-            }
-        return rules.get(difficulty, rules["medium"])
-
-    if is_ar:
-        rules = {
-            "easy": """
-المستوى السهل — مؤشرات كثيرة وواضحة (4 إلى 5):
-- تحية عامة فقط، بلا اسم شخصي.
-- نطاق مزيف واضح وبعيد عن hospital.org.
-- لغة مباشرة مع خطأين واضحين كحد أقصى.
-- طلب صريح لكلمة المرور أو PIN أو رمز تحقق.
-- إلحاح مباشر مثل اليوم/فوراً/سيُغلق الوصول.
-- رابط خام ظاهر كاملاً داخل الرسالة.
-- ممنوع المرفقات وQR وأزرار تسجيل الدخول وMicrosoft 365/Outlook.
-- صفحة الوجهة المتخيلة بسيطة وليست نسخة مطابقة للنظام.
-- التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
-""",
-            "medium": """
-المستوى المتوسط — مؤشرات أقل وأكثر مهنية (2 إلى 3):
-- تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
-- نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
-- لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
-- موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
-- الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
-- ممنوع QR.
-- استخدم وسيلة واحدة فقط حسب صيغة العرض المحددة: زر واحد أو رابط واحد أو PDF بلا رابط. ممنوع جمع الزر والرابط في الرسالة نفسها.
-- Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
-- صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
-- التحليل يجب أن يحتوي مؤشرين أو 3 مؤشرات مرتبطة بالنص.
-""",
-            "hard": """
-المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
-- تحية بالاسم الكامل، ورسالة مرتبطة بمهمة يومية دقيقة للدور المختار.
-- نطاق شبه مطابق أو اختصار مؤسسي مقنع، بلا كلمات فاضحة مثل secure/update/verify/login/reset.
-- لغة طبيعية سليمة تماماً وتوقيع مهني واقعي.
-- لا طلب مباشر لكلمة المرور ولا تهديد ولا استعجال صارخ؛ يكون الطلب روتينياً ومنطقياً.
-- استخدم قناة متقدمة واحدة أو اثنتين فقط مع التنويع بين الأمثلة: مرفق PDF/Excel واقعي، رابط مخفي خلف زر، QR، SharePoint أو Microsoft 365/Outlook.
-- لا تجمع QR + مرفق + زر + رابط خام في كل رسالة؛ الهدف الواقعية لا كثرة العلامات.
-- إذا استُخدم رابط فيجب ألا يتكرر كنص خام وزر معاً.
-- صفحة الوجهة المتخيلة شبه مطابقة للنظام الحقيقي.
-- التحليل يجب أن يحتوي مؤشراً أو مؤشرين خفيين فقط.
-""",
-        }
-    else:
-        rules = {
-            "easy": """
-EASY — many obvious cues (4-5 indicators):
-- Generic greeting only; no personal name.
-- Clearly fake domain far from hospital.org.
-- Direct language with no more than two obvious mistakes.
-- Explicit request for password, staff PIN, login credentials, or verification code.
-- Strong urgency such as today/immediately/access will close.
-- Full raw URL visibly written in the email.
-- No attachment, QR, sign-in button, Microsoft 365, or Outlook workflow.
-- Imagined landing page is simple, not a close clone.
-- Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
-""",
-            "medium": """
-INTERMEDIATE — fewer, more professional cues (2-3 indicators):
-- Greeting uses department/job title or first name only.
-- Plausible look-alike domain that differs on careful inspection.
-- Professional language with at most one subtle error and no aggressive threat.
-- Reasonable 24-72 hour deadline or normal workflow window.
-- Indirect request to open a review portal or external sign-in; never ask to email a password.
-- QR is forbidden.
-- Use exactly one delivery style as instructed: one button, one visible URL, or a simple PDF with no link. Never combine a button and a visible URL in the same email.
-- Microsoft 365/Outlook may appear occasionally, not in every example.
-- Imagined landing page resembles an internal system but is not a perfect clone.
-- Tutor analysis must contain 2 or 3 text-grounded indicators.
-""",
-            "hard": """
-ADVANCED/HARD — only 1-2 subtle cues:
-- Fully personalised greeting and a highly specific daily task for the selected role.
-- Near-identical or convincing abbreviated domain; avoid obvious words secure/update/verify/login/reset/password/urgent.
-- Flawless, natural professional language and realistic complete signature.
-- No direct password request, explicit threat, or loud urgency; the action should look routine and logical.
-- Use only one or two advanced channels per email, varied across examples: realistic PDF/Excel attachment, hidden button link, QR, SharePoint, or Microsoft 365/Outlook.
-- Do not force QR + attachment + button + raw URL into every message; realism matters more than cue quantity.
-- Never show the same URL both raw and behind a button.
-- Imagined landing page is a near-clone of the real system.
-- Tutor analysis must contain only 1 or 2 subtle, text-grounded indicators.
-""",
-        }
-    return rules.get(difficulty, rules["medium"])
-
-def get_role_unbounded_context(role_type, is_ar=False):
-    """Role context only; not a scenario template list. The model must invent the actual scenario."""
-    if is_ar:
-        return {
-            "clinical": "الدور سريري داخل مستشفى سعودي: أطباء، تمريض، صيدلة، مختبر، أشعة، عيادات، طوارئ، عناية مركزة، سجلات طبية، أنظمة مرضى، بروتوكولات وزارة الصحة.",
-            "admin": "الدور إداري داخل مستشفى سعودي: استقبال، سكرتارية طبية، ملفات مرضى، تأمين، فوترة، مشتريات، موارد بشرية، اعتماد، جدولة، عقود موردين.",
-            "it": "الدور تقني داخل مستشفى سعودي: شبكات، VPN، خوادم، EMR، نسخ احتياطي، Active Directory، شهادات، جدار ناري، تراخيص، مكتب مساعدة، أمن سيبراني.",
-            "other": "الدور موظف عام في مستشفى سعودي. اختر بحرية قسمًا منطقيًا جديدًا في كل مرة: سريري أو إداري أو تقني أو تشغيلي.",
-        }.get(role_type, "الدور موظف في مستشفى سعودي.")
-    return {
-        "clinical": "Clinical role in a Saudi hospital: doctors, nurses, pharmacy, lab, radiology, clinics, ER, ICU, EMR, patient systems, MOH clinical protocols.",
-        "admin": "Administrative role in a Saudi hospital: reception, medical secretary, patient records, insurance, billing, procurement, HR, accreditation, scheduling, vendor contracts.",
-        "it": "IT/Informatics role in a Saudi hospital: network, VPN, servers, EMR, backups, Active Directory, certificates, firewall, licenses, helpdesk, cybersecurity.",
-        "other": "General Saudi hospital employee. Freely choose a fresh logical department each time: clinical, administrative, technical, operational, or support.",
-    }.get(role_type, "Saudi hospital employee.")
 
 
 # =============================================================
@@ -1753,308 +1284,20 @@ def get_role_unbounded_context(role_type, is_ar=False):
 # but it no longer invents the core idea from nothing. This prevents repeated
 # "password/account" emails and keeps the content healthcare-relevant.
 # =============================================================
-def _make_cards(role_type, groups):
-    cards = []
-    counter = 1
-    prefix = {"clinical": "CL", "admin": "AD", "it": "IT"}[role_type]
-    for sub_role, sender, system, topics in groups:
-        for topic in topics:
-            cards.append({
-                "id": f"{prefix}_{counter:03d}",
-                "role_type": role_type,
-                "sub_role": sub_role,
-                "sender": sender,
-                "system": system,
-                "scenario": topic,
-                "action": random.choice([
-                    "review the notice", "confirm the update", "open the referenced workflow",
-                    "acknowledge the task", "check the attached or linked information"
-                ]),
-                "attack_options": ["credential_harvesting", "fake_portal", "malicious_pdf", "button_link", "qr_phishing"],
-            })
-            counter += 1
-    return cards[:100]
 
-_CLINICAL_GROUPS = [
-    ("Doctor", "Medical Affairs Office", "EMR", [
-        "OPD clinic schedule revision", "surgery list confirmation", "ICU rounds handover", "consultant on-call roster",
-        "clinical privileges renewal", "resident evaluation review", "Morbidity and Mortality meeting note", "multidisciplinary team meeting invite",
-        "telemedicine appointment queue", "patient transfer approval", "operative note completion", "discharge summary backlog",
-        "antibiotic stewardship review", "clinical trial screening list", "CME credit confirmation", "BLS recertification reminder",
-        "patient safety event review", "medication interaction alert", "urgent referral acceptance", "outpatient referral triage"
-    ]),
-    ("Nurse", "Nursing Affairs", "Nursing Portal", [
-        "shift handover checklist", "ward staffing adjustment", "medication round checklist", "patient fall incident report",
-        "pressure injury audit", "infection-control competency", "isolation room assignment", "bedside handover update",
-        "nursing documentation correction", "CPR renewal schedule", "float pool assignment", "vaccination campaign roster",
-        "uniform policy acknowledgement", "smart infusion pump update", "patient wristband verification", "ICU bed assignment",
-        "charge nurse monthly report", "controlled medication witness log", "new admission task list", "nurse annual appraisal"
-    ]),
-    ("Pharmacist", "Pharmacy Safety Unit", "Pharmacy System", [
-        "medication recall notice", "controlled drug inventory count", "Pyxis cabinet synchronization", "LASA medication alert",
-        "vaccine cold-chain report", "formulary update approval", "antibiotic restriction request", "expired medication disposal",
-        "IV preparation worksheet", "chemotherapy order verification", "ADR report follow-up", "medication reconciliation queue",
-        "narcotic discrepancy review", "pharmacy rotation schedule", "drug shortage substitution", "clinical pharmacy note review",
-        "high-alert medication policy", "prescription verification backlog", "outpatient refill exception", "ward stock adjustment"
-    ]),
-    ("Laboratory Specialist", "Laboratory Services", "LIS", [
-        "critical value confirmation", "specimen rejection notice", "blood bank inventory check", "analyzer maintenance schedule",
-        "microbiology culture report", "hematology QC review", "chemistry calibration update", "phlebotomy roster change",
-        "sample recollection request", "lab accreditation checklist", "point-of-care testing update", "crossmatch verification",
-        "pathology report correction", "reference lab send-out", "lab result release delay", "reagent lot verification",
-        "blood component traceability", "STAT sample queue", "laboratory incident form", "LIS downtime procedure"
-    ]),
-    ("Radiology Technician", "Radiology Administration", "PACS", [
-        "PACS image review", "CT protocol update", "MRI safety checklist", "ultrasound appointment queue",
-        "radiology report addendum", "contrast media policy", "portable X-ray schedule", "interventional radiology list",
-        "radiation badge reading", "DICOM viewer update", "critical imaging result alert", "radiology equipment maintenance",
-        "patient preparation instruction", "after-hours imaging roster", "mammography audit", "fluoroscopy dose report",
-        "radiology peer review", "PACS storage notice", "contrast allergy documentation", "ER imaging workflow"
-    ]),
-]
 
-_ADMIN_GROUPS = [
-    ("HR Officer", "Human Resources", "HR Portal", [
-        "annual leave balance review", "payroll correction form", "attendance exception request", "staff evaluation cycle",
-        "mandatory training enrollment", "new employee onboarding", "contract renewal acknowledgement", "housing allowance update",
-        "transportation allowance confirmation", "staff survey invitation", "disciplinary policy acknowledgement", "promotion eligibility review",
-        "credential file completion", "overtime approval", "shift allowance verification", "employee data update",
-        "vacation carryover request", "performance improvement plan", "ID badge renewal", "employee benefits window"
-    ]),
-    ("Medical Secretary", "Medical Administration", "Scheduling System", [
-        "clinic appointment reschedule", "consultant meeting agenda", "patient file indexing", "medical report release",
-        "doctor office coverage", "referral letter queue", "department minutes approval", "patient complaint follow-up",
-        "committee attendance sheet", "clinic template adjustment", "physician roster update", "outpatient slot release",
-        "VIP patient coordination", "call center escalation", "medical certificate request", "appointment reminder batch",
-        "doctor signature pending", "department circular", "clinic cancellation notice", "patient correspondence review"
-    ]),
-    ("Insurance Coordinator", "Insurance Office", "Claims Portal", [
-        "insurance pre-authorization", "claim rejection review", "coverage update request", "reimbursement file audit",
-        "payer portal migration", "medical necessity form", "policy number correction", "eligibility verification batch",
-        "approval extension request", "denied claim appeal", "TPA document request", "co-payment exception",
-        "insurance contract update", "patient guarantee letter", "case management review", "billing code correction",
-        "authorization expiry notice", "payer meeting invite", "claim attachment upload", "utilization review list"
-    ]),
-    ("Procurement Officer", "Procurement Department", "Procurement Portal", [
-        "vendor invoice approval", "medical equipment quotation", "supplier contract renewal", "purchase order confirmation",
-        "tender committee schedule", "delivery note mismatch", "warehouse stock request", "vendor registration update",
-        "maintenance contract review", "urgent device replacement", "consumables shortage notice", "capital equipment approval",
-        "service level agreement", "supplier bank details", "contract variation order", "purchase requisition queue",
-        "vendor compliance declaration", "price comparison sheet", "procurement policy update", "delivery appointment booking"
-    ]),
-    ("Finance Officer", "Finance Department", "Finance System", [
-        "budget variance review", "expense reimbursement", "petty cash reconciliation", "month-end closing task",
-        "audit evidence request", "invoice payment batch", "vendor payment schedule", "department budget transfer",
-        "VAT certificate upload", "financial delegation update", "bank guarantee notice", "cashier report review",
-        "cost center correction", "asset capitalization form", "revenue report adjustment", "finance committee minutes",
-        "payment approval workflow", "fund request tracking", "payroll journal review", "accounts payable aging"
-    ]),
-]
 
-_IT_GROUPS = [
-    ("IT Support Engineer", "IT Helpdesk", "Service Desk", [
-        "password expiry notice", "MFA enrollment", "VPN access renewal", "Outlook mailbox quota",
-        "Teams meeting policy", "printer queue maintenance", "laptop compliance check", "remote support ticket",
-        "software license renewal", "device registration", "email quarantine review", "shared drive access",
-        "helpdesk ticket closure", "asset tag verification", "Windows update schedule", "browser certificate prompt",
-        "mobile device management", "endpoint encryption check", "staff portal login", "IT satisfaction survey"
-    ]),
-    ("Network Engineer", "Network Operations", "Network Portal", [
-        "firewall policy review", "WiFi controller upgrade", "switch maintenance window", "VPN gateway certificate",
-        "network access request", "guest WiFi policy", "WAN failover test", "IP address conflict",
-        "data center cabling plan", "NAC re-authentication", "DNS record update", "load balancer change",
-        "internet bandwidth report", "site-to-site VPN tunnel", "network monitoring alert", "DHCP scope update",
-        "wireless survey schedule", "router firmware notice", "network segmentation task", "VoIP extension migration"
-    ]),
-    ("Cybersecurity Analyst", "Cybersecurity Office", "Security Portal", [
-        "phishing simulation notice", "security awareness quiz", "EDR alert review", "SIEM case assignment",
-        "privileged access review", "vulnerability scan report", "patch compliance exception", "incident response drill",
-        "USB control policy", "suspicious login alert", "security baseline update", "threat intelligence bulletin",
-        "data loss prevention alert", "account lockout trend", "red team exercise", "security questionnaire",
-        "certificate trust update", "ransomware readiness checklist", "MFA bypass review", "SOC escalation"
-    ]),
-    ("Systems Administrator", "Systems Team", "Infrastructure Portal", [
-        "Active Directory password policy", "server maintenance window", "backup job failure", "database restore test",
-        "virtual machine snapshot", "storage quota warning", "SSL certificate renewal", "domain controller health",
-        "file server permission", "cloud backup registration", "application server restart", "database account review",
-        "patch Tuesday reboot", "service account expiry", "monitoring agent update", "disaster recovery plan",
-        "system log archive", "Windows server license", "intranet portal migration", "scheduled downtime notice"
-    ]),
-    ("Clinical Informatics Specialist", "Health Informatics", "HIS/EMR", [
-        "EMR downtime notice", "PACS integration check", "LIS interface update", "HIS user acceptance test",
-        "clinical order set update", "barcode medication administration", "e-prescribing workflow", "patient portal configuration",
-        "single sign-on rollout", "clinic template in HIS", "nursing documentation form", "radiology interface queue",
-        "lab result mapping", "appointment system sync", "clinical dashboard access", "ICD coding update",
-        "HL7 message error", "bed management system", "telehealth platform update", "EMR training session"
-    ]),
-]
 
-SCENARIO_LIBRARY = {
-    "clinical": _make_cards("clinical", _CLINICAL_GROUPS),
-    "admin": _make_cards("admin", _ADMIN_GROUPS),
-    "it": _make_cards("it", _IT_GROUPS),
-}
 
-_ATTACK_BY_DIFFICULTY = {
-    # Easy keeps obvious phishing markers, but the action must stay tied to the selected healthcare scenario.
-    "easy": ["direct_credential_request", "visible_fake_url", "same_day_access_pressure", "obvious_fake_portal"],
-    # Medium is semi-plausible: indirect request, moderate deadline, no QR.
-    "medium": ["lookalike_portal", "simple_pdf", "simple_button", "external_review_link"],
-    # Hard is polished and workflow-like: QR + official document + hidden button; no raw URL.
-    "hard": ["qr_phishing", "official_attachment", "professional_button", "workflow_confirmation"],
-}
 
 # Dynamic content-shape engine. These are NOT fixed email templates.
 # They are writing constraints that make the API generate different forms of email content each time.
-EMAIL_WRITING_STYLES = {
-    "English": [
-        "internal notice", "workflow reminder", "department bulletin", "policy update",
-        "audit follow-up", "maintenance notice", "training reminder", "incident follow-up",
-        "system notification", "committee update", "compliance note", "handover reminder"
-    ],
-    "Arabic": [
-        "إشعار داخلي", "تذكير بسير العمل", "تعميم قسم", "تحديث سياسة",
-        "متابعة تدقيق", "إشعار صيانة", "تذكير تدريب", "متابعة حادثة",
-        "تنبيه نظام", "تحديث لجنة", "ملاحظة امتثال", "تذكير تسليم"
-    ],
-}
 
-EMAIL_STRUCTURES = {
-    "English": [
-        "Greeting → context → impact → requested action → deadline → sign-off",
-        "Greeting → brief background → task detail → action line → verification route → sign-off",
-        "Greeting → department update → why it matters → next step → closing note → sign-off",
-        "Greeting → operational issue → affected workflow → requested confirmation → deadline → sign-off",
-        "Greeting → notice summary → staff responsibility → link/attachment/button placement → support note → sign-off"
-    ],
-    "Arabic": [
-        "تحية → سياق → أثر → إجراء مطلوب → مهلة → توقيع",
-        "تحية → خلفية مختصرة → تفاصيل المهمة → إجراء → قناة تحقق → توقيع",
-        "تحية → تحديث القسم → سبب الأهمية → الخطوة التالية → ملاحظة ختامية → توقيع",
-        "تحية → مشكلة تشغيلية → سير العمل المتأثر → تأكيد مطلوب → مهلة → توقيع",
-        "تحية → ملخص الإشعار → مسؤولية الموظف → موضع الرابط/المرفق/الزر → ملاحظة دعم → توقيع"
-    ],
-}
 
-SUBJECT_PATTERNS = {
-    "easy": {
-        "English": ["Final Warning", "Immediate Password Verification Required", "Action Required Today", "Urgent Access Update", "Account Access Will Stop Today"],
-        "Arabic": ["تحذير نهائي", "تحقق فوري من كلمة المرور", "إجراء مطلوب اليوم", "تحديث دخول عاجل", "سيتم إيقاف الوصول اليوم"]
-    },
-    "medium": {
-        "English": ["Pending Review", "Department Update", "Confirmation Required Within 48 Hours", "Workflow Follow-Up", "Review Request"],
-        "Arabic": ["مراجعة معلقة", "تحديث قسم", "تأكيد مطلوب خلال 48 ساعة", "متابعة سير عمل", "طلب مراجعة"]
-    },
-    "hard": {
-        "English": ["Routine Procedure", "Internal Workflow Review", "Policy Acknowledgement", "Scheduled Governance Update", "Protocol Documentation Review"],
-        "Arabic": ["إجراء روتيني", "مراجعة سير عمل داخلية", "إقرار سياسة", "تحديث حوكمة مجدول", "مراجعة توثيق بروتوكول"]
-    },
-}
 
-SIGNATURE_PERSONAS = {
-    "clinical": ["Clinical Governance", "Patient Safety Office", "Medical Affairs Office", "Nursing Affairs", "Pharmacy Safety Unit", "Laboratory Services", "Radiology Administration", "Infection Control Unit"],
-    "admin": ["Human Resources", "Medical Administration", "Insurance Office", "Procurement Department", "Finance Department", "Quality Department", "Operations Office"],
-    "it": ["IT Helpdesk", "Health Informatics", "Cybersecurity Office", "Systems Team", "Network Operations", "Service Desk"],
-    "other": ["Hospital Operations", "Quality Department", "Training Office", "Staff Services"]
-}
 
-def build_content_shape(role_type, difficulty, is_ar=False):
-    lang = "Arabic" if is_ar else "English"
-    style = random.choice(EMAIL_WRITING_STYLES[lang])
-    structure = random.choice(EMAIL_STRUCTURES[lang])
-    subject_pattern = random.choice(SUBJECT_PATTERNS.get(difficulty, SUBJECT_PATTERNS["medium"])[lang])
-    signature_pool = SIGNATURE_PERSONAS.get(role_type, SIGNATURE_PERSONAS["other"])
-    signature = random.choice(signature_pool)
-    # Make the model vary paragraph rhythm without making Easy too empty.
-    if difficulty == "easy":
-        length_hint = "2 short paragraphs, 5-7 readable lines total" if not is_ar else "فقرتان قصيرتان، 5-7 أسطر مقروءة إجمالاً"
-    elif difficulty == "medium":
-        length_hint = "3 paragraphs, 7-10 readable lines total" if not is_ar else "3 فقرات، 7-10 أسطر مقروءة إجمالاً"
-    else:
-        length_hint = "4-5 polished paragraphs, detailed but not excessive" if not is_ar else "4-5 فقرات مصقولة، مفصلة بدون إطالة مفرطة"
-    return {
-        "style": style,
-        "structure": structure,
-        "subject_pattern": subject_pattern,
-        "signature": signature,
-        "length_hint": length_hint,
-        "nonce": random.randint(10000, 99999),
-    }
 
-def select_scenario_card(role_type, index, phase="learn"):
-    """Pick a scenario card from the 300-card library without repeating the same card order.
-    Other is a deliberate mix of clinical/admin/it, as requested.
-    """
-    if role_type == "other":
-        mix_roles = ["clinical", "admin", "it"]
-        role_type = mix_roles[index % len(mix_roles)]
-    cards = SCENARIO_LIBRARY.get(role_type, SCENARIO_LIBRARY["clinical"])
-    order_key = f"scenario_card_order_{phase}_{role_type}"
-    order = get_session_random_order(len(cards), order_key)
-    return cards[order[index % len(order)]]
 
-def scenario_card_to_prompt(card, difficulty, is_ar=False):
-    """Build a dynamic scenario instruction.
-
-    The scenario card gives the healthcare idea. The content-shape engine gives
-    style/structure/subject/signature variation. The API still writes the final
-    email, but it is now constrained by both the 300-card content library and the
-    difficulty framework.
-    """
-    attack_pool = _ATTACK_BY_DIFFICULTY.get(difficulty, _ATTACK_BY_DIFFICULTY["medium"])
-    attack = random.choice(attack_pool)
-    shape = build_content_shape(card.get("role_type", "clinical"), difficulty, is_ar)
-    if is_ar:
-        return f"""
-بطاقة السيناريو المعتمدة — يجب الالتزام بها وعدم استبدالها:
-- رقم السيناريو: {card['id']}
-- النوع الرئيسي: {card['role_type']}
-- الدور الداخلي: {card['sub_role']}
-- الفكرة/المهمة الأساسية: {card['scenario']}
-- الجهة/المرسل المنطقي: {card['sender']}
-- النظام أو الإجراء الداخلي: {card['system']}
-- الإجراء المطلوب: {card['action']}
-- نوع الهجوم المناسب لهذا المستوى: {attack}
-
-محرك تنويع محتوى الإيميل — إلزامي:
-- أسلوب الكتابة المطلوب هذه المرة: {shape['style']}
-- شكل ترتيب الفقرات هذه المرة: {shape['structure']}
-- نمط العنوان المطلوب: {shape['subject_pattern']} + اسم المهمة الصحية أعلاه
-- التوقيع المقترح: {shape['signature']} مع اسم شخص ومنصب منطقيين إذا كان المستوى صعباً
-- الطول المطلوب: {shape['length_hint']}
-- رقم تنويع داخلي: {shape['nonce']}
-
-قواعد منع التكرار:
-- لا تبدأ الرسالة دائمًا بنفس الجملة.
-- لا تستخدم نفس نهاية الرسالة في كل مرة.
-- لا تجعل كل الرسائل عن "الحساب" فقط؛ اربط الطلب بالمهمة الصحية المحددة.
-- لا تجعل التحليل عامًا. كل مؤشر يجب أن يذكر عبارة/رابط/مرسل موجود فعلاً في الإيميل.
-"""
-    return f"""
-Approved Scenario Card — you MUST use this scenario and must not replace it:
-- Scenario ID: {card['id']}
-- Main role: {card['role_type']}
-- Internal sub-role: {card['sub_role']}
-- Core scenario/task idea: {card['scenario']}
-- Logical sender/unit: {card['sender']}
-- Internal system/procedure: {card['system']}
-- Requested action: {card['action']}
-- Attack type suitable for this difficulty: {attack}
-
-Dynamic Email Content Engine — mandatory for this generation:
-- Writing style this time: {shape['style']}
-- Paragraph structure this time: {shape['structure']}
-- Subject pattern: {shape['subject_pattern']} + the healthcare task above
-- Suggested signature unit: {shape['signature']} with a logical person/title if Advanced
-- Required length: {shape['length_hint']}
-- Internal diversity nonce: {shape['nonce']}
-
-Anti-repetition rules:
-- Do not always start with the same sentence.
-- Do not always use the same closing line.
-- Do not make every email only about a generic account; tie the request to the healthcare task.
-- Do not make the AI Tutor Analysis generic. Every indicator must cite a phrase/link/sender that actually appears in the email.
-"""
 
 # =============================================================
 # UNBOUNDED LEARNING PROMPT
@@ -2095,271 +1338,12 @@ def get_medium_channel_instruction(mode, is_ar=False):
     }.get(mode, "")
 
 
-def build_prompt(role, index, language):
-    is_ar = (language == "Arabic")
-    difficulty = st.session_state.get("difficulty", "medium")
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    seed = random.randint(100000, 999999)
-
-    recipient_email = get_recipient(role, index, language, phase="learn") if role_type != "other" else f"staff.{seed}@hospital.org"
-    avoid_topics = get_avoid_list_text(role_type, "learn", is_ar)
-    avoid_domains = get_used_domains_text(role_type, "learn", is_ar)
-    role_context = get_role_unbounded_context(role_type, is_ar)
-    scenario_card = select_scenario_card(role_type, index, phase="learn")
-    scenario_instruction = scenario_card_to_prompt(scenario_card, difficulty, is_ar)
-    diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
-
-    if is_ar:
-        return f"""
-أنت مولّد أمثلة تدريبية للتوعية بالتصيد في بيئة مستشفى سعودي.
-
-المطلوب: ولّد مثال تعلم واحد فقط لتصيد إلكتروني.
-
-قواعد إلزامية — الارتباط بالوظيفة والسياق الصحي:
-- يجب أن يكون الإيميل مرتبطًا 100٪ بالدور الوظيفي المحدد: {role_context}
-- كل عنصر في الإيميل (المرسل، الموضوع، المحتوى، الطلب) يجب أن يعكس هذا الدور مباشرةً.
-- إذا كان الدور سريريًا: يجب أن يكون المرسل والموضوع والطلب والمحتوى سريريًا فقط: EMR، سجلات مرضى، تسليم سريري، نتائج مختبر، أدوية، صيدلية، أشعة، قسم/ICU/ER. ممنوع مرسل تقني/أمني/إداري/إدارة مستندات/إدارة سجلات.
-- إذا كان الدور إداريًا: يجب أن يدور حول العقود أو الفواتير أو الجداول أو سياسات العمل.
-- إذا كان الدور تقنيًا: يجب أن يدور حول الأنظمة أو الشبكات أو الأجهزة أو VPN.
-- ممنوع تمامًا إرسال إيميل عام لا يعكس الدور المحدد.
-- ممنوع تكرار نوع "تقديم العروض التجارية" أو "برامج الرعاية" إلا إذا كان الدور يستدعيه.
-- لا تستخدم أي قالب ثابت أو نطاق مكرر.
-- استخدم بطاقة السيناريو المعتمدة أعلاه كفكرة الإيميل الأساسية، مع تنويع الصياغة.
-- ممنوع استخدام النص الحرفي: suspicious_link داخل body. ضع رابطًا حقيقي الشكل.
-- أخرج JSON فقط بدون Markdown.
-
-يجب أن يكون تحليل المعلم الذكي مرتبطًا بالنص فعليًا: كل مؤشر يجب أن يشير لعبارة أو نطاق أو مرسل أو مرفق أو QR أو طلب ظاهر داخل الإيميل. ممنوع التحليل العام أو الثابت.
-
-السياق الوظيفي الإلزامي:
-{role_context}
-{scenario_instruction}
-المستلم: {recipient_email}
-رقم عشوائي لكسر التكرار: {seed}
-{avoid_topics}{avoid_domains}
-قواعد مستوى الصعوبة (إلزامية):
-{diff_rule}
-
-قواعد التحية والتوقيع:
-- التحية: يجب أن تتبع قواعد مستوى الصعوبة أعلاه بدقة.
-- التوقيع: يجب أن ينتهي الإيميل بتوقيع كامل (الاسم + المنصب + القسم) — ممنوع الانتهاء بعنوان بريد إلكتروني مجرد.
-- ممنوع وضع الرابط الخام مرتين — مرة كنص ومرة كزر.
-
-قواعد QR الصارمة:
-- إذا كان المستوى سهلاً أو متوسطاً: ممنوع منعاً باتاً وضع أي رمز QR — لا تكتب [QR:...] إطلاقاً.
-- إذا كان المستوى صعباً: QR مسموح كأحد القنوات المتقدمة، لكنه ليس إلزامياً في كل رسالة. استخدمه فقط عندما تختاره كقناة السيناريو.
-
-عدد مؤشرات التحليل الإلزامي حسب المستوى:
-- سهل: 4 أو 5 مؤشرات.
-- متوسط: مؤشرين أو 3 مؤشرات.
-- صعب: مؤشر واحد أو مؤشرين فقط.
-اجعل طول مصفوفة indicators مطابقاً للمستوى المحدد.
-
-أخرج JSON بهذا الشكل فقط:
-{{
-  "email_type": "اسم نوع التصيد الجديد",
-  "from": "اسم مرسل واقعي <email@invented-domain>",
-  "to": "{recipient_email}",
-  "subject": "عنوان الرسالة",
-  "attachment": "اسم المرفق أو فراغ",
-  "body": "نص البريد الكامل",
-  "suspicious_text": "أخطر عبارة في الرسالة",
-  "suspicious_link": "الرابط المشبوه أو فراغ",
-  "indicators": [
-    {{"number": 1, "title": "علامة مرتبطة بالنص", "description": "شرح قصير"}}
-  ],
-  "why_risky": "لماذا الرسالة خطيرة",
-  "learning_tip": "نصيحة تعليمية قصيرة"
-}}
-"""
-    return f"""
-You generate phishing-awareness learning examples for a Saudi hospital.
-
-Task: Generate ONE new phishing learning email.
-
-MANDATORY rules — Role Alignment & Healthcare Context:
-- The email MUST be 100% aligned with the specified job role: {role_context}
-- Every element (sender, subject, body, request) must directly reflect this specific role.
-- If the role is CLINICAL: sender, subject, request, and body must be clinical only: EMR, patient records, clinical handover, lab results, medications, pharmacy, radiology, ward/ICU/ER. Do NOT use IT/security/admin/document-collaboration/records-management senders.
-- If the role is ADMINISTRATIVE: the email must revolve around contracts, invoices, scheduling, or work policies.
-- If the role is IT: the email must revolve around systems, networks, devices, VPN, or software licenses.
-- FORBIDDEN: sending a generic wellness program, prize draw, or commercial offer email to a clinical role.
-- AVOID repeating commercial offer-type phishing — use it only if rarely used in this session.
-- Do NOT use a fixed template or reused domain.
-- Use the approved Scenario Card above as the core email idea, while varying the wording.
-- Never write the literal placeholder suspicious_link inside body. Use a realistic-looking URL.
-- Return JSON only. No Markdown.
-
-AI Tutor Analysis must be grounded: each indicator title/description must point to an actual visible phrase, domain, sender, attachment, QR marker, or request in the generated email. Do not use generic fixed analysis text.
-
-Mandatory role context:
-{role_context}
-{scenario_instruction}
-Recipient: {recipient_email}
-Anti-repeat random seed: {seed}
-{avoid_topics}{avoid_domains}
-Difficulty rules (mandatory):
-{diff_rule}
-
-Greeting & Sign-off rules:
-- Greeting: must follow the difficulty level rules above precisely.
-- Sign-off: must end with a complete signature (name + title + department) — NEVER end with a bare email address.
-- NEVER repeat the raw URL twice — once as text AND once as a button.
-
-Strict QR rules:
-- If difficulty is EASY or INTERMEDIATE: QR codes are STRICTLY FORBIDDEN — do NOT write [QR:...] anywhere.
-- If difficulty is ADVANCED/HARD: QR is one optional advanced channel, not mandatory in every email. Include [QR: short descriptive label] only when QR is the chosen scenario channel.
-
-Mandatory tutor-indicator count by level:
-- Easy: 4 or 5 indicators.
-- Intermediate: 2 or 3 indicators.
-- Advanced/Hard: only 1 or 2 indicators.
-The indicators array length must match the selected level.
-
-Return only this JSON structure:
-{{
-  "email_type": "new phishing type name",
-  "from": "realistic sender name <email@invented-domain>",
-  "to": "{recipient_email}",
-  "subject": "email subject",
-  "attachment": "filename or empty string",
-  "body": "full email body",
-  "suspicious_text": "most suspicious phrase",
-  "suspicious_link": "suspicious URL or empty string",
-  "indicators": [
-    {{"number": 1, "title": "text-grounded indicator", "description": "short explanation"}}
-  ],
-  "why_risky": "why this email is risky",
-  "learning_tip": "short practical learning tip"
-}}
-"""
 
 # =============================================================
 # UNBOUNDED ASSESSMENT PROMPT
 # Phishing and legitimate questions are generated dynamically.
 # =============================================================
-def build_assess_prompt(role, index, is_phishing, language):
-    is_ar = (language == "Arabic")
-    difficulty = st.session_state.get("difficulty", "medium")
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    seed = random.randint(100000, 999999)
 
-    recipient_email = get_recipient(role, index, language, phase="assess") if role_type != "other" else f"staff.{seed}@hospital.org"
-    suffix = f"assess_{is_phishing}"
-    avoid_topics = get_avoid_list_text(role_type, suffix, is_ar)
-    avoid_domains = get_used_domains_text(role_type, suffix, is_ar)
-    role_context = get_role_unbounded_context(role_type, is_ar)
-    scenario_card = select_scenario_card(role_type, index, phase="assess")
-    scenario_instruction = scenario_card_to_prompt(scenario_card, difficulty, is_ar)
-    diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=is_phishing, is_ar=is_ar)
-
-    if is_ar:
-        label = "تصيد" if is_phishing else "شرعي"
-        official = "إذا كانت الرسالة شرعية: استخدم فقط hospital.org أو moh.gov.sa، ولا تضع روابط خارجية أو طلب بيانات حساسة."
-        return f"""
-أنت مولّد أسئلة اختبار للتوعية بالتصيد في بيئة مستشفى سعودي.
-
-المطلوب: ولّد رسالة اختبار واحدة. التصنيف الصحيح يجب أن يكون: {label}.
-
-قواعد مهمة جدًا:
-- لا تستخدم قوالب ثابتة.
-- لا تستخدم أي نطاق من أمثلة محفوظة أو نطاقات تكررت سابقًا.
-- استخدم بطاقة السيناريو المعتمدة أعلاه فقط، ولا تخترع فكرة مختلفة عنها.
-- يجب أن يكون الاختبار متوازنًا: الرسائل الشرعية آمنة فعلًا، ورسائل التصيد فيها علامات حسب مستوى الصعوبة.
-- ممنوع استخدام النص الحرفي: suspicious_link داخل body.
-- أخرج JSON فقط بدون Markdown.
-{official}
-
-السياق:
-{role_context}
-{scenario_instruction}
-المستلم: {recipient_email}
-رقم عشوائي لكسر التكرار: {seed}
-{avoid_topics}{avoid_domains}
-قواعد الصعوبة:
-{diff_rule}
-
-أخرج JSON بهذا الشكل فقط:
-{{
-  "is_phishing": {str(is_phishing).lower()},
-  "email_type": "نوع الرسالة الجديد",
-  "from": "اسم مرسل واقعي <email@domain>",
-  "to": "{recipient_email}",
-  "subject": "عنوان الرسالة",
-  "attachment": "اسم المرفق أو فراغ",
-  "body": "نص البريد الكامل",
-  "suspicious_text": "أخطر عبارة أو فراغ إذا شرعي",
-  "suspicious_link": "الرابط المشبوه أو فراغ",
-  "explanation": "شرح مختصر يوضح لماذا التصنيف صحيح"
-}}
-"""
-    label = "PHISHING" if is_phishing else "LEGITIMATE"
-    official = "If legitimate: use only hospital.org or moh.gov.sa, no external links, no sensitive-data request, and no threats."
-    return f"""
-You generate assessment questions for phishing awareness in a Saudi hospital.
-
-Task: Generate ONE assessment email. Correct label must be: {label}.
-
-Critical rules:
-- Do NOT use fixed templates.
-- Do NOT use memorized example domains or domains already used in this session.
-- Use the approved Scenario Card above only; do not invent a different core idea.
-- The assessment must be balanced: legitimate emails must be truly safe, phishing emails must show red flags according to difficulty.
-- Never write the literal placeholder suspicious_link inside body. Use a realistic-looking URL when phishing needs a link.
-- Return JSON only. No Markdown.
-{official}
-
-Context:
-{role_context}
-{scenario_instruction}
-Recipient: {recipient_email}
-Anti-repeat random seed: {seed}
-{avoid_topics}{avoid_domains}
-Difficulty rules:
-{diff_rule}
-
-Return only this JSON structure:
-{{
-  "is_phishing": {str(is_phishing).lower()},
-  "email_type": "new email type",
-  "from": "realistic sender name <email@domain>",
-  "to": "{recipient_email}",
-  "subject": "email subject",
-  "attachment": "filename or empty string",
-  "body": "full email body",
-  "suspicious_text": "most suspicious phrase or empty string if legitimate",
-  "suspicious_link": "suspicious URL or empty string",
-  "explanation": "brief explanation of why the correct label is correct"
-}}
-"""
-
-def get_system_prompt():
-    """
-    System prompt without fixed domain examples.
-    The detailed 9-criteria difficulty rules live inside build_prompt/build_assess_prompt.
-    """
-    difficulty = st.session_state.get("difficulty", "medium")
-    role = st.session_state.get("role", "Clinical")
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    role_context = get_role_unbounded_context(role_type, False)
-
-    return f"""
-You are a cybersecurity training content generator for a Saudi healthcare phishing-awareness study.
-Role context: {role_context}
-Current difficulty: {difficulty}.
-
-Hard rules:
-- Return valid JSON only.
-- Do not include Markdown or commentary.
-- Do not use fixed templates.
-- Do not reuse familiar demonstration domains.
-- Invent fresh, realistic healthcare workplace scenarios.
-- Keep content safe and educational.
-- For legitimate emails, use only official domains such as hospital.org or moh.gov.sa and include no suspicious credential/payment/link behavior.
-- For phishing emails, generate a clearly educational simulated phishing example with a fake domain and no real organization impersonation beyond generic hospital/MOH-style training context.
-""".strip()
 
 def _init_provider_metrics(provider):
     """Initialize metrics dict for a provider if not present"""
@@ -2573,8 +1557,6 @@ def call_ai(prompt, max_tokens=1600):
         _record_metric(provider, elapsed, False, is_error=True)
         return {"error": str(e)}
 
-def call_groq(prompt, max_tokens=1600):
-    return call_ai(prompt, max_tokens)
 
 def _escape_stray_inner_quotes(s):
     """Best-effort repair for a common AI-generation failure: a literal
@@ -2659,247 +1641,16 @@ def clean_result(result, is_arabic):
     return result
 
 
-def build_other_analysis_prompt(email_data, language, difficulty):
-    """يطلب من اللـ LLM الـ AI Analysis فقط للإيميل الجاهز"""
-    is_ar = (language == "ar")
-    body_preview = email_data["body"][:300].replace('"', "'")
-    
-    lang_rule = "Respond entirely in Arabic." if is_ar else "Respond entirely in English."
-    
-    diff_hints = {
-        "easy": "indicators should be obvious and clear for beginners",
-        "medium": "indicators should be moderately detailed",
-        "hard": "indicators should be subtle and detailed for advanced learners"
-    }
-    diff_hint = diff_hints.get(difficulty, diff_hints["medium"])
-    
-    return f"""You are a cybersecurity expert analyzing a phishing email for hospital staff awareness training.
-
-{lang_rule}
-
-Here is the phishing email to analyze:
-FROM: {email_data["from"]}
-SUBJECT: {email_data["subject"]}
-BODY PREVIEW: {body_preview}
-
-Your task: Generate ONLY the AI Tutor Analysis for this email.
-Difficulty hint: {diff_hint}
-Be concise: each indicator description is ONE short sentence (max ~20 words), why_risky is max 2 short sentences, learning_tip is ONE short sentence.
-
-RETURN ONLY VALID JSON — no text before or after:
-{{"indicators":[{{"number":1,"title":"indicator title","description":"detailed explanation"}},{{"number":2,"title":"indicator title","description":"detailed explanation"}},{{"number":3,"title":"indicator title","description":"detailed explanation"}}],"why_risky":"why this specific phishing email is dangerous for hospital staff","learning_tip":"practical tip for hospital staff to avoid this attack"}}"""
 
 
-def generate_other_email(index, language, difficulty):
-    """Dynamic Other learning email. No static templates."""
-    role = "Other" if language != "Arabic" else "أخرى"
-    is_ar = (language == "Arabic")
-    last_issues = []
-    for attempt in range(3):
-        try:
-            prompt = build_prompt(role, index, language) + build_retry_guidance(last_issues, is_ar)
-            data = call_groq(prompt, max_tokens=2400)
-            if "error" in data:
-                return {"error": data['error'].get('message', str(data['error']))}
-            result = parse_json_response(data["choices"][0]["message"]["content"].strip())
-            result = clean_result(result, is_ar)
-            if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in (result.get("body") or ""):
-                result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
-            result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
-
-            last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
-            if not last_issues or attempt == 2:
-                remember_generated_artifacts("other", "learn", result)
-                return result
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": "Generation failed quality checks."}
 
 
-def generate_other_assess_email(index, is_phishing, language, difficulty):
-    """Dynamic Other assessment email. No static templates."""
-    role = "Other" if language != "Arabic" else "أخرى"
-    is_ar = (language == "Arabic")
-    last_issues = []
-    for attempt in range(3):
-        try:
-            prompt = build_assess_prompt(role, index, is_phishing, language) + build_retry_guidance(last_issues, is_ar)
-            data = call_groq(prompt, max_tokens=2400)
-            if "error" in data:
-                return {"error": data['error'].get('message', str(data['error']))}
-            result = parse_json_response(data["choices"][0]["message"]["content"].strip())
-            result = clean_result(result, is_ar)
-            result["is_phishing"] = bool(is_phishing)
-            if (result.get("suspicious_link") or "").strip() and result["suspicious_link"] not in (result.get("body") or ""):
-                result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
-            result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
-
-            last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
-            if not last_issues or attempt == 2:
-                remember_generated_artifacts("other", f"assess_{is_phishing}", result)
-                return result
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": "Generation failed quality checks."}
 
 
-def generate_email(role, index, language, difficulty="medium"):
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    if role_type == "other":
-        return generate_other_email(index, language, difficulty)
-
-    is_ar = (language == "Arabic")
-    last_issues = []
-    for attempt in range(3):
-        try:
-            prompt = build_prompt(role, index, language) + build_retry_guidance(last_issues, is_ar)
-            data = call_groq(prompt, max_tokens=2400)
-            if "error" in data:
-                return {"error": data['error'].get('message', str(data['error']))}
-            if "choices" not in data:
-                return {"error": f"Unexpected API response: {str(data)[:200]}"}
-            raw    = data["choices"][0]["message"]["content"].strip()
-            result = parse_json_response(raw)
-            result = clean_result(result, is_ar)
-            result["to"] = get_recipient(role, index, language, phase="learn")
-            if (result.get("suspicious_link") or "").strip():
-                if result["suspicious_link"] not in (result.get("body") or ""):
-                    result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
-            result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
-
-            last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), True)
-            if not last_issues:
-                remember_generated_artifacts(role_type, "learn", result)
-                return result
-            if attempt == 2:
-                # Normal retries exhausted. If the failure is specifically a
-                # severe role-mismatch (generic/commercial content unrelated
-                # to the role — the drift we kept seeing in testing), try ONE
-                # more real, dynamically generated attempt from the AI itself
-                # with an explicitly pinned scenario (still a live API call —
-                # never hand-written text). Whatever the AI returns — pinned
-                # attempt or the original — is what gets shown; we never
-                # substitute our own authored content.
-                severe = any(("role context" in i) or ("commercial" in i) for i in last_issues)
-                if severe:
-                    forced = _forced_role_aligned_attempt(role, role_type, index, language, is_ar)
-                    if forced is not None:
-                        remember_generated_artifacts(role_type, "learn", forced)
-                        return forced
-                remember_generated_artifacts(role_type, "learn", result)
-                return result
-        except json.JSONDecodeError as e:
-            if attempt == 2:
-                return {"error": f"JSON parse error: {e}"}
-            last_issues = [f"invalid JSON: {e}"]
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": "Generation failed quality checks."}
 
 
-def _forced_role_aligned_attempt(role, role_type, index, language, is_ar):
-    """Last-resort guaranteed attempt: pin ONE specific, pre-approved Attack
-    Playbook scenario for this role (instead of the open-ended 'invent your
-    own idea' instruction) so there is no room left for the model to drift
-    into a generic/commercial theme unrelated to the role. Returns None on
-    any failure so the caller falls back to the previous (possibly
-    imperfect) result rather than crashing."""
-    try:
-        pool = ATTACK_PLAYBOOK.get(role_type)
-        if not pool:
-            return None
-        item = random.choice(pool)
-        difficulty = st.session_state.get("difficulty", "medium")
-        recipient_email = get_recipient(role, index, language, phase="learn")
-        role_context = get_role_unbounded_context(role_type, is_ar)
-        diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
-        seed = random.randint(100000, 999999)
-        scenario = item["ar"] if is_ar else item["en"]
-        if is_ar:
-            prompt = f"""
-أنت مولّد أمثلة تصيد تدريبية لمستشفى سعودي.
-يجب أن يكون الإيميل حصراً عن هذا السيناريو المحدد سلفاً، بدون أي انحراف عنه:
-نوع الهجوم: {item['attack']}
-السيناريو الإلزامي: {scenario}
-ناقل الهجوم: {item['vector']}
-السياق الوظيفي: {role_context}
-المستلم: {recipient_email}
-رقم عشوائي: {seed}
-قواعد مستوى الصعوبة:
-{diff_rule}
-ممنوع منعاً باتاً أي محتوى عن جوائز أو عروض بنكية أو عروض تجارية أو مكافآت مالية — يجب أن يدور المحتوى فعلياً حول السيناريو أعلاه فقط.
-أخرج JSON فقط بهذا الشكل:
-{{"email_type": "{item['attack']}", "from": "اسم مرسل واقعي <email@invented-domain>", "to": "{recipient_email}", "subject": "عنوان الرسالة", "attachment": "", "body": "نص البريد الكامل", "suspicious_text": "أخطر عبارة", "suspicious_link": "الرابط المشبوه", "injected_errors": [], "indicators": [{{"number":1,"title":"مؤشر 1","description":"شرح"}},{{"number":2,"title":"مؤشر 2","description":"شرح"}},{{"number":3,"title":"مؤشر 3","description":"شرح"}}], "why_risky": "شرح الخطورة", "learning_tip": "نصيحة قصيرة"}}
-"""
-        else:
-            prompt = f"""
-You generate phishing training examples for a Saudi hospital.
-The email MUST be exclusively about this pre-approved scenario, with NO deviation:
-Attack type: {item['attack']}
-Mandatory scenario: {scenario}
-Attack vector: {item['vector']}
-Role context: {role_context}
-Recipient: {recipient_email}
-Anti-repeat seed: {seed}
-Difficulty rules:
-{diff_rule}
-STRICTLY FORBIDDEN: any content about prizes, bank offers, commercial promotions, or salary bonuses — the content must genuinely revolve around the scenario above only.
-Return ONLY this JSON structure:
-{{"email_type": "{item['attack']}", "from": "realistic sender name <email@invented-domain>", "to": "{recipient_email}", "subject": "email subject", "attachment": "", "body": "full email body", "suspicious_text": "most suspicious phrase", "suspicious_link": "suspicious URL", "injected_errors": [], "indicators": [{{"number":1,"title":"Indicator 1","description":"explanation"}},{{"number":2,"title":"Indicator 2","description":"explanation"}},{{"number":3,"title":"Indicator 3","description":"explanation"}}], "why_risky": "why this is risky", "learning_tip": "short tip"}}
-"""
-        data = call_groq(prompt, max_tokens=2000)
-        if "error" in data or "choices" not in data:
-            return None
-        raw = data["choices"][0]["message"]["content"].strip()
-        result = parse_json_response(raw)
-        if not isinstance(result, dict) or "error" in result:
-            return None
-        result = clean_result(result, is_ar)
-        result["to"] = recipient_email
-        if (result.get("suspicious_link") or "").strip():
-            if result["suspicious_link"] not in (result.get("body") or ""):
-                result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
-        result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
-        return result
-    except Exception:
-        return None
 
 
-def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    if role_type == "other":
-        return generate_other_assess_email(index, is_phishing, language, difficulty)
-
-    is_ar = (language == "Arabic")
-    last_issues = []
-    for attempt in range(3):
-        try:
-            prompt = build_assess_prompt(role, index, is_phishing, language) + build_retry_guidance(last_issues, is_ar)
-            data = call_groq(prompt, max_tokens=2400)
-            if "error" in data:
-                return {"error": data["error"].get("message", str(data["error"]))}
-            result = parse_json_response(data["choices"][0]["message"]["content"].strip())
-            result = clean_result(result, is_ar)
-            result["to"] = get_recipient(st.session_state.get("role","Clinical"), index, language, phase="assess")
-            result["is_phishing"] = bool(is_phishing)
-            if (result.get("suspicious_link") or "").strip():
-                if result["suspicious_link"] not in (result.get("body") or ""):
-                    result["body"] = _insert_before_signature(result.get("body") or "", result["suspicious_link"])
-            result["body"] = _reposition_trailing_lone_link(result.get("body") or "", result.get("suspicious_link") or "")
-
-            last_issues = get_generation_quality_issues(result, st.session_state.get("difficulty", "medium"), is_phishing)
-            if not last_issues or attempt == 2:
-                remember_generated_artifacts(role_type, f"assess_{is_phishing}", result)
-                return result
-        except json.JSONDecodeError:
-            if attempt == 2:
-                return {"error": "Failed to parse. Please try again."}
-            last_issues = ["invalid JSON"]
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": "Generation failed quality checks."}
 
 def render_email_window(email, is_arabic, show_badges=False):
     bd = 'rtl' if is_arabic else 'ltr'
@@ -5053,80 +3804,7 @@ for _rt in list(LEGITIMATE_PLAYBOOK.keys()):
     LEGITIMATE_PLAYBOOK[_rt] = LEGITIMATE_PLAYBOOK[_rt] + _EXTRA_LEGIT_THEMES
 
 
-def _choice_no_recent(items, memory_key, label_getter=lambda x: str(x)):
-    recent = st.session_state.get(memory_key, [])
-    pool = [x for x in items if label_getter(x) not in recent]
-    if not pool:
-        pool = list(items)
-        recent = []
-    item = random.choice(pool)
-    label = label_getter(item)
-    st.session_state[memory_key] = (recent + [label])[-8:]
-    return item
 
-def get_generation_plan(role_type, is_phishing=True, is_ar=False, phase="learn", difficulty="medium"):
-    if is_phishing:
-        items = ATTACK_PLAYBOOK.get(role_type, ATTACK_PLAYBOOK["other"])
-        # --------------------------------------------------------
-        # Difficulty-aware vector filtering (Axis 3 — Technical Elements):
-        # Easy: NO attachment, NO QR (both strictly forbidden at this level).
-        # Medium: NO QR (QR is exclusive to Advanced). Attachment (simple
-        # generic PDF) is allowed at Medium, so it stays in the pool.
-        # Hard: no exclusion needed here — QR is handled/injected separately
-        # as mandatory, and attachment is enforced by the strict addon.
-        # This prevents the prompt from telling the model to use a vector
-        # ("attachment"/"QR") that a later instruction then forbids.
-        # --------------------------------------------------------
-        if difficulty == "easy":
-            filtered = [x for x in items if "qr" not in x["vector"].lower() and "attachment" not in x["vector"].lower()]
-            if filtered:
-                items = filtered
-        elif difficulty == "medium":
-            filtered = [x for x in items if "qr" not in x["vector"].lower()]
-            if filtered:
-                items = filtered
-        # --------------------------------------------------------
-        # NEW: cap QR-vector scenarios to AT MOST 1 within any
-        # rolling window of 6 learning picks (the QR vector kept
-        # appearing too often once we added more QR-themed
-        # diversity entries). Assessment (phase="assess") is left
-        # uncapped since that pool legitimately needs QR coverage
-        # too, just less repetitively within one learning session.
-        # --------------------------------------------------------
-        if phase == "learn":
-            qr_window_key = f"qr_window_{role_type}"
-            qr_window = st.session_state.get(qr_window_key, [])
-            if sum(qr_window[-6:]) >= 1:
-                non_qr_items = [x for x in items if "qr" not in x["vector"].lower()]
-                if non_qr_items:
-                    items = non_qr_items
-        item = _choice_no_recent(
-            items,
-            f"plan_memory_{phase}_{role_type}_phish",
-            lambda x: f"{x['attack']}|{x['vector']}|{x['persuasion']}"
-        )
-        if phase == "learn":
-            qr_window = st.session_state.get(qr_window_key, [])
-            qr_window.append(1 if "qr" in item["vector"].lower() else 0)
-            st.session_state[qr_window_key] = qr_window[-6:]
-        return {
-            "attack_type": item["attack"],
-            "scenario_seed": item["ar"] if is_ar else item["en"],
-            "vector": item["vector"],
-            "persuasion": item["persuasion"],
-        }
-    item = _choice_no_recent(
-        LEGITIMATE_PLAYBOOK.get(role_type, LEGITIMATE_PLAYBOOK["other"]),
-        f"plan_memory_{phase}_{role_type}_legit",
-        lambda x: f"{x['en']}|{x['sender']}"
-    )
-    return {
-        "attack_type": "Legitimate",
-        "scenario_seed": item["ar"] if is_ar else item["en"],
-        "vector": "safe internal communication",
-        "persuasion": "normal workplace communication",
-        "sender_hint": item["sender"],
-    }
 
 def get_role_unbounded_context(role_type, is_ar=False):
     if is_ar:
@@ -5143,366 +3821,9 @@ def get_role_unbounded_context(role_type, is_ar=False):
         "other": "General Saudi hospital employee. Choose a fresh logical department each time: clinical, administrative, technical, operations, support, training, quality.",
     }.get(role_type, "Saudi hospital employee.")
 
-def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
-    """Progressive Difficulty aligned with the approved Easy/Medium/Hard plan."""
-    if not is_phishing:
-        if is_ar:
-            rules = {
-                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط، تحية واضحة، لا روابط خارجية ولا مرفقات ولا QR ولا طلب بيانات حساسة.",
-                "medium": "رسالة شرعية متوسطة: نطاق رسمي، لغة مهنية، موعد طبيعي، تفاصيل قسم واقعية، ولا طلب تسجيل دخول خارجي.",
-                "hard": "رسالة شرعية متقدمة: نطاق رسمي، تحية شخصية كاملة، سياق داخلي دقيق، ولغة طبيعية احترافية بلا مؤشرات تصيد.",
-            }
-        else:
-            rules = {
-                "easy": "Legitimate Easy: official domain only; clear greeting; no external link, attachment, QR, or sensitive-data request.",
-                "medium": "Legitimate Intermediate: official domain, professional language, normal deadline, realistic department detail, no external sign-in.",
-                "hard": "Legitimate Advanced: official domain, fully personalised greeting, precise internal context, polished natural language, and no phishing cues.",
-            }
-        return rules.get(difficulty, rules["medium"])
 
-    if is_ar:
-        rules = {
-            "easy": """
-المستوى السهل — مؤشرات كثيرة وواضحة (4 إلى 5):
-- تحية عامة فقط، بلا اسم شخصي.
-- نطاق مزيف واضح وبعيد عن hospital.org.
-- لغة مباشرة مع خطأين واضحين كحد أقصى.
-- طلب صريح لكلمة المرور أو PIN أو رمز تحقق.
-- إلحاح مباشر مثل اليوم/فوراً/سيُغلق الوصول.
-- رابط خام ظاهر كاملاً داخل الرسالة.
-- ممنوع المرفقات وQR وأزرار تسجيل الدخول وMicrosoft 365/Outlook.
-- صفحة الوجهة المتخيلة بسيطة وليست نسخة مطابقة للنظام.
-- التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
-""",
-            "medium": """
-المستوى المتوسط — مؤشرات أقل وأكثر مهنية (2 إلى 3):
-- تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
-- نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
-- لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
-- موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
-- الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
-- ممنوع QR.
-- استخدم وسيلة واحدة فقط حسب صيغة العرض المحددة: زر واحد أو رابط واحد أو PDF بلا رابط. ممنوع جمع الزر والرابط في الرسالة نفسها.
-- Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
-- صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
-- التحليل يجب أن يحتوي مؤشرين أو 3 مؤشرات مرتبطة بالنص.
-""",
-            "hard": """
-المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
-- تحية بالاسم الكامل، ورسالة مرتبطة بمهمة يومية دقيقة للدور المختار.
-- نطاق شبه مطابق أو اختصار مؤسسي مقنع، بلا كلمات فاضحة مثل secure/update/verify/login/reset.
-- لغة طبيعية سليمة تماماً وتوقيع مهني واقعي.
-- لا طلب مباشر لكلمة المرور ولا تهديد ولا استعجال صارخ؛ يكون الطلب روتينياً ومنطقياً.
-- استخدم قناة متقدمة واحدة أو اثنتين فقط مع التنويع بين الأمثلة: مرفق PDF/Excel واقعي، رابط مخفي خلف زر، QR، SharePoint أو Microsoft 365/Outlook.
-- لا تجمع QR + مرفق + زر + رابط خام في كل رسالة؛ الهدف الواقعية لا كثرة العلامات.
-- إذا استُخدم رابط فيجب ألا يتكرر كنص خام وزر معاً.
-- صفحة الوجهة المتخيلة شبه مطابقة للنظام الحقيقي.
-- التحليل يجب أن يحتوي مؤشراً أو مؤشرين خفيين فقط.
-""",
-        }
-    else:
-        rules = {
-            "easy": """
-EASY — many obvious cues (4-5 indicators):
-- Generic greeting only; no personal name.
-- Clearly fake domain far from hospital.org.
-- Direct language with no more than two obvious mistakes.
-- Explicit request for password, staff PIN, login credentials, or verification code.
-- Strong urgency such as today/immediately/access will close.
-- Full raw URL visibly written in the email.
-- No attachment, QR, sign-in button, Microsoft 365, or Outlook workflow.
-- Imagined landing page is simple, not a close clone.
-- Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
-""",
-            "medium": """
-INTERMEDIATE — fewer, more professional cues (2-3 indicators):
-- Greeting uses department/job title or first name only.
-- Plausible look-alike domain that differs on careful inspection.
-- Professional language with at most one subtle error and no aggressive threat.
-- Reasonable 24-72 hour deadline or normal workflow window.
-- Indirect request to open a review portal or external sign-in; never ask to email a password.
-- QR is forbidden.
-- Use exactly one delivery style as instructed: one button, one visible URL, or a simple PDF with no link. Never combine a button and a visible URL in the same email.
-- Microsoft 365/Outlook may appear occasionally, not in every example.
-- Imagined landing page resembles an internal system but is not a perfect clone.
-- Tutor analysis must contain 2 or 3 text-grounded indicators.
-""",
-            "hard": """
-ADVANCED/HARD — only 1-2 subtle cues:
-- Fully personalised greeting and a highly specific daily task for the selected role.
-- Near-identical or convincing abbreviated domain; avoid obvious words secure/update/verify/login/reset/password/urgent.
-- Flawless, natural professional language and realistic complete signature.
-- No direct password request, explicit threat, or loud urgency; the action should look routine and logical.
-- Use only one or two advanced channels per email, varied across examples: realistic PDF/Excel attachment, hidden button link, QR, SharePoint, or Microsoft 365/Outlook.
-- Do not force QR + attachment + button + raw URL into every message; realism matters more than cue quantity.
-- Never show the same URL both raw and behind a button.
-- Imagined landing page is a near-clone of the real system.
-- Tutor analysis must contain only 1 or 2 subtle, text-grounded indicators.
-""",
-        }
-    return rules.get(difficulty, rules["medium"])
 
-def get_analysis_contract(is_ar=False):
-    if is_ar:
-        return """
-قواعد التحليل التعليمي:
-- يجب أن تكون المؤشرات الثلاثة مختلفة فعلًا، ولا تبدأ دائمًا بالنطاق.
-- رتب الأولوية هكذا عند وجودها: طلب بيانات/كلمة مرور، بيانات مرضى، اعتماد MFA/OTP، تحويل مالي/فاتورة، مرفق أو QR، انتحال سلطة، عدم توافق الدور، نطاق خارجي، إلحاح، أخطاء.
-- يجب تضمين داخل النصوص: نوع الهجوم Attack Type، مستوى الخطورة Risk Level، وملاحظة مرتبطة بسياق الوظيفة.
-- لا تجعل "خطأ إملائي" سببًا رئيسيًا إذا يوجد طلب بيانات أو مرفق أو MFA أو تحويل مالي.
-"""
-    return """
-AI analysis rules:
-- The 3 indicators must be genuinely different; do not always start with the domain.
-- Prioritize indicators in this order when present: credential request, patient data, MFA/OTP abuse, financial/invoice request, attachment/QR risk, authority impersonation, role-context mismatch, external domain, urgency, spelling.
-- Include Attack Type, Risk Level, and one role-context note inside the indicator descriptions / why_risky.
-- Do not make spelling the main indicator when credentials, patient data, attachment, MFA, or financial risk exists.
-"""
 
-def build_prompt(role, index, language):
-    is_ar = (language == "Arabic")
-    difficulty = st.session_state.get("difficulty", "medium")
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    seed = random.randint(100000, 999999)
-    plan = get_generation_plan(role_type, is_phishing=True, is_ar=is_ar, phase="learn", difficulty=difficulty)
-    st.session_state["_last_learn_vector"] = plan.get("vector", "")
-    recipient_email = get_recipient(role, index, language, phase="learn") if role_type != "other" else f"staff.{seed}@hospital.org"
-    avoid_topics = get_avoid_list_text(role_type, "learn", is_ar)
-    avoid_domains = get_used_domains_text(role_type, "learn", is_ar)
-    role_context = get_role_unbounded_context(role_type, is_ar)
-    diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=is_ar)
-    analysis_contract = get_analysis_contract(is_ar)
-    medium_channel = get_medium_presentation_mode("learn", index) if difficulty == "medium" else ""
-    medium_channel_rule = get_medium_channel_instruction(medium_channel, is_ar) if medium_channel else ""
-
-    if is_ar:
-        return f"""
-أنت مولّد أمثلة تعلم للتوعية بالتصيد في بيئة مستشفى سعودي.
-
-المطلوب: ولّد مثال تعلم واحد فقط. يجب أن يكون تصيدًا تعليميًا آمنًا ومحاكى.
-
-خطة التنوع لهذه المحاولة:
-- نوع الهجوم: {plan['attack_type']}
-- فكرة جديدة مفتوحة: {plan['scenario_seed']}
-- ناقل الهجوم المطلوب: {plan['vector']}
-- أسلوب الإقناع: {plan['persuasion']}
-
-قواعد إلزامية:
-- لا تستخدم قالبًا ثابتًا ولا تعيد صياغة مثال سابق.
-- لا تجعل كل شيء رابطًا؛ التزم بناقل الهجوم المطلوب إن كان مرفقًا/QR/ردًا/MFA/مكالمة.
-- إذا كان الدور سريري أو إداري، لا تستخدم سيناريو عام لـMFA/OTP/تحديث كلمة المرور/مشاركة مستندات بشكل افتراضي — هذي سيناريوهات خاصة بقسم تقنية المعلومات. ابنِ السيناريو حول مهمة سريرية أو إدارية فعلية (رعاية مرضى، سجلات، فوترة، جدولة...) حتى لو كان ناقل الهجوم لا يزال رابطاً أو طلب بيانات دخول.
-- اختر نطاقًا جديدًا واقعي الشكل. في المتقدم لا تستخدم كلمات مكشوفة في النطاق.
-- لا تستخدم النص الحرفي suspicious_link داخل body.
-- يجب أن يكون التحليل عميقًا ومتنوعًا، وليس Domain/Urgency/Spelling دائمًا.
-- أخرج JSON فقط.
-- في حقل injected_errors: اكتب قائمة بالكلمات المكتوبة بها خطأ إملائي/نحوي متعمد داخل body فقط (اكتب الكلمة الخاطئة كما وردت بالنص). العدد يجب أن يطابق مستوى الصعوبة بالضبط: سهل=كلمتان، متوسط=كلمة واحدة، صعب=قائمة فاضية.
-
-السياق:
-{role_context}
-المستلم: {recipient_email}
-رقم كسر التكرار: {seed}
-{avoid_topics}{avoid_domains}
-قواعد الصعوبة:
-{diff_rule}
-{medium_channel_rule}
-{analysis_contract}
-
-عدد مؤشرات التحليل الإلزامي حسب المستوى:
-- سهل: 4 أو 5 مؤشرات.
-- متوسط: مؤشرين أو 3 مؤشرات.
-- صعب: مؤشر واحد أو مؤشرين فقط.
-اجعل طول مصفوفة indicators مطابقاً للمستوى المحدد.
-
-أخرج JSON بهذا الشكل فقط:
-{{
-  "email_type": "نوع الهجوم المحدد",
-  "attack_type": "{plan['attack_type']}",
-  "risk_level": "Low/Medium/High/Critical",
-  "confidence_score": "0-100%",
-  "medium_channel": "{medium_channel}",
-  "from": "اسم مرسل واقعي <email@invented-domain>",
-  "to": "{recipient_email}",
-  "subject": "عنوان الرسالة",
-  "attachment": "اسم المرفق أو فراغ",
-  "body": "نص البريد الكامل",
-  "suspicious_text": "أخطر عبارة في الرسالة",
-  "suspicious_link": "الرابط المشبوه أو فراغ",
-  "injected_errors": ["الكلمة الخاطئة 1", "الكلمة الخاطئة 2"],
-  "indicators": [
-    {{"number": 1, "title": "نوع الهجوم / الطلب الخطر", "description": "شرح مرتبط بالسياق الوظيفي"}},
-    {{"number": 2, "title": "مؤشر سلوكي أو تقني مختلف", "description": "شرح قصير"}},
-    {{"number": 3, "title": "مؤشر ثالث مختلف", "description": "شرح قصير"}}
-  ],
-  "why_risky": "اذكر نوع الهجوم، مستوى الخطورة، ولماذا يهم هذا الدور داخل المستشفى",
-  "learning_tip": "نصيحة عملية قصيرة"
-}}
-"""
-    return f"""
-You generate phishing-awareness learning examples for a Saudi hospital.
-
-Task: Generate ONE simulated phishing learning email.
-
-Diversity plan for this attempt:
-- Attack Type: {plan['attack_type']}
-- Fresh scenario seed: {plan['scenario_seed']}
-- Required attack vector: {plan['vector']}
-- Persuasion style: {plan['persuasion']}
-
-Mandatory rules:
-- Do not use a fixed template or paraphrase a previous example.
-- Do not make every example a link; follow the required vector if it is attachment/QR/reply/MFA/phone/shared document.
-- If the role is Clinical or Administrative, do NOT default to a generic MFA/OTP/login-credential-reset/document-sharing-portal scenario merely because it's an easy template — those are IT-department scenarios. Build the scenario around an actual clinical or administrative task instead (patient care workflow, records, billing, scheduling, etc.), even if the attack vector still happens to involve a link or credential request.
-- Invent a new realistic-looking domain. For Advanced, avoid obvious domain words.
-- Never write the literal placeholder suspicious_link inside body.
-- The analysis must be varied and deep, not always Domain/Urgency/Spelling.
-- Return JSON only.
-- In the injected_errors field: list the exact misspelled words you deliberately placed inside body (the word as it appears, misspelled). The count MUST match the difficulty level exactly: Easy=two words, Intermediate=one word, Advanced=empty list.
-
-Context:
-{role_context}
-Recipient: {recipient_email}
-Anti-repeat seed: {seed}
-{avoid_topics}{avoid_domains}
-Difficulty rules:
-{diff_rule}
-{medium_channel_rule}
-{analysis_contract}
-
-Mandatory tutor-indicator count by level:
-- Easy: 4 or 5 indicators.
-- Intermediate: 2 or 3 indicators.
-- Advanced/Hard: only 1 or 2 indicators.
-The indicators array length must match the selected level.
-
-Return only this JSON structure:
-{{
-  "email_type": "specific attack type",
-  "attack_type": "{plan['attack_type']}",
-  "risk_level": "Low/Medium/High/Critical",
-  "confidence_score": "0-100%",
-  "from": "realistic sender name <email@invented-domain>",
-  "to": "{recipient_email}",
-  "subject": "email subject",
-  "attachment": "filename or empty string",
-  "body": "full email body",
-  "suspicious_text": "most suspicious phrase",
-  "suspicious_link": "suspicious URL or empty string",
-  "injected_errors": ["misspelled word 1", "misspelled word 2"],
-  "indicators": [
-    {{"number": 1, "title": "Attack type / risky request", "description": "role-context explanation"}},
-    {{"number": 2, "title": "different behavioral or technical clue", "description": "short explanation"}},
-    {{"number": 3, "title": "third different clue", "description": "short explanation"}}
-  ],
-  "why_risky": "include attack type, risk level, and why it matters for this hospital role",
-  "learning_tip": "short practical tip"
-}}
-"""
-
-def build_assess_prompt(role, index, is_phishing, language):
-    is_ar = (language == "Arabic")
-    difficulty = st.session_state.get("difficulty", "medium")
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    seed = random.randint(100000, 999999)
-    plan = get_generation_plan(role_type, is_phishing=is_phishing, is_ar=is_ar, phase="assess", difficulty=difficulty)
-    st.session_state["_last_assess_vector"] = plan.get("vector", "")
-    recipient_email = get_recipient(role, index, language, phase="assess") if role_type != "other" else f"staff.{seed}@hospital.org"
-    suffix = f"assess_{is_phishing}"
-    avoid_topics = get_avoid_list_text(role_type, suffix, is_ar)
-    avoid_domains = get_used_domains_text(role_type, suffix, is_ar)
-    role_context = get_role_unbounded_context(role_type, is_ar)
-    diff_rule = get_dynamic_difficulty_rules(difficulty, is_phishing=is_phishing, is_ar=is_ar)
-    medium_channel = get_medium_presentation_mode("assess", index) if (difficulty == "medium" and is_phishing) else ""
-    medium_channel_rule = get_medium_channel_instruction(medium_channel, is_ar) if medium_channel else ""
-
-    if is_ar:
-        label = "تصيد" if is_phishing else "شرعي"
-        legit_rule = "إذا كانت شرعية: استخدم hospital.org أو moh.gov.sa فقط، ولا تضع طلب بيانات حساسة أو تهديدًا أو رابطًا خارجيًا مشبوهًا."
-        return f"""
-أنت مولّد أسئلة اختبار للتوعية بالتصيد في بيئة مستشفى سعودي.
-
-المطلوب: ولّد رسالة اختبار واحدة. التصنيف الصحيح يجب أن يكون: {label}.
-
-خطة التنوع:
-- النوع/الفكرة: {plan['attack_type']} — {plan['scenario_seed']}
-- ناقل الرسالة: {plan['vector']}
-- أسلوب الإقناع/السياق: {plan['persuasion']}
-
-قواعد إلزامية:
-- لا تستخدم قوالب ثابتة.
-- لا تكرر نفس نوع السؤال أو نفس النطاق أو نفس أسلوب التحليل.
-- أسئلة الاختبار يجب أن تحتوي مزيجًا واقعيًا: تصيد وروابط ومرفقات وQR وردود وMFA ورسائل شرعية آمنة.
-- التفسير يجب أن يشرح التصنيف الصحيح بوضوح، مع ذكر نوع الهجوم أو سبب الشرعية.
-- أخرج JSON فقط.
-{legit_rule}
-
-السياق:
-{role_context}
-المستلم: {recipient_email}
-رقم كسر التكرار: {seed}
-{avoid_topics}{avoid_domains}
-قواعد الصعوبة:
-{diff_rule}
-
-أخرج JSON بهذا الشكل فقط:
-{{
-  "is_phishing": {str(is_phishing).lower()},
-  "email_type": "نوع الرسالة",
-  "attack_type": "{plan['attack_type']}",
-  "from": "اسم مرسل واقعي <email@domain>",
-  "to": "{recipient_email}",
-  "subject": "عنوان الرسالة",
-  "attachment": "اسم المرفق أو فراغ",
-  "body": "نص البريد الكامل",
-  "suspicious_text": "أخطر عبارة أو فراغ إذا شرعي",
-  "suspicious_link": "الرابط المشبوه أو فراغ",
-  "explanation": "شرح مختصر: هل هو تصيد أو شرعي، وما أقوى سببين للتصنيف"
-}}
-"""
-    label = "PHISHING" if is_phishing else "LEGITIMATE"
-    legit_rule = "If legitimate: use hospital.org or moh.gov.sa only; no sensitive-data request, no threat, no suspicious external link."
-    return f"""
-You generate assessment questions for phishing awareness in a Saudi hospital.
-
-Task: Generate ONE assessment email. Correct label must be: {label}.
-
-Diversity plan:
-- Type/idea: {plan['attack_type']} — {plan['scenario_seed']}
-- Message vector: {plan['vector']}
-- Persuasion/context: {plan['persuasion']}
-
-Mandatory rules:
-- Do not use fixed templates.
-- Do not repeat the same question type, domain, or analysis style.
-- Assessment must include a realistic mix across runs: phishing, links, attachments, QR, reply requests, MFA, and safe legitimate messages.
-- Explanation must clearly justify the correct label and mention the attack type or why it is safe.
-- Return JSON only.
-{legit_rule}
-
-Context:
-{role_context}
-Recipient: {recipient_email}
-Anti-repeat seed: {seed}
-{avoid_topics}{avoid_domains}
-Difficulty rules:
-{diff_rule}
-
-Return only this JSON structure:
-{{
-  "is_phishing": {str(is_phishing).lower()},
-  "email_type": "new email type",
-  "attack_type": "{plan['attack_type']}",
-  "from": "realistic sender name <email@domain>",
-  "to": "{recipient_email}",
-  "subject": "email subject",
-  "attachment": "filename or empty string",
-  "body": "full email body",
-  "suspicious_text": "most suspicious phrase or empty string if legitimate",
-  "suspicious_link": "suspicious URL or empty string",
-  "explanation": "brief explanation: phishing or legitimate, with the two strongest reasons"
-}}
-"""
 
 
 
@@ -5513,70 +3834,9 @@ Return only this JSON structure:
 # job role (clinical/admin/IT) or violate the documented difficulty
 # framework before the email is shown to the trainee.
 # =============================================================
-_ROLE_KEYWORDS = {
-    "clinical": re.compile(r"\b(patient|clinical|emr|ehr|doctor|nurse|pharmac|medication|lab|radiology|pacs|icu|er|ward|handover|vitals|diagnostic|prescription|blood bank)\b|مريض|سريري|طبيب|ممرض|صيدل|دواء|مختبر|أشعة|مناوبة|قسم|بنك الدم|سجل طبي", re.I),
-    "admin": re.compile(r"\b(invoice|procurement|vendor|supplier|payroll|insurance|billing|appointment|contract|leave|hr|administrative|records office)\b|فاتورة|مورد|مشتريات|رواتب|تأمين|فوترة|مواعيد|عقد|إجازات|إداري", re.I),
-    "it": re.compile(r"\b(vpn|server|network|firewall|ssl|certificate|helpdesk|active directory|backup|database|endpoint|software|license|mfa|otp|cyber|it support)\b|شبكة|خادم|جدار ناري|شهادة|دعم تقني|نسخ احتياطي|قاعدة بيانات|ترخيص|تقنية|أمن سيبراني", re.I),
-}
-_ROLE_FORBIDDEN = {
-    "clinical": re.compile(r"\b(payroll|invoice|vendor|procurement|leave balance|hr portal|vpn|ssl certificate|server|helpdesk|software license|records management team|document collaboration team|security team)\b|رواتب|فاتورة|مورد|مشتريات|إجازات|بوابة الموارد|دعم تقني|شبكة|خادم|فريق الأمن|فريق إدارة السجلات", re.I),
-    "admin": re.compile(r"\b(emr|lab results|clinical handover|patient vitals|medication order|radiology image|vpn|ssl certificate|server|firewall)\b|تسليم سريري|نتائج مختبر|علامات حيوية|أمر دوائي|أشعة|شبكة|خادم", re.I),
-    "it": re.compile(r"\b(lab results|clinical handover|patient vitals|payroll bank|supplier invoice|appointment booking)\b|نتائج مختبر|تسليم سريري|علامات حيوية|فاتورة مورد|رواتب|حجز مواعيد", re.I),
-}
 
-def _current_role_type_for_guardrail():
-    try:
-        role = st.session_state.get("role", "Clinical")
-        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
-    except Exception:
-        return "clinical"
 
-def _role_alignment_issues(result):
-    role_type = _current_role_type_for_guardrail()
-    if role_type == "other":
-        return []
-    text = " ".join(str(result.get(k, "")) for k in ["email_type", "from", "subject", "body", "attachment", "suspicious_text", "suspicious_link"])
-    issues = []
-    if not _ROLE_KEYWORDS[role_type].search(text):
-        issues.append(f"email content is not clearly aligned with the selected {role_type} role")
-    if _ROLE_FORBIDDEN[role_type].search(text):
-        issues.append(f"email drifts into a different role instead of the selected {role_type} role")
-    return issues
 
-def _difficulty_structure_issues(result, difficulty, is_phishing=True):
-    if not is_phishing or not isinstance(result, dict):
-        return []
-    body = str(result.get("body", ""))
-    combined = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
-    issues = []
-    has_qr = bool(re.search(r"\[\s*QR", body, re.I))
-    has_attachment = bool(str(result.get("attachment", "")).strip())
-    link = str(result.get("suspicious_link", "")).strip()
-    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
-    n_ind = len(indicators)
-
-    if difficulty == "easy":
-        if has_qr: issues.append("Beginner/Easy must not contain QR code")
-        if has_attachment: issues.append("Beginner/Easy must not contain attachment")
-        if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
-        if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
-        if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
-    elif difficulty == "medium":
-        if has_qr: issues.append("Intermediate must not contain QR code")
-        if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
-            issues.append("Intermediate urgency is too aggressive")
-        if n_ind and not (2 <= n_ind <= 3): issues.append("Intermediate learning analysis must contain 2-3 indicators")
-        if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
-            issues.append("Intermediate attachment, when used, should be a simple PDF")
-    elif difficulty == "hard":
-        if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
-            issues.append("Advanced/Hard must avoid direct credential requests")
-        if n_ind and not (1 <= n_ind <= 2): issues.append("Advanced/Hard learning analysis must contain only 1-2 subtle indicators")
-        # Hard should vary its advanced vector. At least one subtle channel is required,
-        # but forcing QR + attachment + button in every email makes the level repetitive.
-        if not (has_qr or has_attachment or link or re.search(r"\[[^\]]+\]\(https?://", body)):
-            issues.append("Advanced/Hard needs at least one subtle external channel: attachment, QR, or disguised link/button")
-    return issues
 
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     if not isinstance(result, dict):
@@ -5630,27 +3890,6 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
             issues.append("Legitimate item must not threaten account suspension")
     return issues
 
-def get_system_prompt():
-    difficulty = st.session_state.get("difficulty", "medium")
-    role = st.session_state.get("role", "Clinical")
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    role_context = get_role_unbounded_context(role_type, False)
-    return f"""
-You are a cybersecurity training content generator for a Saudi healthcare phishing-awareness study.
-Role context: {role_context}
-Current difficulty: {difficulty}.
-
-Hard rules:
-- Return valid JSON only.
-- Keep all content safe, simulated, and educational.
-- Do not use fixed templates or memorized demonstration domains.
-- Generate varied healthcare workplace scenarios across links, attachments, QR, reply requests, MFA/OTP, phone requests, shared documents, invoice fraud, BEC, spear phishing, and legitimate internal messages.
-- For legitimate emails, use only hospital.org or moh.gov.sa and include no sensitive-data request, no threat, and no suspicious external link.
-- For phishing emails, use fake domains or simulated unsafe requests only. Do not impersonate a real private organization.
-- Beginner, Intermediate, and Advanced must be visibly different.
-- Arabic and English must have equal depth and quality.
-""".strip()
 
 
 
@@ -5801,11 +4040,6 @@ def _place_link_in_body(body, link):
 def _insert_before_signature(body, marker):
     return _place_link_in_body(body, marker)
 
-_SALUTATION_LINE_RE = re.compile(
-    r"^(regards|best regards|kind regards|warm regards|thank you|sincerely|"
-    r"respectfully|شكرا|شكراً|مع تحياتي|تحياتي|أطيب التحيات|وتفضلوا بقبول)",
-    re.I,
-)
 
 def _reposition_trailing_lone_link(body, link):
     return _place_link_in_body(body, link)
@@ -6084,136 +4318,8 @@ def _resolve_leftover_placeholders(result, is_ar=False):
     result["body"] = body
     return result
 
-def normalize_assessment_email(result, role_type, difficulty, is_phishing, is_ar=False):
-    """Keeps assessment focused on email content + difficulty, without adding learning-analysis sections."""
-    if not isinstance(result, dict):
-        return result
-    result = _recover_from_nested_email_blob(result)
-    is_ar = _detect_is_ar(result, is_ar)
-    if is_phishing:
-        result = _enforce_attack_vector(result, st.session_state.get("_last_assess_vector", ""))
-    if "error" not in result:
-        core_missing = not (_is_nonempty_str(result.get("from")) and
-                             _is_nonempty_str(result.get("subject")) and
-                             _is_substantial_str(result.get("body")))
-        if core_missing:
-            debug_keys = {k: (str(v)[:400] if v else v) for k, v in result.items()}
-            return {"error": {"code": "incomplete_content", "message": "incomplete_generation", "debug": debug_keys}}
-    result = _resolve_leftover_placeholders(result, is_ar)
-    result["is_phishing"] = bool(is_phishing)
-    if is_phishing:
-        result["attack_type"] = result.get("attack_type") or infer_attack_type_from_content(result, is_ar)
-        explanation = (result.get("explanation") or "").strip()
-        attack_type = result["attack_type"]
-        if attack_type and attack_type not in explanation:
-            prefix = (f"التصنيف تصيد لأن نوع الهجوم هو {attack_type}. " if is_ar else f"This is phishing because the attack type is {attack_type}. ")
-            result["explanation"] = prefix + explanation
-    else:
-        result["attack_type"] = "Legitimate"
-        # A legitimate assessment item must stay clean.
-        result["suspicious_text"] = ""
-        result["suspicious_link"] = ""
-    return result
 
 # Stronger difficulty contract: short, provider-friendly, and visibly different.
-def get_dynamic_difficulty_rules(difficulty, is_phishing=True, is_ar=False):
-    """Progressive Difficulty aligned with the approved Easy/Medium/Hard plan."""
-    if not is_phishing:
-        if is_ar:
-            rules = {
-                "easy": "رسالة شرعية سهلة: نطاق رسمي فقط، تحية واضحة، لا روابط خارجية ولا مرفقات ولا QR ولا طلب بيانات حساسة.",
-                "medium": "رسالة شرعية متوسطة: نطاق رسمي، لغة مهنية، موعد طبيعي، تفاصيل قسم واقعية، ولا طلب تسجيل دخول خارجي.",
-                "hard": "رسالة شرعية متقدمة: نطاق رسمي، تحية شخصية كاملة، سياق داخلي دقيق، ولغة طبيعية احترافية بلا مؤشرات تصيد.",
-            }
-        else:
-            rules = {
-                "easy": "Legitimate Easy: official domain only; clear greeting; no external link, attachment, QR, or sensitive-data request.",
-                "medium": "Legitimate Intermediate: official domain, professional language, normal deadline, realistic department detail, no external sign-in.",
-                "hard": "Legitimate Advanced: official domain, fully personalised greeting, precise internal context, polished natural language, and no phishing cues.",
-            }
-        return rules.get(difficulty, rules["medium"])
-
-    if is_ar:
-        rules = {
-            "easy": """
-المستوى السهل — مؤشرات كثيرة وواضحة (4 إلى 5):
-- تحية عامة فقط، بلا اسم شخصي.
-- نطاق مزيف واضح وبعيد عن hospital.org.
-- لغة مباشرة مع خطأين واضحين كحد أقصى.
-- طلب صريح لكلمة المرور أو PIN أو رمز تحقق.
-- إلحاح مباشر مثل اليوم/فوراً/سيُغلق الوصول.
-- رابط خام ظاهر كاملاً داخل الرسالة.
-- ممنوع المرفقات وQR وأزرار تسجيل الدخول وMicrosoft 365/Outlook.
-- صفحة الوجهة المتخيلة بسيطة وليست نسخة مطابقة للنظام.
-- التحليل يجب أن يحتوي 4 أو 5 مؤشرات واضحة مرتبطة بالنص.
-""",
-            "medium": """
-المستوى المتوسط — مؤشرات أقل وأكثر مهنية (2 إلى 3):
-- تحية باسم القسم أو المسمى الوظيفي، ويمكن استخدام الاسم الأول فقط.
-- نطاق يبدو قريباً من الرسمي لكن يظل قابلاً للكشف عند التدقيق.
-- لغة مهنية مع خطأ خفيف واحد كحد أقصى، بلا تهديد عدواني.
-- موعد معقول من 24 إلى 72 ساعة أو قبل نافذة عمل طبيعية.
-- الطلب غير مباشر: فتح بوابة مراجعة أو تسجيل دخول خارجي، وليس إرسال كلمة المرور بالبريد.
-- ممنوع QR.
-- استخدم وسيلة واحدة فقط حسب صيغة العرض المحددة: زر واحد أو رابط واحد أو PDF بلا رابط. ممنوع جمع الزر والرابط في الرسالة نفسها.
-- Microsoft 365/Outlook مسموح أحياناً فقط، وليس في كل مثال.
-- صفحة الوجهة تشبه نظاماً داخلياً بشكل عام، وليست نسخة مطابقة.
-- التحليل يجب أن يحتوي مؤشرين أو 3 مؤشرات مرتبطة بالنص.
-""",
-            "hard": """
-المستوى الصعب — مؤشرات قليلة وخفية (1 إلى 2):
-- تحية بالاسم الكامل، ورسالة مرتبطة بمهمة يومية دقيقة للدور المختار.
-- نطاق شبه مطابق أو اختصار مؤسسي مقنع، بلا كلمات فاضحة مثل secure/update/verify/login/reset.
-- لغة طبيعية سليمة تماماً وتوقيع مهني واقعي.
-- لا طلب مباشر لكلمة المرور ولا تهديد ولا استعجال صارخ؛ يكون الطلب روتينياً ومنطقياً.
-- استخدم قناة متقدمة واحدة أو اثنتين فقط مع التنويع بين الأمثلة: مرفق PDF/Excel واقعي، رابط مخفي خلف زر، QR، SharePoint أو Microsoft 365/Outlook.
-- لا تجمع QR + مرفق + زر + رابط خام في كل رسالة؛ الهدف الواقعية لا كثرة العلامات.
-- إذا استُخدم رابط فيجب ألا يتكرر كنص خام وزر معاً.
-- صفحة الوجهة المتخيلة شبه مطابقة للنظام الحقيقي.
-- التحليل يجب أن يحتوي مؤشراً أو مؤشرين خفيين فقط.
-""",
-        }
-    else:
-        rules = {
-            "easy": """
-EASY — many obvious cues (4-5 indicators):
-- Generic greeting only; no personal name.
-- Clearly fake domain far from hospital.org.
-- Direct language with no more than two obvious mistakes.
-- Explicit request for password, staff PIN, login credentials, or verification code.
-- Strong urgency such as today/immediately/access will close.
-- Full raw URL visibly written in the email.
-- No attachment, QR, sign-in button, Microsoft 365, or Outlook workflow.
-- Imagined landing page is simple, not a close clone.
-- Tutor analysis must contain 4 or 5 visible, text-grounded indicators.
-""",
-            "medium": """
-INTERMEDIATE — fewer, more professional cues (2-3 indicators):
-- Greeting uses department/job title or first name only.
-- Plausible look-alike domain that differs on careful inspection.
-- Professional language with at most one subtle error and no aggressive threat.
-- Reasonable 24-72 hour deadline or normal workflow window.
-- Indirect request to open a review portal or external sign-in; never ask to email a password.
-- QR is forbidden.
-- Use exactly one delivery style as instructed: one button, one visible URL, or a simple PDF with no link. Never combine a button and a visible URL in the same email.
-- Microsoft 365/Outlook may appear occasionally, not in every example.
-- Imagined landing page resembles an internal system but is not a perfect clone.
-- Tutor analysis must contain 2 or 3 text-grounded indicators.
-""",
-            "hard": """
-ADVANCED/HARD — only 1-2 subtle cues:
-- Fully personalised greeting and a highly specific daily task for the selected role.
-- Near-identical or convincing abbreviated domain; avoid obvious words secure/update/verify/login/reset/password/urgent.
-- Flawless, natural professional language and realistic complete signature.
-- No direct password request, explicit threat, or loud urgency; the action should look routine and logical.
-- Use only one or two advanced channels per email, varied across examples: realistic PDF/Excel attachment, hidden button link, QR, SharePoint, or Microsoft 365/Outlook.
-- Do not force QR + attachment + button + raw URL into every message; realism matters more than cue quantity.
-- Never show the same URL both raw and behind a button.
-- Imagined landing page is a near-clone of the real system.
-- Tutor analysis must contain only 1 or 2 subtle, text-grounded indicators.
-""",
-        }
-    return rules.get(difficulty, rules["medium"])
 
 def build_prompt(role, index, language):
     base = _OLD_BUILD_PROMPT_STUDY3(role, index, language)
@@ -6254,10 +4360,6 @@ Final assessment rule:
     return base + extra
 
 # Override generators to apply the final normalization after each provider response.
-_OLD_GENERATE_EMAIL_STUDY3 = generate_email
-_OLD_GENERATE_ASSESS_EMAIL_STUDY3 = generate_assess_email
-_OLD_GENERATE_OTHER_EMAIL_STUDY3 = generate_other_email
-_OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3 = generate_other_assess_email
 
 _DEBUG_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_log.json")
 
@@ -6299,198 +4401,17 @@ def _load_debug_log():
         pass
     return []
 
-def _friendly_generation_error(language):
-    if language == "Arabic":
-        return "تعذّر توليد هذا المثال حالياً بعد عدة محاولات. يرجى الضغط على (حاول مرة أخرى)."
-    return "We couldn't generate this example after several attempts. Please tap Try Again."
 
-def _is_incomplete_error(result):
-    return isinstance(result, dict) and "error" in result
 
-def _is_fatal_error(result):
-    """A handful of error types where retrying is pointless (e.g. missing/
-    invalid API key) — fail fast instead of burning 3 attempts."""
-    if not (isinstance(result, dict) and "error" in result):
-        return False
-    err = result.get("error")
-    msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-    return bool(re.search(r"api[_\s]?key|unauthorized|401|403|invalid x-api-key", msg, re.I))
 
-_ERROR_CATEGORY_PATTERNS = [
-    (r"language_mismatch", "wrong-language output, retried"),
-    (r"JSON parse error|invalid JSON|Cannot parse JSON", "JSON parsing failed"),
-    (r"quality checks", "repeated quality-check rejection"),
-    (r"incomplete_generation|empty from/subject/body", "incomplete model output"),
-    (r"Unexpected API response", "unexpected API response shape"),
-    (r"no text content", "empty model response"),
-    (r"503|UNAVAILABLE|overloaded|high demand", "provider overloaded"),
-    (r"rate limit|429", "rate limited"),
-    (r"timeout|timed out|deadline", "request timed out"),
-    (r"Unknown provider", "unknown provider configured"),
-]
 
-def _short_hint(result):
-    if not (isinstance(result, dict) and "error" in result):
-        return ""
-    err = result.get("error")
-    msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-    msg = str(msg or "").strip()
-    if not msg:
-        return " [no details returned]"
-    for pattern, label in _ERROR_CATEGORY_PATTERNS:
-        if re.search(pattern, msg, re.I):
-            return f" [{label}]"
-    # Always show the real message, truncated to a safe length, instead of
-    # a vague placeholder — the debug-log tab has proven unreliable across
-    # different hosting setups (ephemeral/multi-instance filesystems), so
-    # the on-screen hint is currently the only dependable diagnostic.
-    flat = re.sub(r"\s+", " ", msg)[:300]
-    return f" [{flat}]"
 
-def _language_clearly_mismatched(result, requested_is_ar):
-    """Hard language gate: reject a generation outright if its OWN prose
-    clearly does not match the requested language. This is intentionally
-    stricter/different from _detect_is_ar (used for cosmetic text-merging
-    decisions) — here an ambiguous/mixed case is NOT rejected (it might be
-    a legitimately bilingual proper noun), but a CLEAR mismatch is:
-      - Arabic was requested but the prose contains no Arabic at all
-        (i.e. the model answered fully in English).
-      - English was requested but the prose contains any Arabic script
-        at all (i.e. the model answered fully or partly in Arabic).
-    """
-    if not isinstance(result, dict):
-        return False
-    subject = result.get("subject")
-    subject = subject if isinstance(subject, str) else ""
-    body = result.get("body")
-    body = body if isinstance(body, str) else ""
-    sample = f"{subject} {body}"
-    sample = re.sub(r"https?://\S+", " ", sample)
-    sample = re.sub(r"\[[^\]]{1,80}\](?:\s*\([^)]*\))?", " ", sample)
-    sample = re.sub(r"\b(Button|QR|Open|Link|Document|pdf|docx|xlsx|xlsm|docm)\b", " ", sample, flags=re.I)
-    has_ar = bool(re.search(r"[\u0600-\u06FF]", sample))
-    has_lat = bool(re.search(r"[A-Za-z]{4,}", sample))
-    if requested_is_ar:
-        return has_lat and not has_ar
-    else:
-        return has_ar
 
-def generate_email(role, index, language, difficulty="medium"):
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    requested_is_ar = (language == "Arabic")
-    last_err = None
-    for attempt in range(3):
-        result = _OLD_GENERATE_EMAIL_STUDY3(role, index, language, difficulty)
-        if isinstance(result, dict) and "error" not in result:
-            result = normalize_learning_analysis(result, role_type, difficulty, requested_is_ar)
-        if isinstance(result, dict) and "error" not in result:
-            if _language_clearly_mismatched(result, requested_is_ar):
-                _store_debug("generate_email", {"message": "language_mismatch", "requested_ar": requested_is_ar, "body": str(result.get("body"))[:300]})
-                last_err = {"error": {"message": "language_mismatch"}}
-                continue
-            evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
-            return result
-        if _is_fatal_error(result):
-            return result
-        if _is_incomplete_error(result):
-            _store_debug("generate_email", result.get("error"))
-            last_err = result
-            continue
-        return result
-    return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
-def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    requested_is_ar = (language == "Arabic")
-    last_err = None
-    for attempt in range(3):
-        result = _OLD_GENERATE_ASSESS_EMAIL_STUDY3(role, index, is_phishing, language, difficulty)
-        if isinstance(result, dict) and "error" not in result:
-            result = normalize_assessment_email(result, role_type, difficulty, is_phishing, requested_is_ar)
-        if isinstance(result, dict) and "error" not in result:
-            if _language_clearly_mismatched(result, requested_is_ar):
-                _store_debug("generate_assess_email", {"message": "language_mismatch", "requested_ar": requested_is_ar, "body": str(result.get("body"))[:300]})
-                last_err = {"error": {"message": "language_mismatch"}}
-                continue
-            evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
-            return result
-        if _is_fatal_error(result):
-            return result
-        if _is_incomplete_error(result):
-            _store_debug("generate_assess_email", result.get("error"))
-            last_err = result
-            continue
-        return result
-    return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
-def generate_other_email(index, language, difficulty):
-    requested_is_ar = (language == "Arabic")
-    last_err = None
-    for attempt in range(3):
-        result = _OLD_GENERATE_OTHER_EMAIL_STUDY3(index, language, difficulty)
-        if isinstance(result, dict) and "error" not in result:
-            result = normalize_learning_analysis(result, "other", difficulty, requested_is_ar)
-        if isinstance(result, dict) and "error" not in result:
-            if _language_clearly_mismatched(result, requested_is_ar):
-                _store_debug("generate_other_email", {"message": "language_mismatch", "requested_ar": requested_is_ar, "body": str(result.get("body"))[:300]})
-                last_err = {"error": {"message": "language_mismatch"}}
-                continue
-            evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
-            return result
-        if _is_fatal_error(result):
-            return result
-        if _is_incomplete_error(result):
-            _store_debug("generate_other_email", result.get("error"))
-            last_err = result
-            continue
-        return result
-    return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
-def generate_other_assess_email(index, is_phishing, language, difficulty):
-    requested_is_ar = (language == "Arabic")
-    last_err = None
-    for attempt in range(3):
-        result = _OLD_GENERATE_OTHER_ASSESS_EMAIL_STUDY3(index, is_phishing, language, difficulty)
-        if isinstance(result, dict) and "error" not in result:
-            result = normalize_assessment_email(result, "other", difficulty, is_phishing, requested_is_ar)
-        if isinstance(result, dict) and "error" not in result:
-            if _language_clearly_mismatched(result, requested_is_ar):
-                _store_debug("generate_other_assess_email", {"message": "language_mismatch", "requested_ar": requested_is_ar, "body": str(result.get("body"))[:300]})
-                last_err = {"error": {"message": "language_mismatch"}}
-                continue
-            evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=is_phishing)
-            return result
-        if _is_fatal_error(result):
-            return result
-        if _is_incomplete_error(result):
-            _store_debug("generate_other_assess_email", result.get("error"))
-            last_err = result
-            continue
-        return result
-    return {"error": {"message": _friendly_generation_error(language) + _short_hint(last_err)}}
 
 # Make the final system prompt shorter and more explicit for all providers.
-def get_system_prompt():
-    difficulty = st.session_state.get("difficulty", "medium")
-    role = st.session_state.get("role", "Clinical")
-    role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-    _, _, role_type = role_info
-    role_context = get_role_unbounded_context(role_type, False)
-    return f"""
-You are a safe cybersecurity training content generator for a Saudi healthcare phishing-awareness study.
-Role context: {role_context}
-Difficulty: {difficulty}.
-Return valid JSON only. No markdown.
-Learning emails must include attack_type, risk_level, indicators, why_risky, and learning_tip.
-Assessment emails must stay concise and contain only the assessment JSON fields.
-Phishing content must be simulated, educational, and use invented non-real domains.
-Legitimate content must use hospital.org or moh.gov.sa only and must not request credentials, payment, MFA, OTP, bank details, or urgent account verification.
-Beginner, Intermediate, and Advanced must be visibly different.
-Analysis must mention the attack type and role-context risk, not only Domain/Urgency/Spelling.
-Arabic and English must have equal depth and quality.
-""".strip()
 
 # =============================================================
 # END FINAL DIVERSITY + DIFFICULTY OVERRIDE
@@ -6549,8 +4470,6 @@ def call_ai(prompt, max_tokens=1600):
         _time_patch.sleep(1.2 * (attempt + 1))
     return last or {"error": {"message": "AI provider failed after retries."}}
 
-def call_groq(prompt, max_tokens=1600):
-    return call_ai(prompt, max_tokens)
 
 # Stronger prompt wording that avoids placeholder-like indicator titles.
 _BASE_BUILD_PROMPT_FINAL = build_prompt
@@ -6953,70 +4872,9 @@ _BASE_GENERATION_ISSUES_FINAL = get_generation_quality_issues
 # job role (clinical/admin/IT) or violate the documented difficulty
 # framework before the email is shown to the trainee.
 # =============================================================
-_ROLE_KEYWORDS = {
-    "clinical": re.compile(r"\b(patient|clinical|emr|ehr|doctor|nurse|pharmac|medication|lab|radiology|pacs|icu|er|ward|handover|vitals|diagnostic|prescription|blood bank)\b|مريض|سريري|طبيب|ممرض|صيدل|دواء|مختبر|أشعة|مناوبة|قسم|بنك الدم|سجل طبي", re.I),
-    "admin": re.compile(r"\b(invoice|procurement|vendor|supplier|payroll|insurance|billing|appointment|contract|leave|hr|administrative|records office)\b|فاتورة|مورد|مشتريات|رواتب|تأمين|فوترة|مواعيد|عقد|إجازات|إداري", re.I),
-    "it": re.compile(r"\b(vpn|server|network|firewall|ssl|certificate|helpdesk|active directory|backup|database|endpoint|software|license|mfa|otp|cyber|it support)\b|شبكة|خادم|جدار ناري|شهادة|دعم تقني|نسخ احتياطي|قاعدة بيانات|ترخيص|تقنية|أمن سيبراني", re.I),
-}
-_ROLE_FORBIDDEN = {
-    "clinical": re.compile(r"\b(payroll|invoice|vendor|procurement|leave balance|hr portal|vpn|ssl certificate|server|helpdesk|software license|records management team|document collaboration team|security team)\b|رواتب|فاتورة|مورد|مشتريات|إجازات|بوابة الموارد|دعم تقني|شبكة|خادم|فريق الأمن|فريق إدارة السجلات", re.I),
-    "admin": re.compile(r"\b(emr|lab results|clinical handover|patient vitals|medication order|radiology image|vpn|ssl certificate|server|firewall)\b|تسليم سريري|نتائج مختبر|علامات حيوية|أمر دوائي|أشعة|شبكة|خادم", re.I),
-    "it": re.compile(r"\b(lab results|clinical handover|patient vitals|payroll bank|supplier invoice|appointment booking)\b|نتائج مختبر|تسليم سريري|علامات حيوية|فاتورة مورد|رواتب|حجز مواعيد", re.I),
-}
 
-def _current_role_type_for_guardrail():
-    try:
-        role = st.session_state.get("role", "Clinical")
-        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
-    except Exception:
-        return "clinical"
 
-def _role_alignment_issues(result):
-    role_type = _current_role_type_for_guardrail()
-    if role_type == "other":
-        return []
-    text = " ".join(str(result.get(k, "")) for k in ["email_type", "from", "subject", "body", "attachment", "suspicious_text", "suspicious_link"])
-    issues = []
-    if not _ROLE_KEYWORDS[role_type].search(text):
-        issues.append(f"email content is not clearly aligned with the selected {role_type} role")
-    if _ROLE_FORBIDDEN[role_type].search(text):
-        issues.append(f"email drifts into a different role instead of the selected {role_type} role")
-    return issues
 
-def _difficulty_structure_issues(result, difficulty, is_phishing=True):
-    if not is_phishing or not isinstance(result, dict):
-        return []
-    body = str(result.get("body", ""))
-    combined = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
-    issues = []
-    has_qr = bool(re.search(r"\[\s*QR", body, re.I))
-    has_attachment = bool(str(result.get("attachment", "")).strip())
-    link = str(result.get("suspicious_link", "")).strip()
-    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
-    n_ind = len(indicators)
-
-    if difficulty == "easy":
-        if has_qr: issues.append("Beginner/Easy must not contain QR code")
-        if has_attachment: issues.append("Beginner/Easy must not contain attachment")
-        if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
-        if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
-        if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
-    elif difficulty == "medium":
-        if has_qr: issues.append("Intermediate must not contain QR code")
-        if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
-            issues.append("Intermediate urgency is too aggressive")
-        if n_ind and not (2 <= n_ind <= 3): issues.append("Intermediate learning analysis must contain 2-3 indicators")
-        if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
-            issues.append("Intermediate attachment, when used, should be a simple PDF")
-    elif difficulty == "hard":
-        if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
-            issues.append("Advanced/Hard must avoid direct credential requests")
-        if n_ind and not (1 <= n_ind <= 2): issues.append("Advanced/Hard learning analysis must contain only 1-2 subtle indicators")
-        # Hard should vary its advanced vector. At least one subtle channel is required,
-        # but forcing QR + attachment + button in every email makes the level repetitive.
-        if not (has_qr or has_attachment or link or re.search(r"\[[^\]]+\]\(https?://", body)):
-            issues.append("Advanced/Hard needs at least one subtle external channel: attachment, QR, or disguised link/button")
-    return issues
 
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     issues = _BASE_GENERATION_ISSUES_FINAL(result, difficulty, is_phishing)
@@ -7144,84 +5002,9 @@ def _extract_name_tokens_from_email(addr):
 # job role (clinical/admin/IT) or violate the documented difficulty
 # framework before the email is shown to the trainee.
 # =============================================================
-_ROLE_KEYWORDS = {
-    "clinical": re.compile(r"\b(patient|clinical|emr|ehr|doctor|nurse|pharmac|medication|lab|radiology|pacs|icu|er|ward|handover|vitals|diagnostic|prescription|blood bank)\b|مريض|سريري|طبيب|ممرض|صيدل|دواء|مختبر|أشعة|مناوبة|قسم|بنك الدم|سجل طبي", re.I),
-    "admin": re.compile(r"\b(invoice|procurement|vendor|supplier|payroll|insurance|billing|appointment|contract|leave|hr|administrative|records office)\b|فاتورة|مورد|مشتريات|رواتب|تأمين|فوترة|مواعيد|عقد|إجازات|إداري", re.I),
-    "it": re.compile(r"\b(vpn|server|network|firewall|ssl|certificate|helpdesk|active directory|backup|database|endpoint|software|license|mfa|otp|cyber|it support)\b|شبكة|خادم|جدار ناري|شهادة|دعم تقني|نسخ احتياطي|قاعدة بيانات|ترخيص|تقنية|أمن سيبراني", re.I),
-}
-_ROLE_FORBIDDEN = {
-    "clinical": re.compile(r"\b(payroll|invoice|vendor|procurement|leave balance|hr portal|vpn|ssl certificate|server|helpdesk|software license|records management team|document collaboration team|security team)\b|رواتب|فاتورة|مورد|مشتريات|إجازات|بوابة الموارد|دعم تقني|شبكة|خادم|فريق الأمن|فريق إدارة السجلات", re.I),
-    "admin": re.compile(r"\b(emr|lab results|clinical handover|patient vitals|medication order|radiology image|vpn|ssl certificate|server|firewall)\b|تسليم سريري|نتائج مختبر|علامات حيوية|أمر دوائي|أشعة|شبكة|خادم", re.I),
-    "it": re.compile(r"\b(lab results|clinical handover|patient vitals|payroll bank|supplier invoice|appointment booking)\b|نتائج مختبر|تسليم سريري|علامات حيوية|فاتورة مورد|رواتب|حجز مواعيد", re.I),
-}
 
-def _current_role_type_for_guardrail():
-    try:
-        role = st.session_state.get("role", "Clinical")
-        return ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))[2]
-    except Exception:
-        return "clinical"
 
-def _role_alignment_issues(result):
-    role_type = _current_role_type_for_guardrail()
-    if role_type == "other":
-        return []
-    text = " ".join(str(result.get(k, "")) for k in ["email_type", "from", "subject", "body", "attachment", "suspicious_text", "suspicious_link"])
-    issues = []
-    if not _ROLE_KEYWORDS[role_type].search(text):
-        issues.append(f"email content is not clearly aligned with the selected {role_type} role")
-    if _ROLE_FORBIDDEN[role_type].search(text):
-        issues.append(f"email drifts into a different role instead of the selected {role_type} role")
-    return issues
 
-def _difficulty_structure_issues(result, difficulty, is_phishing=True):
-    if not is_phishing or not isinstance(result, dict):
-        return []
-    body = str(result.get("body", ""))
-    combined = " ".join(str(result.get(k, "")) for k in ["from", "subject", "body", "attachment", "suspicious_link"])
-    issues = []
-    has_qr = bool(re.search(r"\[\s*QR", body, re.I))
-    has_attachment = bool(str(result.get("attachment", "")).strip())
-    link = str(result.get("suspicious_link", "")).strip()
-    indicators = result.get("indicators", []) if isinstance(result.get("indicators"), list) else []
-    n_ind = len(indicators)
-
-    if difficulty == "easy":
-        if has_qr: issues.append("Beginner/Easy must not contain QR code")
-        if has_attachment: issues.append("Beginner/Easy must not contain attachment")
-        if link and link not in body: issues.append("Beginner/Easy must show the fake URL visibly in the body")
-        if re.search(r"\[[^\]]+\]\(https?://", body): issues.append("Beginner/Easy must use plain visible URL, not a button")
-        if n_ind and not (4 <= n_ind <= 5): issues.append("Beginner/Easy learning analysis must contain 4-5 obvious indicators")
-    elif difficulty == "medium":
-        if has_qr: issues.append("Intermediate must not contain QR code")
-        channel = str(result.get("medium_channel", "")).strip().lower()
-        has_button = bool(re.search(r"\[[^\]]+\]\(https?://", body))
-        visible_url = bool(re.search(r"https?://", body))
-        if has_button and visible_url:
-            # Markdown button syntax contains a URL internally; only flag when a separate raw URL also exists.
-            body_without_button = re.sub(r"\[[^\]]+\]\(https?://[^\)]+\)", "", body)
-            if re.search(r"https?://", body_without_button):
-                issues.append("Intermediate must not combine a button and a visible raw URL")
-        if channel == "button" and not has_button:
-            issues.append("Intermediate button-mode email must contain exactly one markdown button")
-        elif channel == "link" and (has_button or not visible_url):
-            issues.append("Intermediate link-mode email must contain one visible URL and no button")
-        elif channel == "none" and (has_button or visible_url or link):
-            issues.append("Intermediate no-link mode must contain no button or URL")
-        if re.search(r"act now|today or|immediately or|account closes today|تصرف الآن|اليوم أو|فورًا وإلا", combined, re.I):
-            issues.append("Intermediate urgency is too aggressive")
-        if n_ind and not (2 <= n_ind <= 3): issues.append("Intermediate learning analysis must contain 2-3 indicators")
-        if has_attachment and not re.search(r"\.pdf$", str(result.get("attachment", "")), re.I):
-            issues.append("Intermediate attachment, when used, should be a simple PDF")
-    elif difficulty == "hard":
-        if re.search(r"password|enter your login|provide your credentials|كلمة المرور|بيانات الدخول", combined, re.I):
-            issues.append("Advanced/Hard must avoid direct credential requests")
-        if n_ind and not (1 <= n_ind <= 2): issues.append("Advanced/Hard learning analysis must contain only 1-2 subtle indicators")
-        # Hard should vary its advanced vector. At least one subtle channel is required,
-        # but forcing QR + attachment + button in every email makes the level repetitive.
-        if not (has_qr or has_attachment or link or re.search(r"\[[^\]]+\]\(https?://", body)):
-            issues.append("Advanced/Hard needs at least one subtle external channel: attachment, QR, or disguised link/button")
-    return issues
 
 def get_generation_quality_issues(result, difficulty, is_phishing=True):
     issues = _BASE_GENERATION_ISSUES_FRAMEWORK(result, difficulty, is_phishing)
@@ -7303,15 +5086,6 @@ def get_generation_quality_issues(result, difficulty, is_phishing=True):
 
 # Regeneration helper: when Try Again is clicked, also clear the used topic/domain
 # memory for the current phase enough to allow a truly fresh attempt.
-def clear_generation_memory_for_current(role_type=None, phase_suffix="learn"):
-    if role_type is None:
-        role = st.session_state.get("role", "Clinical")
-        role_info = ROLE_MAP.get(role, ROLE_MAP.get("Clinical"))
-        _, _, role_type = role_info
-    for prefix in ["used_topics", "used_domains"]:
-        for key in list(st.session_state.keys()):
-            if key.startswith(f"{prefix}_{role_type}_{phase_suffix}"):
-                st.session_state[key] = []
 
 # More explicit system prompt for all providers.
 def get_system_prompt():
@@ -7761,110 +5535,6 @@ V19_SUBJECT_TEMPLATES_AR = {
 # panel across otherwise-different emails. Each difficulty now has its
 # own small pool, picked with the same anti-repeat helper as everything
 # else.
-V19_WHY_RISKY_EN = {
-    "easy": [
-        "This training phishing email uses an obviously unofficial domain and a direct credential request to pressure a quick click.",
-        "The message combines a fake sender domain with blunt urgency, a classic pattern used to rush the reader past normal checks.",
-        "This is a simulated phishing email: the sender domain, the direct data request, and the same-day deadline are all textbook red flags.",
-        "The generic greeting, the obvious domain, and the direct password request together make this an easy-to-spot simulated phish.",
-        "This training email relies on fear of losing access rather than a believable scenario — a common beginner-level tactic.",
-        "Nothing here matches how the real hospital system communicates: the domain, the urgency, and the direct request all stand out.",
-    ],
-    "medium": [
-        "This training phishing email uses role-specific context and a plausible-but-unofficial domain to make the request feel routine.",
-        "The message mimics a normal workflow request, which is what makes it more convincing than an obvious scam attempt.",
-        "This simulated email relies on a believable deadline and department-style wording rather than an outright threat.",
-        "The professional tone and department framing are designed to lower the reader's guard compared to a blunt phishing attempt.",
-        "This training email avoids asking for a password directly, relying instead on a sign-in page to capture credentials.",
-        "The domain looks close to legitimate, which is exactly what makes medium-difficulty phishing harder to catch at a glance.",
-    ],
-    "hard": [
-        "This training phishing email is deliberately realistic: the channel and destination are the only things that differ from the real internal process.",
-        "The message uses credible internal context and a near-official domain, which is what makes advanced phishing hard to catch.",
-        "This simulated email mirrors a genuine internal request closely — the sender's channel is the main giveaway here.",
-        "The personalised greeting and internal framing make this training email nearly indistinguishable from a real message.",
-        "This is designed to test attention to detail: the request itself is plausible, and only the destination is wrong.",
-        "The logical business reason given here (audit, policy, or safety) is what makes advanced phishing convincing rather than alarming.",
-    ],
-}
-V19_WHY_RISKY_AR = {
-    "easy": [
-        "هذه رسالة تصيد تدريبية تستخدم نطاقاً غير رسمي واضحاً وطلباً مباشراً للبيانات للضغط على المستخدم للتصرف بسرعة.",
-        "تجمع الرسالة بين نطاق مرسل مزيف وإلحاح مباشر، وهو نمط كلاسيكي يُستخدم لتجاوز الفحص الطبيعي للرسالة.",
-        "هذه رسالة تصيد تدريبية: نطاق المرسل والطلب المباشر للبيانات والمهلة الزمنية لنفس اليوم كلها مؤشرات واضحة.",
-        "التحية العامة والنطاق الواضح والطلب المباشر لكلمة المرور تجعل هذه الرسالة سهلة الاكتشاف كتصيد تدريبي.",
-        "تعتمد هذه الرسالة التدريبية على الخوف من فقدان الوصول بدل سيناريو مقنع، وهو أسلوب شائع بالمستوى المبتدئ.",
-        "لا شيء هنا يطابق طريقة تواصل النظام الحقيقي بالمستشفى: النطاق والإلحاح والطلب المباشر كلها بارزة.",
-    ],
-    "medium": [
-        "تستخدم هذه الرسالة التدريبية سياقاً مرتبطاً بالوظيفة ونطاقاً يبدو مقبولاً لكنه غير رسمي، مما يجعل الطلب يبدو روتينياً.",
-        "تحاكي الرسالة طلب عمل اعتيادي، وهذا بالضبط ما يجعلها أكثر إقناعاً من محاولة احتيال واضحة.",
-        "تعتمد هذه الرسالة التدريبية على مهلة زمنية معقولة وصياغة شبيهة بمراسلات القسم بدل التهديد المباشر.",
-        "النبرة المهنية والإطار القسمي مصممان لتقليل حذر القارئ مقارنة بمحاولة تصيد مباشرة وواضحة.",
-        "تتجنب هذه الرسالة التدريبية طلب كلمة المرور مباشرة، وتعتمد بدلاً من ذلك على صفحة تسجيل دخول لالتقاط البيانات.",
-        "النطاق يبدو قريباً من الرسمي، وهذا بالضبط ما يجعل تصيد المستوى المتوسط أصعب اكتشافاً من النظرة الأولى.",
-    ],
-    "hard": [
-        "هذه رسالة تصيد تدريبية واقعية عمداً: الفرق الوحيد عن الإجراء الداخلي الحقيقي هو القناة والوجهة.",
-        "تستخدم الرسالة سياقاً داخلياً موثوقاً ونطاقاً قريباً جداً من الرسمي، وهذا ما يصعّب اكتشاف التصيد المتقدم.",
-        "تحاكي هذه الرسالة التدريبية طلباً داخلياً حقيقياً بدقة عالية — قناة المرسل هي المؤشر الأساسي هنا.",
-        "التحية الشخصية والإطار الداخلي يجعلان هذه الرسالة التدريبية شبه مطابقة لرسالة حقيقية.",
-        "صُممت هذه الرسالة لاختبار الانتباه للتفاصيل: الطلب نفسه معقول، والوجهة فقط هي الخاطئة.",
-        "السبب المنطقي المذكور هنا (تدقيق، سياسة، أو سلامة) هو ما يجعل التصيد المتقدم مقنعاً بدل مثير للريبة.",
-    ],
-}
-V19_LEARNING_TIP_EN = {
-    "easy": [
-        "Verify the request through official channels and avoid using links in unexpected messages.",
-        "Check the sender's domain carefully before clicking anything, and never enter your password from an email link.",
-        "When a message pressures you to act 'today' or 'immediately', pause and verify through a known official channel first.",
-        "Legitimate systems rarely ask for your password directly by email — treat any such request as suspicious.",
-        "If an email creates panic about losing access, that pressure itself is a warning sign worth pausing on.",
-        "Compare the sender's address letter by letter with the real hospital domain before trusting the message.",
-    ],
-    "medium": [
-        "Even professional-looking requests should be verified directly with the department before you act on them.",
-        "A plausible deadline is not proof of legitimacy — confirm unusual requests through the official directory.",
-        "Hover over links before clicking, and compare the domain carefully against the organization's real one.",
-        "A sign-in page reached through an email link should never be trusted over the official bookmarked portal.",
-        "Department-style wording can still be faked — call the department directly if a request feels unusual.",
-        "Take a moment to check whether this kind of request is normally made by email at all before acting.",
-    ],
-    "hard": [
-        "Realistic internal wording is not enough — always confirm the channel matches how that request is normally made.",
-        "For sensitive requests, verify directly with the person or department through a known number or system, not by replying to the email.",
-        "The more convincing a message looks, the more important it is to double-check the actual link destination.",
-        "A logical-sounding business reason (audit, policy, safety) is not proof of legitimacy on its own.",
-        "If a message references a real meeting or file, confirm it through that same channel rather than the email link.",
-        "Advanced phishing relies on trust in context — when in doubt, verify out-of-band rather than by replying.",
-    ],
-}
-V19_LEARNING_TIP_AR = {
-    "easy": [
-        "تحقق من الطلب عبر القنوات الرسمية ولا تستخدم الروابط الواردة في الرسائل غير المتوقعة.",
-        "تفحّص نطاق المرسل بعناية قبل الضغط على أي شيء، ولا تُدخل كلمة المرور أبداً من رابط داخل بريد إلكتروني.",
-        "عندما تضغط عليك الرسالة للتصرف \"اليوم\" أو \"فوراً\"، توقف وتحقق عبر قناة رسمية معروفة أولاً.",
-        "الأنظمة الشرعية نادراً ما تطلب كلمة المرور مباشرة عبر البريد — تعامل مع أي طلب كهذا بحذر.",
-        "لو رسالة تسبب لك قلقاً من فقدان الوصول، هذا الضغط بحد ذاته إشارة تستحق التوقف عندها.",
-        "قارن عنوان المرسل حرفاً بحرف مع نطاق المستشفى الحقيقي قبل الوثوق بالرسالة.",
-    ],
-    "medium": [
-        "حتى الطلبات التي تبدو مهنية يجب التحقق منها مباشرة مع القسم قبل تنفيذها.",
-        "المهلة الزمنية المعقولة ليست دليلاً على الشرعية — تحقق من الطلبات غير المعتادة عبر الدليل الرسمي.",
-        "مرّر المؤشر فوق الرابط قبل الضغط عليه، وقارن النطاق بعناية مع نطاق الجهة الحقيقي.",
-        "صفحة تسجيل الدخول المفتوحة من رابط بريد إلكتروني لا يجب الوثوق بها أبداً مقارنة بالبوابة الرسمية المحفوظة.",
-        "الصياغة الشبيهة بمراسلات القسم يمكن تقليدها — اتصل بالقسم مباشرة لو الطلب بدا غير معتاد.",
-        "خذ لحظة للتفكير هل هذا النوع من الطلبات يتم عادة عبر البريد الإلكتروني أصلاً قبل التصرف.",
-    ],
-    "hard": [
-        "الصياغة الداخلية الواقعية لا تكفي — تأكد دائماً أن القناة تطابق الطريقة المعتادة لهذا النوع من الطلبات.",
-        "بالنسبة للطلبات الحساسة، تحقق مباشرة مع الشخص أو القسم عبر رقم أو نظام معروف، لا بالرد على البريد.",
-        "كلما بدت الرسالة مقنعة أكثر، زادت أهمية التحقق من وجهة الرابط الفعلية.",
-        "السبب المنطقي الظاهري (تدقيق، سياسة، سلامة) ليس دليلاً كافياً على الشرعية بمفرده.",
-        "لو الرسالة تشير لاجتماع أو ملف حقيقي، تحقق منه عبر نفس القناة بدل رابط البريد.",
-        "التصيد المتقدم يعتمد على الثقة بالسياق — عند الشك، تحقق من قناة أخرى بدل الرد على الرسالة.",
-    ],
-}
 
 
 def _v18_load_history():
@@ -8004,32 +5674,10 @@ def _v18_pick_blueprint(role, index, language, difficulty, phase, is_phishing=Tr
     }
 
 
-def _v18_recipient(role_type, index, phase):
-    pool = RECIPIENT_POOLS.get(role_type) or RECIPIENT_POOLS.get("clinical") or []
-    if not pool:
-        return {"en": "Dr. Sara Almutairi", "ar": "د. سارة المطيري", "email": "dr.sara.almutairi@hospital.org"}
-    key = f"v18_recipient_{role_type}_{phase}_{st.session_state.get('v18_cycle_id', 0)}"
-    order = get_session_random_order(len(pool), key)
-    return pool[order[index % len(order)]]
 
 
-def _v18_sender(area, domain, difficulty, rng):
-    local_easy = ["support", "alerts", "verify", "account-update", "secure-login", "staff-support"]
-    local_med = ["notifications", "workflow", "service-desk", "no-reply", "department-updates", "portal"]
-    local_hard = ["operations", "governance", "office", "coordinator", "secretariat", "systems"]
-    pool = local_easy if difficulty == "easy" else local_med if difficulty == "medium" else local_hard
-    # FIXED: same missing anti-repeat issue as domain/prefix/time above.
-    local = _v18_no_repeat_choice(pool, f"v18_recent_sender_{difficulty}_{st.session_state.get('v18_cycle_id', 0)}", rng)
-    return f"{area} <{local}@{domain}>"
 
 
-def _v18_link(bp, index):
-    slug = re.sub(r"[^a-z0-9]+", "-", bp["topic"].lower()).strip("-")
-    if bp["difficulty"] == "hard" and bp["attack"] == "sharepoint":
-        return f"https://{bp['domain']}/sites/{slug}/Shared%20Documents/{100+index}"
-    if bp["difficulty"] == "hard" and bp["attack"] == "microsoft365":
-        return f"https://{bp['domain']}/m365/{slug}?ref={700+index}"
-    return f"http://{bp['domain']}/{slug}/{100+index}"
 
 
 # FIXED: the easy-difficulty greeting pool used to have only 3 fixed
@@ -8044,16 +5692,6 @@ V18_EASY_GREETINGS_EN = ["Dear Staff,", "Dear Healthcare Team,", "Dear Employee,
 V18_EASY_GREETINGS_AR = ["عزيزي الموظف،", "فريق العمل العزيز،", "الزملاء الأعزاء،", "عزيزي الزميل،", "أعضاء الفريق الأعزاء،", "مرحباً بكم،"]
 
 
-def _v18_greeting(bp, person, rng):
-    is_ar = bp["language"] == "Arabic"
-    if bp["difficulty"] == "easy":
-        pool = V18_EASY_GREETINGS_AR if is_ar else V18_EASY_GREETINGS_EN
-        key = f"v18_recent_greeting_easy_{bp['language']}_{st.session_state.get('v18_cycle_id', 0)}"
-        return _v18_no_repeat_choice(pool, key, rng)
-    if bp["difficulty"] == "medium":
-        return f"عزيزي فريق {bp['area']}،" if is_ar else f"Dear {bp['area']} Team,"
-    name = person.get("ar") if is_ar else person.get("en")
-    return f"عزيزي/عزيزتي {name}،" if is_ar else f"Dear {name},"
 
 
 def _v18_indicator_objects(bp, link, is_phishing=True):
@@ -8106,152 +5744,8 @@ def _v18_indicator_objects(bp, link, is_phishing=True):
     return [{"number": i+1, "title": t, "description": d} for i, (t, d) in enumerate(rows)]
 
 
-def _v18_fallback_phishing(bp, role, index):
-    rng = _v18_rng(index, bp["role_type"], bp["difficulty"], bp["phase"] + "_fallback")
-    person = _v18_recipient(bp["role_type"], index, bp["phase"])
-    greeting = _v18_greeting(bp, person, rng)
-    link = _v18_link(bp, index)
-    sender = _v18_sender(bp["area"], bp["domain"], bp["difficulty"], rng)
-    is_ar = bp["language"] == "Arabic"
-    subject = (bp["subject_template_ar"] if is_ar else bp["subject_template"]).format(area=bp["area"], topic=bp["topic"])
-    area, topic = bp["area"], bp["topic"]
-    structure = bp["structure"]
-
-    if bp["difficulty"] == "easy":
-        action_en = rng.choice(["verify your password today", "confirm your staff PIN immediately", "update your login credentials now", "enter your OTP to restore access"])
-        action_ar = rng.choice(["تحقق من كلمة المرور اليوم", "أكّد الرقم السري للموظف فورًا", "حدّث بيانات الدخول الآن", "أدخل رمز التحقق لاستعادة الوصول"])
-        action = action_ar if is_ar else action_en
-        if is_ar:
-            variants = {
-                "problem_action_link": f"{greeting}\n\nتم اكتشاف مشكلة في {topic}. يجب أن {action} لتجنب فقدان الوصول إلى حساب المستشفى.\n\nاستخدم الرابط التالي وأدخل بيانات الدخول المطلوبة:\n{link}\n\nعدم الإكمال اليوم قد يؤدي إلى تعليق الوصول خلال ساعات.\n\nشكرًا،\nفريق دعم الحسابات",
-                "warning_link_consequence": f"{greeting}\n\nتنبيه عاجل بخصوص {topic}. لن يستمر الوصول إلى الخدمة ما لم {action}.\n\nرابط التحقق: {link}\n\nسيتم إيقاف الحساب اليوم إذا لم يتم اتخاذ الإجراء.\n\nمع التحية،\nالدعم الفني",
-                "notice_action_deadline": f"{greeting}\n\nهذا إشعار مهم من {area}. يرجى {action} قبل نهاية اليوم.\n\nابدأ من هنا: {link}\n\nالتأخير سيؤدي إلى فقدان الوصول.\n\nشكرًا،\nدعم بوابة الموظفين",
-                "short_alert": f"{greeting}\n\nإجراء فوري مطلوب لـ {topic}: {action}.\n{link}\n\nستنتهي صلاحية الوصول اليوم.\n\nفريق الدعم",
-                "support_request": f"{greeting}\n\nيطلب فريق الدعم تأكيد {topic}. يرجى {action} عبر الرابط التالي:\n{link}\n\nيجب إكمال الخطوة خلال ساعات.\n\nشكرًا لتعاونكم،\nمكتب الدعم",
-                "account_status": f"{greeting}\n\nحالة الحساب: معلّقة بسبب {topic}. لإعادة التفعيل، {action}.\n\n{link}\n\nسيتم إغلاق الطلب اليوم.\n\nقسم الحسابات",
-            }
-        else:
-            variants = {
-                "problem_action_link": f"{greeting}\n\nA problem was detected with your {topic}. You must {action} to avoid losing access to your hospital account.\n\nPlease use this link and enter the requested login details:\n{link}\n\nFailure to complete this today may suspend your access within hours.\n\nThank you,\nHospital Account Support",
-                "warning_link_consequence": f"{greeting}\n\nUrgent warning regarding {topic}. Your access will not continue unless you {action}.\n\nVerification link: {link}\n\nYour account will be disabled today if no action is taken.\n\nRegards,\nTechnical Support",
-                "notice_action_deadline": f"{greeting}\n\nThis is an important notice from {area}. Please {action} before the end of today.\n\nStart here: {link}\n\nDelay will result in loss of access.\n\nThank you,\nStaff Portal Support",
-                "short_alert": f"{greeting}\n\nImmediate action is required for {topic}: {action}.\n{link}\n\nAccess expires today.\n\nSupport Team",
-                "support_request": f"{greeting}\n\nThe support team needs you to confirm {topic}. Please {action} using the following link:\n{link}\n\nComplete this step within hours.\n\nThank you for your cooperation,\nHelpdesk",
-                "account_status": f"{greeting}\n\nAccount status: pending because of {topic}. To reactivate it, {action}.\n\n{link}\n\nThe request closes today.\n\nAccount Services",
-            }
-        body = variants.get(structure, next(iter(variants.values())))
-        attack_type = "Credential Phishing"
-        attachment = ""
-    elif bp["difficulty"] == "medium":
-        # FIXED: previously every "medium" structure (context_request_deadline,
-        # department_notice, workflow_exception, review_and_confirm,
-        # service_change, audit_followup, two_paragraph_professional) fell
-        # through to one single fixed body, silently defeating point 4 of the
-        # research design ("different writing structures") whenever the
-        # deterministic fallback was used instead of the API. Each structure
-        # now has its own distinct opening/framing/closing.
-        deadline = bp["urgency_seed_ar"] if is_ar else bp["urgency_seed"]
-        if is_ar:
-            variants = {
-                "context_request_deadline": f"{greeting}\n\nيرجى مراجعة {topic} الخاصة بقسم {area}. أظهر التحديث الأخير وجود عنصر يحتاج إلى تأكيد قبل اكتمال سير العمل.\n\nاستخدم بوابة المراجعة التالية وأكمل التحقق {deadline}:\n{link}\n\nلأي استفسار، تواصل مع القسم عبر القنوات الرسمية.\n\nمع التحية،\n{area}",
-                "department_notice": f"{greeting}\n\nإشعار من قسم {area} بخصوص {topic}. نود إبلاغكم بتحديث يتطلب مراجعتكم ضمن سير العمل المعتاد.\n\nرابط الإشعار الكامل:\n{link}\n\nيرجى الاطلاع {deadline}.\n\nتحياتنا،\nقسم {area}",
-                "workflow_exception": f"{greeting}\n\nتم رصد استثناء في سير عمل {topic} ضمن {area} يتطلب تأكيدكم قبل المتابعة.\n\nراجعوا تفاصيل الاستثناء من هنا:\n{link}\n\nإكمال المراجعة {deadline} يضمن استمرار سير العمل دون تأخير.\n\nمع الشكر،\n{area}",
-                "review_and_confirm": f"{greeting}\n\nنطلب مراجعتكم وتأكيدكم على {topic} المرتبط بـ{area} قبل اعتماده بشكل نهائي.\n\nرابط المراجعة والتأكيد:\n{link}\n\nيرجى إتمام ذلك {deadline}.\n\nمع التقدير،\n{area}",
-                "service_change": f"{greeting}\n\nنود إعلامكم بتغيير في خدمة {topic} يخص {area}، ويتطلب هذا التغيير إجراءً بسيطاً من جانبكم.\n\nتفاصيل التغيير والإجراء المطلوب:\n{link}\n\nالموعد النهائي للتنفيذ: {deadline}.\n\nمع التحية،\nفريق {area}",
-                "audit_followup": f"{greeting}\n\nمتابعة لمراجعة سابقة تخص {topic} في {area}، لوحظ عنصر يحتاج تأكيدكم لإغلاق الملف.\n\nرابط ملف المتابعة:\n{link}\n\nنأمل إكمال ذلك {deadline}.\n\nمع الشكر،\nفريق التدقيق - {area}",
-                "two_paragraph_professional": f"{greeting}\n\nبخصوص {topic} في {area}: راجع فريقنا آخر التحديثات ووجد عنصراً يستدعي تأكيدكم قبل استكمال الإجراء.\n\nيرجى استخدام الرابط التالي لإتمام التحقق {deadline}: {link}. لأي استفسار، تواصلوا مع القسم عبر القنوات الرسمية المعتمدة.\n\nمع التحية،\n{area}",
-            }
-        else:
-            variants = {
-                "context_request_deadline": f"{greeting}\n\nPlease review the {topic} for {area}. The latest update identified an item that requires confirmation before the workflow can be completed.\n\nUse the review portal below and complete the verification {deadline}:\n{link}\n\nFor questions, contact the department through the official directory.\n\nRegards,\n{area}",
-                "department_notice": f"{greeting}\n\nThis is a notice from {area} regarding {topic}. There is an update that requires your review as part of the standard workflow.\n\nFull notice link:\n{link}\n\nPlease review this {deadline}.\n\nRegards,\n{area}",
-                "workflow_exception": f"{greeting}\n\nA workflow exception was flagged for {topic} within {area} and needs your confirmation before it can proceed.\n\nReview the exception details here:\n{link}\n\nCompleting this {deadline} keeps the workflow on schedule.\n\nThank you,\n{area}",
-                "review_and_confirm": f"{greeting}\n\nWe need your review and confirmation on the {topic} associated with {area} before it can be finalized.\n\nReview and confirmation link:\n{link}\n\nPlease complete this {deadline}.\n\nRegards,\n{area}",
-                "service_change": f"{greeting}\n\nWe are notifying you of a change to the {topic} service affecting {area}, which requires a brief action on your part.\n\nChange details and required action:\n{link}\n\nDeadline for action: {deadline}.\n\nRegards,\n{area} Team",
-                "audit_followup": f"{greeting}\n\nFollowing up on a recent review of {topic} in {area}, one item still needs your confirmation to close the file.\n\nFollow-up file link:\n{link}\n\nWe would appreciate this being completed {deadline}.\n\nThank you,\n{area} Audit Team",
-                "two_paragraph_professional": f"{greeting}\n\nRegarding the {topic} for {area}: our team reviewed the latest update and found an item that requires your confirmation before the process can continue.\n\nPlease use the link below to complete verification {deadline}: {link}. For any questions, contact the department through the official directory.\n\nRegards,\n{area}",
-            }
-        body = variants.get(bp["structure"], next(iter(variants.values())))
-        attack_type = "Spear Phishing"
-        attachment = f"{re.sub(r'[^a-z0-9]+','_',topic.lower()).strip('_')}.pdf" if bp["attack"] == "pdf_review" else ""
-    else:
-        # FIXED: same structural-diversity gap as medium above, now resolved
-        # for all 8 "hard" structures (internal_memo, reply_thread,
-        # committee_request, document_share, calendar_followup,
-        # audit_evidence, executive_request, system_notification).
-        channel = bp["attack"]
-        if is_ar:
-            variants = {
-                "internal_memo": f"{greeting}\n\nمذكرة داخلية بخصوص {topic} ضمن {area}. يرجى مراجعة المرفق/المرجع المرتبط وتأكيد الملاحظة قبل الاجتماع القادم.\n\n{link}\n\nفي حال وجود اختلاف، يرجى الرد على نفس السلسلة مع رقم الحالة فقط.\n\nمع التقدير،\n{area}",
-                "reply_thread": f"{greeting}\n\nبالإشارة إلى مراسلاتنا السابقة حول {topic}، يرجى تأكيد النقطة المتبقية أدناه ضمن نفس السياق.\n\n{link}\n\nالرد على هذه الرسالة برقم الحالة فقط يكفي لإغلاق الملف.\n\nمع التقدير،\n{area}",
-                "committee_request": f"{greeting}\n\nتطلب لجنة {area} مراجعتكم لملف {topic} قبل الجلسة القادمة.\n\nرابط ملف اللجنة:\n{link}\n\nيرجى تأكيد الاستلام قبل الموعد المحدد.\n\nمع التقدير،\nأمانة لجنة {area}",
-                "document_share": f"{greeting}\n\nتمت مشاركة مستند يخص {topic} من {area} لمراجعتكم واعتماده.\n\nرابط المستند المشترك:\n{link}\n\nيرجى المراجعة في أقرب وقت ممكن.\n\nمع التحية،\n{area}",
-                "calendar_followup": f"{greeting}\n\nمتابعة لاجتماع {topic} الأخير مع {area}، يرجى تأكيد البند المعلّق أدناه.\n\n{link}\n\nنأمل إغلاق هذا البند قبل الاجتماع القادم.\n\nمع التحية،\n{area}",
-                "audit_evidence": f"{greeting}\n\nكجزء من مراجعة {topic} الجارية في {area}، نطلب منكم تزويدنا بالدليل المرتبط عبر الرابط التالي.\n\n{link}\n\nيرجى الرد بالرقم المرجعي للحالة فقط.\n\nمع التقدير،\nفريق المراجعة - {area}",
-                "executive_request": f"{greeting}\n\nبتوجيه من إدارة {area}، يرجى مراجعة واعتماد ملف {topic} المرفق.\n\n{link}\n\nنأمل الإفادة في أقرب وقت ممكن نظراً لحساسية الموضوع.\n\nمع التقدير،\nمكتب {area}",
-                "system_notification": f"{greeting}\n\nإشعار آلي من نظام {area} بخصوص {topic} يتطلب مراجعتكم.\n\n{link}\n\nهذا إشعار تلقائي، وللاستفسار يرجى التواصل مع {area} عبر القنوات الرسمية.\n\n{area}",
-            }
-        else:
-            variants = {
-                "internal_memo": f"{greeting}\n\nInternal memo regarding {topic} within {area}. Please review the linked reference and confirm the noted exception before the next meeting.\n\n{link}\n\nIf anything differs from your records, reply to this thread with the case reference only.\n\nKind regards,\n{area}",
-                "reply_thread": f"{greeting}\n\nFollowing up on our earlier thread about {topic}, please confirm the remaining item below within the same context.\n\n{link}\n\nReplying with the case reference alone is enough to close this out.\n\nKind regards,\n{area}",
-                "committee_request": f"{greeting}\n\nThe {area} committee requests your review of the {topic} file before the next session.\n\nCommittee file link:\n{link}\n\nPlease confirm receipt before the scheduled date.\n\nKind regards,\n{area} Committee Secretariat",
-                "document_share": f"{greeting}\n\nA document regarding {topic} has been shared by {area} for your review and sign-off.\n\nShared document link:\n{link}\n\nPlease review at your earliest convenience.\n\nRegards,\n{area}",
-                "calendar_followup": f"{greeting}\n\nFollowing up on the recent {topic} meeting with {area}, please confirm the pending item below.\n\n{link}\n\nWe would like this closed before the next meeting.\n\nRegards,\n{area}",
-                "audit_evidence": f"{greeting}\n\nAs part of the ongoing {topic} review in {area}, we need you to provide the related evidence through the link below.\n\n{link}\n\nPlease reply with the case reference only.\n\nKind regards,\n{area} Audit Team",
-                "executive_request": f"{greeting}\n\nAt the direction of {area} leadership, please review and approve the attached {topic} file.\n\n{link}\n\nGiven the sensitivity of this matter, a prompt response would be appreciated.\n\nKind regards,\n{area} Office",
-                "system_notification": f"{greeting}\n\nAutomated notification from the {area} system regarding {topic} requires your review.\n\n{link}\n\nThis is an automated message; for questions, contact {area} through official channels.\n\n{area}",
-            }
-        body = variants.get(bp["structure"], next(iter(variants.values())))
-        attack_type = "Advanced Spear Phishing"
-        attachment = ""
-        if channel == "pdf": attachment = f"{re.sub(r'[^a-z0-9]+','_',topic.lower()).strip('_')}_review.pdf"
-        elif channel == "excel": attachment = f"{re.sub(r'[^a-z0-9]+','_',topic.lower()).strip('_')}_tracker.xlsx"
-        elif channel == "qr": body += "\n\n[QR Code: Review the internal reference]" if not is_ar else "\n\n[رمز QR: مراجعة المرجع الداخلي]"
-
-    suspicious_text = "" if not body else next((x for x in ["verify your password today", "confirm your staff PIN immediately", "within 24 hours", "please review the item"] if x.lower() in body.lower()), "review the request")
-    indicators = _v18_indicator_objects(bp, link, True)
-    cid = st.session_state.get('v18_cycle_id', 0)
-    why = _v18_no_repeat_choice(
-        (V19_WHY_RISKY_AR if is_ar else V19_WHY_RISKY_EN)[bp["difficulty"]],
-        f"v19_recent_why_{bp['difficulty']}_{is_ar}_{cid}")
-    tip = _v18_no_repeat_choice(
-        (V19_LEARNING_TIP_AR if is_ar else V19_LEARNING_TIP_EN)[bp["difficulty"]],
-        f"v19_recent_tip_{bp['difficulty']}_{is_ar}_{cid}")
-    return {
-        "email_type": topic, "attack_type": attack_type, "from": sender,
-        "to": person.get("email", "employee@hospital.org"), "subject": subject,
-        "attachment": attachment, "body": body, "suspicious_text": suspicious_text,
-        "suspicious_link": link, "injected_errors": [], "indicators": indicators,
-        "why_risky": why, "learning_tip": tip,
-        "risk_level": "High" if bp["difficulty"] == "easy" else "Medium" if bp["difficulty"] == "medium" else "Subtle",
-        "is_phishing": True, "display_time": bp["display_time"],
-        "scenario_id": "v18:" + bp["signature"], "scenario_meta": bp,
-    }
 
 
-def _v18_legitimate(bp, role, index):
-    rng = _v18_rng(index, bp["role_type"], bp["difficulty"], bp["phase"] + "_legit")
-    person = _v18_recipient(bp["role_type"], index, bp["phase"])
-    is_ar = bp["language"] == "Arabic"
-    greeting = _v18_greeting(bp, person, rng)
-    official_sender = f"{bp['area']} <no-reply@hospital.org>"
-    if is_ar:
-        body = f"{greeting}\n\nهذا إشعار رسمي بخصوص {bp['topic']}. يمكن مراجعة التفاصيل من خلال القنوات الداخلية المعتمدة في المستشفى فقط.\n\nلا يلزم إرسال كلمة مرور أو رمز تحقق عبر البريد الإلكتروني.\n\nمع التحية،\n{bp['area']}"
-        why = "هذه رسالة شرعية تستخدم نطاق المستشفى الرسمي ولا تطلب بيانات حساسة أو رابطًا خارجيًا."
-        tip = "افتح الأنظمة الداخلية من خلال البوابة الرسمية بدل روابط البريد."
-    else:
-        body = f"{greeting}\n\nThis is an official notice regarding {bp['topic']}. Details can be reviewed through the hospital's approved internal channels only.\n\nNo passwords, PINs, or verification codes are required by email.\n\nRegards,\n{bp['area']}"
-        why = "This is a legitimate message from the official hospital domain and it does not request sensitive information or an external link."
-        tip = "Open internal systems from the official hospital portal rather than email links."
-    return {
-        "email_type": bp["topic"], "attack_type": "Legitimate", "from": official_sender,
-        "to": person.get("email", "employee@hospital.org"), "subject": f"Official update: {bp['topic']}",
-        "attachment": "", "body": body, "suspicious_text": "", "suspicious_link": "",
-        "injected_errors": [], "indicators": [], "why_risky": why, "learning_tip": tip,
-        "risk_level": "Safe", "is_phishing": False, "display_time": bp["display_time"],
-        "scenario_id": "v18:legit:" + bp["signature"], "scenario_meta": bp,
-    }
 
 
 def _v18_api_prompt(seed, bp):
@@ -8301,32 +5795,6 @@ Seed JSON (for protected fields only — do not copy its wording):
 """
 
 
-def _v18_parse_provider(data):
-    # FIXED: call_ai() already normalizes every provider's successful
-    # response (groq, openai, anthropic, gemini) into the same
-    # {"choices": [{"message": {"content": "..."}}]} shape before it ever
-    # reaches here. The old provider-specific branches below (reading
-    # data["content"] blocks for anthropic, data["candidates"] for gemini)
-    # never matched that normalized shape, so parsing silently failed for
-    # those two providers and every call quietly fell back to the seed
-    # template instead of the AI-rewritten text. We now read the normalized
-    # shape first for all providers, keeping the raw provider shapes only
-    # as a defensive fallback.
-    try:
-        if not isinstance(data, dict) or "error" in data:
-            return None
-        raw = None
-        if "choices" in data:
-            raw = data["choices"][0]["message"]["content"]
-        elif "content" in data:
-            raw = "".join(x.get("text", "") for x in data.get("content", []) if isinstance(x, dict))
-        elif "candidates" in data:
-            raw = data["candidates"][0]["content"]["parts"][0]["text"]
-        if not raw:
-            return None
-        return parse_json_response(str(raw).strip())
-    except Exception:
-        return None
 
 
 _V18_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
@@ -8450,35 +5918,10 @@ def _v18_enforce(result, seed, bp):
     return result
 
 
-def _v18_generate(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
-    phase = "assess" if assessment else "learn"
-    bp = _v18_pick_blueprint(role, index, language, difficulty, phase, is_phishing)
-    seed = _v18_fallback_phishing(bp, role, index) if is_phishing else _v18_legitimate(bp, role, index)
-    result = seed
-    try:
-        data = call_ai(_v18_api_prompt(seed, bp), max_tokens=2400)
-        parsed = _v18_parse_provider(data)
-        if parsed:
-            result = _v18_enforce(parsed, seed, bp)
-    except Exception as exc:
-        try:
-            _store_debug("v18_api_fallback", str(exc))
-        except Exception:
-            pass
-        result = seed
-    try:
-        evaluate_and_log_auto_scores(result, bp["difficulty"], language, is_phishing=bool(is_phishing))
-    except Exception:
-        pass
-    return result
 
 
-def generate_email(role, index, language, difficulty="medium"):
-    return _v18_generate(role, index, language, difficulty, True, assessment=False)
 
 
-def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    return _v18_generate(role, index, language, difficulty, bool(is_phishing), assessment=True)
 
 
 def generate_other_email(index, language, difficulty):
@@ -8726,32 +6169,6 @@ def _v20_grounded_analysis(result, bp):
     result["suspicious_text"] = body_item.get("evidence", "") if body_item else ""
     return result
 
-def _v20_validate(result, bp):
-    if not isinstance(result, dict):
-        return False
-    body = str(result.get("body", "")).strip()
-    subject = str(result.get("subject", "")).strip()
-    if not body or not subject or len(body.split()) < (45 if bp["language"] == "English" else 35):
-        return False
-    if subject.lower() in body.lower():
-        return False
-    if result.get("is_phishing"):
-        link = str(result.get("suspicious_link", ""))
-        if link and body.count(link) != 1:
-            return False
-        lo, hi = {"easy": (4, 5), "medium": (3, 4), "hard": (1, 2)}[bp["difficulty"]]
-        if not (lo <= len(result.get("indicators", [])) <= hi):
-            return False
-    # Guard against cross-role drift using a minimum of role-specific context.
-    role_terms = {
-        "clinical": ["patient", "clinical", "clinic", "ward", "lab", "pharmacy", "radiology", "مريض", "سريري", "عيادة", "قسم", "مختبر", "صيدلية"],
-        "admin": ["payroll", "invoice", "supplier", "insurance", "records", "procurement", "employee", "رواتب", "فاتورة", "مورد", "تأمين", "سجلات", "موظف"],
-        "it": ["account", "network", "server", "security", "system", "access", "VPN", "شبكة", "خادم", "أمن", "نظام", "وصول"],
-    }
-    combined = f"{subject} {body} {bp.get('area','')} {bp.get('event_text','')}".lower()
-    if not any(term.lower() in combined for term in role_terms[bp["role_type"]]):
-        return False
-    return True
 
 
 def _v18_api_prompt(seed, bp):
@@ -8781,45 +6198,11 @@ def _v18_enforce(result, seed, bp):
     return _v20_grounded_analysis(result, bp)
 
 
-def _v18_generate(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
-    """Generate, validate, and retry while preserving the existing return schema."""
-    phase = "assess" if assessment else "learn"
-    best = None
-    for attempt in range(3):
-        bp = _v18_pick_blueprint(role, index + attempt * 97, language, difficulty, phase, is_phishing)
-        seed = _v18_fallback_phishing(bp, role, index) if is_phishing else _v18_legitimate(bp, role, index)
-        seed = _v20_grounded_analysis(seed, bp)
-        candidate = seed
-        try:
-            data = call_ai(_v18_api_prompt(seed, bp), max_tokens=2600)
-            parsed = _v18_parse_provider(data)
-            if parsed:
-                candidate = _v18_enforce(parsed, seed, bp)
-        except Exception as exc:
-            try:
-                _store_debug("v20_api_fallback", str(exc))
-            except Exception:
-                pass
-        candidate = _v20_grounded_analysis(candidate, bp)
-        if _v20_validate(candidate, bp):
-            best = candidate
-            break
-        best = seed
-    result = best
-    try:
-        evaluate_and_log_auto_scores(result, str(difficulty or "medium").lower(), language, is_phishing=bool(is_phishing))
-    except Exception:
-        pass
-    return result
 
 
 # Public entry points remain unchanged for the rest of the application.
-def generate_email(role, index, language, difficulty="medium"):
-    return _v18_generate(role, index, language, difficulty, True, assessment=False)
 
 
-def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    return _v18_generate(role, index, language, difficulty, bool(is_phishing), assessment=True)
 
 # =============================================================
 # END RESEARCH ENGINE v20
@@ -8834,7 +6217,6 @@ def generate_assess_email(role, index, is_phishing, language, difficulty="medium
 import hashlib as _v30_hashlib
 import time as _v30_time
 
-_V30_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenario_history_v30.json")
 _V30_RNG = random.SystemRandom()
 
 V30_DIFFICULTY = {
@@ -8862,38 +6244,42 @@ V30_DIFFICULTY = {
 # tied to the family so Pharmacy can never sign an Infection Control message, etc.
 V30_KNOWLEDGE = {
     "clinical": [
-        {"id":"lab_critical","area":"Laboratory Services","event":"a critical laboratory result requiring documented follow-up","objects":["potassium result","blood culture result","coagulation result","troponin result","specimen rejection notice"],"actions":["review the result","acknowledge the finding","open the case record"],"senders":["Laboratory Results Desk","Clinical Laboratory Services"],"signatures":["Laboratory Results Team","Clinical Laboratory Services"]},
-        {"id":"referral","area":"Referral Coordination","event":"a specialist referral awaiting clinical review","objects":["cardiology referral","oncology referral","neurology referral","urgent outpatient referral","inter-facility transfer request"],"actions":["review the referral","confirm clinical acceptance","open the referral record"],"senders":["Referral Coordination Unit","Patient Flow Office"],"signatures":["Referral Coordination Team","Patient Flow Office"]},
-        {"id":"radiology","area":"Radiology","event":"a diagnostic imaging report awaiting review","objects":["CT report","MRI report","ultrasound report","critical imaging addendum","contrast safety checklist"],"actions":["review the report","acknowledge the addendum","open the imaging record"],"senders":["Radiology Reporting Office","Diagnostic Imaging Services"],"signatures":["Radiology Reporting Team","Diagnostic Imaging Services"]},
-        {"id":"medication","area":"Pharmacy","event":"a medication-safety item requiring clinical review","objects":["high-alert medication review","medication reconciliation exception","formulary substitution notice","antimicrobial approval","dose clarification request"],"actions":["review the medication item","acknowledge the safety notice","open the medication record"],"senders":["Medication Safety Office","Clinical Pharmacy Services"],"signatures":["Medication Safety Team","Clinical Pharmacy Services"]},
-        {"id":"infection","area":"Infection Prevention","event":"an infection-control notification requiring acknowledgement","objects":["isolation precaution update","exposure follow-up","outbreak advisory","hand-hygiene audit finding","screening protocol update"],"actions":["review the notice","acknowledge the update","open the exposure record"],"senders":["Infection Prevention and Control","Occupational Health Infection Desk"],"signatures":["Infection Prevention Team","Occupational Health"]},
-        {"id":"patient_safety","area":"Patient Safety","event":"a patient-safety case awaiting documented review","objects":["near-miss report","medication variance","fall-risk incident","handover concern","clinical escalation record"],"actions":["review the case","acknowledge the incident","open the safety record"],"senders":["Patient Safety Office","Clinical Governance Unit"],"signatures":["Patient Safety Team","Clinical Governance"]},
-        {"id":"schedule","area":"Clinical Operations","event":"a clinical schedule change requiring confirmation","objects":["operating theatre list","on-call rota","clinic coverage schedule","weekend duty roster","procedure-room allocation"],"actions":["review the revised schedule","confirm availability","open the duty roster"],"senders":["Clinical Operations Office","Medical Workforce Scheduling"],"signatures":["Clinical Operations","Medical Workforce Team"]},
-        {"id":"blood_bank","area":"Blood Bank","event":"a transfusion workflow item requiring clinical action","objects":["crossmatch request","blood-product release","transfusion reaction follow-up","massive transfusion checklist","blood availability notice"],"actions":["review the transfusion item","acknowledge the request","open the blood-bank record"],"senders":["Transfusion Services","Blood Bank Coordination"],"signatures":["Transfusion Services Team","Blood Bank"]},
-        {"id":"discharge","area":"Health Information Management","event":"a discharge-documentation item awaiting completion","objects":["discharge summary","clinical coding query","unsigned progress note","incomplete medication list","pending follow-up plan"],"actions":["review the documentation","complete the acknowledgement","open the patient record"],"senders":["Clinical Documentation Office","Health Information Management"],"signatures":["Clinical Documentation Team","Health Information Management"]},
-        {"id":"education","area":"Clinical Education","event":"a mandatory clinical learning item requiring completion","objects":["annual competency assessment","resuscitation update","medication-safety module","infection-control module","patient-identification refresher"],"actions":["open the learning item","confirm completion","review the assigned module"],"senders":["Clinical Education Department","Professional Development Unit"],"signatures":["Clinical Education Team","Professional Development"]},
-        {"id":"equipment","area":"Biomedical Engineering","event":"a medical-device notice requiring acknowledgement","objects":["infusion pump advisory","patient monitor update","ventilator safety notice","defibrillator inspection","glucose meter recall"],"actions":["review the device notice","acknowledge the advisory","open the equipment record"],"senders":["Biomedical Engineering","Medical Device Safety Desk"],"signatures":["Biomedical Engineering Team","Medical Device Safety"]},
-        {"id":"telehealth","area":"Virtual Care","event":"a remote-consultation item awaiting clinician review","objects":["telemedicine appointment","remote monitoring alert","virtual clinic handover","video consultation note","home-care escalation"],"actions":["review the virtual-care item","open the consultation record","confirm the handover"],"senders":["Virtual Care Coordination","Telehealth Operations"],"signatures":["Virtual Care Team","Telehealth Operations"]},
+        {"id":"lab_critical","area":"Laboratory Services","area_ar":"خدمات المختبر","event":"a critical laboratory result requiring documented follow-up","event_ar":"نتيجة مخبرية حرجة تتطلب متابعة موثقة","objects":["potassium result","blood culture result","coagulation result","troponin result","specimen rejection notice"],"objects_ar":["نتيجة البوتاسيوم","نتيجة مزرعة الدم","نتيجة التخثر","نتيجة التروبونين","إشعار رفض العينة"],"actions":["review the result","acknowledge the finding","open the case record"],"actions_ar":["مراجعة النتيجة","إقرار النتيجة","فتح سجل الحالة"],"senders":["Laboratory Results Desk","Clinical Laboratory Services"],"senders_ar":["مكتب نتائج المختبر","خدمات المختبر السريري"],"signatures":["Laboratory Results Team","Clinical Laboratory Services"],"signatures_ar":["فريق نتائج المختبر","خدمات المختبر السريري"]},
+        {"id":"referral","area":"Referral Coordination","area_ar":"تنسيق الإحالات","event":"a specialist referral awaiting clinical review","event_ar":"إحالة تخصصية بانتظار المراجعة السريرية","objects":["cardiology referral","oncology referral","neurology referral","urgent outpatient referral","inter-facility transfer request"],"objects_ar":["إحالة قلبية","إحالة أورام","إحالة أعصاب","إحالة عيادات خارجية عاجلة","طلب تحويل بين المنشآت"],"actions":["review the referral","confirm clinical acceptance","open the referral record"],"actions_ar":["مراجعة الإحالة","تأكيد القبول السريري","فتح سجل الإحالة"],"senders":["Referral Coordination Unit","Patient Flow Office"],"senders_ar":["وحدة تنسيق الإحالات","مكتب تدفق المرضى"],"signatures":["Referral Coordination Team","Patient Flow Office"],"signatures_ar":["فريق تنسيق الإحالات","مكتب تدفق المرضى"]},
+        {"id":"radiology","area":"Radiology","area_ar":"الأشعة","event":"a diagnostic imaging report awaiting review","event_ar":"تقرير تصوير تشخيصي بانتظار المراجعة","objects":["CT report","MRI report","ultrasound report","critical imaging addendum","contrast safety checklist"],"objects_ar":["تقرير الأشعة المقطعية","تقرير الرنين المغناطيسي","تقرير الموجات فوق الصوتية","ملحق تصوير حرج","قائمة تدقيق سلامة الصبغة"],"actions":["review the report","acknowledge the addendum","open the imaging record"],"actions_ar":["مراجعة التقرير","إقرار الملحق","فتح سجل التصوير"],"senders":["Radiology Reporting Office","Diagnostic Imaging Services"],"senders_ar":["مكتب تقارير الأشعة","خدمات التصوير التشخيصي"],"signatures":["Radiology Reporting Team","Diagnostic Imaging Services"],"signatures_ar":["فريق تقارير الأشعة","خدمات التصوير التشخيصي"]},
+        {"id":"medication","area":"Pharmacy","area_ar":"الصيدلية","event":"a medication-safety item requiring clinical review","event_ar":"بند متعلق بسلامة الأدوية يتطلب مراجعة سريرية","objects":["high-alert medication review","medication reconciliation exception","formulary substitution notice","antimicrobial approval","dose clarification request"],"objects_ar":["مراجعة دواء عالي الخطورة","استثناء مطابقة الأدوية","إشعار بديل بالتشكيلة الدوائية","اعتماد مضاد حيوي","طلب توضيح جرعة"],"actions":["review the medication item","acknowledge the safety notice","open the medication record"],"actions_ar":["مراجعة بند الدواء","إقرار إشعار السلامة","فتح سجل الدواء"],"senders":["Medication Safety Office","Clinical Pharmacy Services"],"senders_ar":["مكتب سلامة الدواء","خدمات الصيدلية السريرية"],"signatures":["Medication Safety Team","Clinical Pharmacy Services"],"signatures_ar":["فريق سلامة الدواء","خدمات الصيدلية السريرية"]},
+        {"id":"infection","area":"Infection Prevention","area_ar":"مكافحة العدوى","event":"an infection-control notification requiring acknowledgement","event_ar":"إشعار مكافحة عدوى يتطلب إقراراً","objects":["isolation precaution update","exposure follow-up","outbreak advisory","hand-hygiene audit finding","screening protocol update"],"objects_ar":["تحديث احتياطات العزل","متابعة تعرض","تنبيه تفشي","نتيجة تدقيق نظافة اليدين","تحديث بروتوكول الفحص"],"actions":["review the notice","acknowledge the update","open the exposure record"],"actions_ar":["مراجعة الإشعار","إقرار التحديث","فتح سجل التعرض"],"senders":["Infection Prevention and Control","Occupational Health Infection Desk"],"senders_ar":["مكافحة العدوى والوقاية","مكتب الصحة المهنية للعدوى"],"signatures":["Infection Prevention Team","Occupational Health"],"signatures_ar":["فريق مكافحة العدوى","الصحة المهنية"]},
+        {"id":"patient_safety","area":"Patient Safety","area_ar":"سلامة المرضى","event":"a patient-safety case awaiting documented review","event_ar":"حالة سلامة مرضى بانتظار مراجعة موثقة","objects":["near-miss report","medication variance","fall-risk incident","handover concern","clinical escalation record"],"objects_ar":["تقرير حالة كادت تقع","تباين دوائي","حادثة خطر سقوط","ملاحظة تسليم","سجل تصعيد سريري"],"actions":["review the case","acknowledge the incident","open the safety record"],"actions_ar":["مراجعة الحالة","إقرار الحادثة","فتح سجل السلامة"],"senders":["Patient Safety Office","Clinical Governance Unit"],"senders_ar":["مكتب سلامة المرضى","وحدة الحوكمة السريرية"],"signatures":["Patient Safety Team","Clinical Governance"],"signatures_ar":["فريق سلامة المرضى","الحوكمة السريرية"]},
+        {"id":"schedule","area":"Clinical Operations","area_ar":"العمليات السريرية","event":"a clinical schedule change requiring confirmation","event_ar":"تغيير بجدول سريري يتطلب تأكيداً","objects":["operating theatre list","on-call rota","clinic coverage schedule","weekend duty roster","procedure-room allocation"],"objects_ar":["قائمة غرفة العمليات","جدول المناوبة","جدول تغطية العيادة","جدول نوبات نهاية الأسبوع","تخصيص غرفة الإجراءات"],"actions":["review the revised schedule","confirm availability","open the duty roster"],"actions_ar":["مراجعة الجدول المعدّل","تأكيد التوفر","فتح جدول النوبات"],"senders":["Clinical Operations Office","Medical Workforce Scheduling"],"senders_ar":["مكتب العمليات السريرية","جدولة القوى العاملة الطبية"],"signatures":["Clinical Operations","Medical Workforce Team"],"signatures_ar":["العمليات السريرية","فريق القوى العاملة الطبية"]},
+        {"id":"blood_bank","area":"Blood Bank","area_ar":"بنك الدم","event":"a transfusion workflow item requiring clinical action","event_ar":"بند بمسار نقل الدم يتطلب إجراءً سريرياً","objects":["crossmatch request","blood-product release","transfusion reaction follow-up","massive transfusion checklist","blood availability notice"],"objects_ar":["طلب مطابقة الدم","إفراج منتج دموي","متابعة تفاعل نقل دم","قائمة تدقيق نقل دم ضخم","إشعار توفر الدم"],"actions":["review the transfusion item","acknowledge the request","open the blood-bank record"],"actions_ar":["مراجعة بند نقل الدم","إقرار الطلب","فتح سجل بنك الدم"],"senders":["Transfusion Services","Blood Bank Coordination"],"senders_ar":["خدمات نقل الدم","تنسيق بنك الدم"],"signatures":["Transfusion Services Team","Blood Bank"],"signatures_ar":["فريق خدمات نقل الدم","بنك الدم"]},
+        {"id":"discharge","area":"Health Information Management","area_ar":"إدارة المعلومات الصحية","event":"a discharge-documentation item awaiting completion","event_ar":"بند توثيق خروج بانتظار الإكمال","objects":["discharge summary","clinical coding query","unsigned progress note","incomplete medication list","pending follow-up plan"],"objects_ar":["ملخص الخروج","استفسار ترميز سريري","ملاحظة تقدم غير موقعة","قائمة أدوية غير مكتملة","خطة متابعة معلقة"],"actions":["review the documentation","complete the acknowledgement","open the patient record"],"actions_ar":["مراجعة التوثيق","إكمال الإقرار","فتح سجل المريض"],"senders":["Clinical Documentation Office","Health Information Management"],"senders_ar":["مكتب التوثيق السريري","إدارة المعلومات الصحية"],"signatures":["Clinical Documentation Team","Health Information Management"],"signatures_ar":["فريق التوثيق السريري","إدارة المعلومات الصحية"]},
+        {"id":"education","area":"Clinical Education","area_ar":"التعليم السريري","event":"a mandatory clinical learning item requiring completion","event_ar":"بند تعلّم سريري إلزامي يتطلب إكمالاً","objects":["annual competency assessment","resuscitation update","medication-safety module","infection-control module","patient-identification refresher"],"objects_ar":["التقييم السنوي للكفاءة","تحديث الإنعاش","وحدة سلامة الأدوية","وحدة مكافحة العدوى","تذكير تعريف هوية المريض"],"actions":["open the learning item","confirm completion","review the assigned module"],"actions_ar":["فتح بند التعلم","تأكيد الإكمال","مراجعة الوحدة المخصصة"],"senders":["Clinical Education Department","Professional Development Unit"],"senders_ar":["قسم التعليم السريري","وحدة التطوير المهني"],"signatures":["Clinical Education Team","Professional Development"],"signatures_ar":["فريق التعليم السريري","التطوير المهني"]},
+        {"id":"equipment","area":"Biomedical Engineering","area_ar":"الهندسة الطبية الحيوية","event":"a medical-device notice requiring acknowledgement","event_ar":"إشعار جهاز طبي يتطلب إقراراً","objects":["infusion pump advisory","patient monitor update","ventilator safety notice","defibrillator inspection","glucose meter recall"],"objects_ar":["إشعار سحب مضخة تسريب","تحديث جهاز مراقبة المريض","إشعار سلامة جهاز التنفس","فحص جهاز الصدمات الكهربائية","سحب جهاز قياس الجلوكوز"],"actions":["review the device notice","acknowledge the advisory","open the equipment record"],"actions_ar":["مراجعة إشعار الجهاز","إقرار الإشعار","فتح سجل الجهاز"],"senders":["Biomedical Engineering","Medical Device Safety Desk"],"senders_ar":["الهندسة الطبية الحيوية","مكتب سلامة الأجهزة الطبية"],"signatures":["Biomedical Engineering Team","Medical Device Safety"],"signatures_ar":["فريق الهندسة الطبية الحيوية","سلامة الأجهزة الطبية"]},
+        {"id":"telehealth","area":"Virtual Care","area_ar":"الرعاية الافتراضية","event":"a remote-consultation item awaiting clinician review","event_ar":"بند استشارة عن بعد بانتظار مراجعة الطبيب","objects":["telemedicine appointment","remote monitoring alert","virtual clinic handover","video consultation note","home-care escalation"],"objects_ar":["موعد التطبيب عن بعد","تنبيه مراقبة عن بعد","تسليم عيادة افتراضية","ملاحظة استشارة فيديو","تصعيد رعاية منزلية"],"actions":["review the virtual-care item","open the consultation record","confirm the handover"],"actions_ar":["مراجعة بند الرعاية الافتراضية","فتح سجل الاستشارة","تأكيد التسليم"],"senders":["Virtual Care Coordination","Telehealth Operations"],"senders_ar":["تنسيق الرعاية الافتراضية","عمليات التطبيب عن بعد"],"signatures":["Virtual Care Team","Telehealth Operations"],"signatures_ar":["فريق الرعاية الافتراضية","عمليات التطبيب عن بعد"]},
     ],
     "admin": [
-        {"id":"insurance","area":"Insurance Coordination","event":"an insurance case awaiting administrative review","objects":["coverage exception","claim rejection","pre-authorization request","policy eligibility update","reimbursement query"],"actions":["review the case","open the claim record","confirm the administrative response"],"senders":["Insurance Coordination Unit","Revenue Cycle Office"],"signatures":["Insurance Coordination","Revenue Cycle Team"]},
-        {"id":"billing","area":"Patient Billing","event":"a billing item requiring reconciliation","objects":["invoice discrepancy","unposted payment","billing adjustment","patient account exception","coding-related charge query"],"actions":["review the billing item","open the account record","acknowledge the discrepancy"],"senders":["Patient Billing Office","Revenue Integrity Unit"],"signatures":["Patient Billing Team","Revenue Integrity"]},
-        {"id":"procurement","area":"Procurement","event":"a supplier transaction awaiting review","objects":["purchase order amendment","supplier invoice","contract renewal","delivery discrepancy","quotation approval"],"actions":["review the transaction","open the procurement record","confirm receipt"],"senders":["Medical Procurement Office","Supply Chain Management"],"signatures":["Procurement Team","Supply Chain Management"]},
-        {"id":"appointments","area":"Patient Access","event":"an appointment workflow item requiring action","objects":["clinic overbooking notice","appointment rescheduling batch","waiting-list release","referral booking exception","patient registration correction"],"actions":["review the booking item","open the scheduling record","acknowledge the change"],"senders":["Patient Access Services","Appointment Coordination"],"signatures":["Patient Access Team","Appointment Coordination"]},
-        {"id":"hr","area":"Human Resources","event":"an employee administration item requiring review","objects":["leave balance correction","benefits enrollment","contract detail update","attendance exception","staff credential renewal"],"actions":["review the employee item","open the HR record","confirm the update"],"senders":["Human Resources Services","Employee Relations Office"],"signatures":["Human Resources","Employee Relations"]},
-        {"id":"payroll","area":"Payroll","event":"a payroll exception requiring confirmation","objects":["salary payment exception","IBAN verification case","allowance adjustment","overtime reconciliation","end-of-service calculation"],"actions":["review the payroll item","open the payment record","confirm the correction"],"senders":["Payroll Services","Compensation and Benefits"],"signatures":["Payroll Team","Compensation and Benefits"]},
-        {"id":"records","area":"Medical Records Administration","event":"an administrative patient-record item awaiting review","objects":["release-of-information request","record merge exception","demographic correction","archiving notice","document indexing query"],"actions":["review the records item","open the administrative record","acknowledge the request"],"senders":["Medical Records Administration","Health Information Services"],"signatures":["Medical Records Team","Health Information Services"]},
-        {"id":"facilities","area":"Facilities Management","event":"a facilities service item requiring coordination","objects":["access badge review","maintenance closure","office relocation","parking permit update","building access exception"],"actions":["review the service notice","open the facilities request","confirm the arrangement"],"senders":["Facilities Management","Workplace Services"],"signatures":["Facilities Team","Workplace Services"]},
+        {"id":"insurance","area":"Insurance Coordination","area_ar":"تنسيق التأمين","event":"an insurance case awaiting administrative review","event_ar":"حالة تأمين بانتظار المراجعة الإدارية","objects":["coverage exception","claim rejection","pre-authorization request","policy eligibility update","reimbursement query"],"objects_ar":["استثناء تغطية","رفض مطالبة","طلب تصريح مسبق","تحديث أهلية بوليصة","استفسار استرداد"],"actions":["review the case","open the claim record","confirm the administrative response"],"actions_ar":["مراجعة الحالة","فتح سجل المطالبة","تأكيد الرد الإداري"],"senders":["Insurance Coordination Unit","Revenue Cycle Office"],"senders_ar":["وحدة تنسيق التأمين","مكتب دورة الإيرادات"],"signatures":["Insurance Coordination","Revenue Cycle Team"],"signatures_ar":["تنسيق التأمين","فريق دورة الإيرادات"]},
+        {"id":"billing","area":"Patient Billing","area_ar":"فوترة المرضى","event":"a billing item requiring reconciliation","event_ar":"بند فوترة يتطلب مطابقة","objects":["invoice discrepancy","unposted payment","billing adjustment","patient account exception","coding-related charge query"],"objects_ar":["تباين فاتورة","دفعة غير مرحّلة","تعديل فوترة","استثناء حساب مريض","استفسار رسوم متعلق بالترميز"],"actions":["review the billing item","open the account record","acknowledge the discrepancy"],"actions_ar":["مراجعة بند الفوترة","فتح سجل الحساب","إقرار التباين"],"senders":["Patient Billing Office","Revenue Integrity Unit"],"senders_ar":["مكتب فوترة المرضى","وحدة نزاهة الإيرادات"],"signatures":["Patient Billing Team","Revenue Integrity"],"signatures_ar":["فريق فوترة المرضى","نزاهة الإيرادات"]},
+        {"id":"procurement","area":"Procurement","area_ar":"المشتريات","event":"a supplier transaction awaiting review","event_ar":"معاملة مورد بانتظار المراجعة","objects":["purchase order amendment","supplier invoice","contract renewal","delivery discrepancy","quotation approval"],"objects_ar":["تعديل أمر شراء","فاتورة مورد","تجديد عقد","تباين تسليم","اعتماد عرض سعر"],"actions":["review the transaction","open the procurement record","confirm receipt"],"actions_ar":["مراجعة المعاملة","فتح سجل المشتريات","تأكيد الاستلام"],"senders":["Medical Procurement Office","Supply Chain Management"],"senders_ar":["مكتب المشتريات الطبية","إدارة سلسلة الإمداد"],"signatures":["Procurement Team","Supply Chain Management"],"signatures_ar":["فريق المشتريات","إدارة سلسلة الإمداد"]},
+        {"id":"appointments","area":"Patient Access","area_ar":"وصول المرضى","event":"an appointment workflow item requiring action","event_ar":"بند بمسار المواعيد يتطلب إجراءً","objects":["clinic overbooking notice","appointment rescheduling batch","waiting-list release","referral booking exception","patient registration correction"],"objects_ar":["إشعار حجز زائد بالعيادة","دفعة إعادة جدولة مواعيد","إفراج قائمة انتظار","استثناء حجز إحالة","تصحيح تسجيل مريض"],"actions":["review the booking item","open the scheduling record","acknowledge the change"],"actions_ar":["مراجعة بند الحجز","فتح سجل الجدولة","إقرار التغيير"],"senders":["Patient Access Services","Appointment Coordination"],"senders_ar":["خدمات وصول المرضى","تنسيق المواعيد"],"signatures":["Patient Access Team","Appointment Coordination"],"signatures_ar":["فريق وصول المرضى","تنسيق المواعيد"]},
+        {"id":"hr","area":"Human Resources","area_ar":"الموارد البشرية","event":"an employee administration item requiring review","event_ar":"بند إداري لموظف يتطلب مراجعة","objects":["leave balance correction","benefits enrollment","contract detail update","attendance exception","staff credential renewal"],"objects_ar":["تصحيح رصيد إجازة","تسجيل مزايا","تحديث تفاصيل عقد","استثناء حضور","تجديد اعتماد موظف"],"actions":["review the employee item","open the HR record","confirm the update"],"actions_ar":["مراجعة بند الموظف","فتح سجل الموارد البشرية","تأكيد التحديث"],"senders":["Human Resources Services","Employee Relations Office"],"senders_ar":["خدمات الموارد البشرية","مكتب علاقات الموظفين"],"signatures":["Human Resources","Employee Relations"],"signatures_ar":["الموارد البشرية","علاقات الموظفين"]},
+        {"id":"payroll","area":"Payroll","area_ar":"الرواتب","event":"a payroll exception requiring confirmation","event_ar":"استثناء رواتب يتطلب تأكيداً","objects":["salary payment exception","IBAN verification case","allowance adjustment","overtime reconciliation","end-of-service calculation"],"objects_ar":["استثناء دفع راتب","حالة تحقق آيبان","تعديل بدل","مطابقة وقت إضافي","احتساب نهاية خدمة"],"actions":["review the payroll item","open the payment record","confirm the correction"],"actions_ar":["مراجعة بند الراتب","فتح سجل الدفع","تأكيد التصحيح"],"senders":["Payroll Services","Compensation and Benefits"],"senders_ar":["خدمات الرواتب","التعويضات والمزايا"],"signatures":["Payroll Team","Compensation and Benefits"],"signatures_ar":["فريق الرواتب","التعويضات والمزايا"]},
+        {"id":"records","area":"Medical Records Administration","area_ar":"إدارة السجلات الطبية","event":"an administrative patient-record item awaiting review","event_ar":"بند إداري بسجل مريض بانتظار المراجعة","objects":["release-of-information request","record merge exception","demographic correction","archiving notice","document indexing query"],"objects_ar":["طلب الإفراج عن معلومات","استثناء دمج سجل","تصحيح بيانات ديموغرافية","إشعار أرشفة","استفسار فهرسة مستند"],"actions":["review the records item","open the administrative record","acknowledge the request"],"actions_ar":["مراجعة بند السجلات","فتح السجل الإداري","إقرار الطلب"],"senders":["Medical Records Administration","Health Information Services"],"senders_ar":["إدارة السجلات الطبية","خدمات المعلومات الصحية"],"signatures":["Medical Records Team","Health Information Services"],"signatures_ar":["فريق السجلات الطبية","خدمات المعلومات الصحية"]},
+        {"id":"facilities","area":"Facilities Management","area_ar":"إدارة المرافق","event":"a facilities service item requiring coordination","event_ar":"بند خدمة مرافق يتطلب تنسيقاً","objects":["access badge review","maintenance closure","office relocation","parking permit update","building access exception"],"objects_ar":["مراجعة بطاقة الدخول","إغلاق صيانة","نقل مكتب","تحديث تصريح موقف","استثناء دخول مبنى"],"actions":["review the service notice","open the facilities request","confirm the arrangement"],"actions_ar":["مراجعة إشعار الخدمة","فتح طلب المرافق","تأكيد الترتيب"],"senders":["Facilities Management","Workplace Services"],"senders_ar":["إدارة المرافق","خدمات مكان العمل"],"signatures":["Facilities Team","Workplace Services"],"signatures_ar":["فريق المرافق","خدمات مكان العمل"]},
     ],
     "it": [
-        {"id":"vpn","area":"Network Services","event":"a remote-access service item requiring technical review","objects":["VPN certificate update","remote access exception","gateway maintenance","privileged access review","secure tunnel migration"],"actions":["review the service item","open the network ticket","acknowledge the change"],"senders":["Network Operations Centre","Infrastructure Services"],"signatures":["Network Operations","Infrastructure Services"]},
-        {"id":"identity","area":"Identity and Access Management","event":"an identity-governance item awaiting review","objects":["privileged role recertification","inactive account review","MFA registration exception","service-account ownership","access entitlement review"],"actions":["review the access item","open the IAM case","acknowledge the entitlement"],"senders":["Identity and Access Management","Cybersecurity Operations"],"signatures":["IAM Team","Cybersecurity Operations"]},
-        {"id":"server","area":"Infrastructure Operations","event":"a server operation item requiring action","objects":["storage threshold alert","backup verification","patch maintenance window","cluster failover review","virtual machine ownership"],"actions":["review the infrastructure item","open the operations ticket","acknowledge the maintenance"],"senders":["Infrastructure Operations","Data Centre Services"],"signatures":["Infrastructure Operations","Data Centre Services"]},
-        {"id":"security","area":"Cybersecurity","event":"a security case awaiting technical review","objects":["endpoint detection alert","firewall rule exception","vulnerability remediation","phishing investigation","certificate anomaly"],"actions":["review the security case","open the incident ticket","acknowledge the finding"],"senders":["Security Operations Centre","Cybersecurity Governance"],"signatures":["Security Operations","Cybersecurity Governance"]},
-        {"id":"database","area":"Database Services","event":"a database service item requiring confirmation","objects":["backup integrity check","replication lag alert","schema change request","database account review","restore-test result"],"actions":["review the database item","open the service ticket","acknowledge the change"],"senders":["Database Administration","Enterprise Applications"],"signatures":["Database Services","Enterprise Applications"]},
-        {"id":"application","area":"Clinical Applications","event":"an enterprise application item awaiting review","objects":["EMR interface error","application release note","license allocation","integration exception","production change request"],"actions":["review the application item","open the change record","acknowledge the release"],"senders":["Clinical Applications Support","Enterprise Systems"],"signatures":["Clinical Applications","Enterprise Systems"]},
-        {"id":"cloud","area":"Cloud and Backup Services","event":"a cloud service item requiring technical review","objects":["backup retention exception","cloud access review","storage policy update","recovery test","subscription renewal"],"actions":["review the cloud item","open the service record","acknowledge the policy"],"senders":["Cloud Platform Operations","Backup and Recovery Services"],"signatures":["Cloud Operations","Backup and Recovery"]},
-        {"id":"helpdesk","area":"IT Service Desk","event":"a support case requiring technician action","objects":["escalated service ticket","remote support request","device enrollment case","software deployment issue","asset handover"],"actions":["review the support case","open the ticket","acknowledge the assignment"],"senders":["IT Service Desk","End User Computing"],"signatures":["IT Service Desk","End User Computing"]},
+        {"id":"vpn","area":"Network Services","area_ar":"خدمات الشبكة","event":"a remote-access service item requiring technical review","event_ar":"بند خدمة وصول عن بعد يتطلب مراجعة تقنية","objects":["VPN certificate update","remote access exception","gateway maintenance","privileged access review","secure tunnel migration"],"objects_ar":["تحديث شهادة VPN","استثناء وصول عن بعد","صيانة بوابة","مراجعة وصول مميز","ترحيل نفق آمن"],"actions":["review the service item","open the network ticket","acknowledge the change"],"actions_ar":["مراجعة بند الخدمة","فتح تذكرة الشبكة","إقرار التغيير"],"senders":["Network Operations Centre","Infrastructure Services"],"senders_ar":["مركز عمليات الشبكة","خدمات البنية التحتية"],"signatures":["Network Operations","Infrastructure Services"],"signatures_ar":["عمليات الشبكة","خدمات البنية التحتية"]},
+        {"id":"identity","area":"Identity and Access Management","area_ar":"إدارة الهوية والوصول","event":"an identity-governance item awaiting review","event_ar":"بند حوكمة هوية بانتظار المراجعة","objects":["privileged role recertification","inactive account review","MFA registration exception","service-account ownership","access entitlement review"],"objects_ar":["إعادة اعتماد دور مميز","مراجعة حساب غير نشط","استثناء تسجيل تحقق ثنائي","ملكية حساب خدمة","مراجعة صلاحية وصول"],"actions":["review the access item","open the IAM case","acknowledge the entitlement"],"actions_ar":["مراجعة بند الوصول","فتح حالة إدارة الهوية","إقرار الصلاحية"],"senders":["Identity and Access Management","Cybersecurity Operations"],"senders_ar":["إدارة الهوية والوصول","عمليات الأمن السيبراني"],"signatures":["IAM Team","Cybersecurity Operations"],"signatures_ar":["فريق إدارة الهوية","عمليات الأمن السيبراني"]},
+        {"id":"server","area":"Infrastructure Operations","area_ar":"عمليات البنية التحتية","event":"a server operation item requiring action","event_ar":"بند عملية خادم يتطلب إجراءً","objects":["storage threshold alert","backup verification","patch maintenance window","cluster failover review","virtual machine ownership"],"objects_ar":["تنبيه حد التخزين","تحقق نسخ احتياطي","نافذة صيانة تحديثات","مراجعة تبديل تلقائي للعنقود","ملكية جهاز افتراضي"],"actions":["review the infrastructure item","open the operations ticket","acknowledge the maintenance"],"actions_ar":["مراجعة بند البنية التحتية","فتح تذكرة العمليات","إقرار الصيانة"],"senders":["Infrastructure Operations","Data Centre Services"],"senders_ar":["عمليات البنية التحتية","خدمات مركز البيانات"],"signatures":["Infrastructure Operations","Data Centre Services"],"signatures_ar":["عمليات البنية التحتية","خدمات مركز البيانات"]},
+        {"id":"security","area":"Cybersecurity","area_ar":"الأمن السيبراني","event":"a security case awaiting technical review","event_ar":"حالة أمنية بانتظار مراجعة تقنية","objects":["endpoint detection alert","firewall rule exception","vulnerability remediation","phishing investigation","certificate anomaly"],"objects_ar":["تنبيه كشف نقطة نهاية","استثناء قاعدة جدار حماية","معالجة ثغرة","تحقيق تصيد","شذوذ شهادة"],"actions":["review the security case","open the incident ticket","acknowledge the finding"],"actions_ar":["مراجعة الحالة الأمنية","فتح تذكرة الحادثة","إقرار النتيجة"],"senders":["Security Operations Centre","Cybersecurity Governance"],"senders_ar":["مركز عمليات الأمن","حوكمة الأمن السيبراني"],"signatures":["Security Operations","Cybersecurity Governance"],"signatures_ar":["عمليات الأمن","حوكمة الأمن السيبراني"]},
+        {"id":"database","area":"Database Services","area_ar":"خدمات قواعد البيانات","event":"a database service item requiring confirmation","event_ar":"بند خدمة قاعدة بيانات يتطلب تأكيداً","objects":["backup integrity check","replication lag alert","schema change request","database account review","restore-test result"],"objects_ar":["فحص سلامة نسخة احتياطية","تنبيه تأخر تكرار","طلب تغيير مخطط","مراجعة حساب قاعدة بيانات","نتيجة اختبار استعادة"],"actions":["review the database item","open the service ticket","acknowledge the change"],"actions_ar":["مراجعة بند قاعدة البيانات","فتح تذكرة الخدمة","إقرار التغيير"],"senders":["Database Administration","Enterprise Applications"],"senders_ar":["إدارة قواعد البيانات","التطبيقات المؤسسية"],"signatures":["Database Services","Enterprise Applications"],"signatures_ar":["خدمات قواعد البيانات","التطبيقات المؤسسية"]},
+        {"id":"application","area":"Clinical Applications","area_ar":"التطبيقات السريرية","event":"an enterprise application item awaiting review","event_ar":"بند تطبيق مؤسسي بانتظار المراجعة","objects":["EMR interface error","application release note","license allocation","integration exception","production change request"],"objects_ar":["خطأ واجهة النظام الطبي","ملاحظة إصدار تطبيق","تخصيص ترخيص","استثناء تكامل","طلب تغيير إنتاج"],"actions":["review the application item","open the change record","acknowledge the release"],"actions_ar":["مراجعة بند التطبيق","فتح سجل التغيير","إقرار الإصدار"],"senders":["Clinical Applications Support","Enterprise Systems"],"senders_ar":["دعم التطبيقات السريرية","الأنظمة المؤسسية"],"signatures":["Clinical Applications","Enterprise Systems"],"signatures_ar":["التطبيقات السريرية","الأنظمة المؤسسية"]},
+        {"id":"cloud","area":"Cloud and Backup Services","area_ar":"الخدمات السحابية والنسخ الاحتياطي","event":"a cloud service item requiring technical review","event_ar":"بند خدمة سحابية يتطلب مراجعة تقنية","objects":["backup retention exception","cloud access review","storage policy update","recovery test","subscription renewal"],"objects_ar":["استثناء الاحتفاظ بنسخ احتياطي","مراجعة وصول سحابي","تحديث سياسة تخزين","اختبار استعادة","تجديد اشتراك"],"actions":["review the cloud item","open the service record","acknowledge the policy"],"actions_ar":["مراجعة البند السحابي","فتح سجل الخدمة","إقرار السياسة"],"senders":["Cloud Platform Operations","Backup and Recovery Services"],"senders_ar":["عمليات المنصة السحابية","خدمات النسخ الاحتياطي والاستعادة"],"signatures":["Cloud Operations","Backup and Recovery"],"signatures_ar":["عمليات السحابة","النسخ الاحتياطي والاستعادة"]},
+        {"id":"helpdesk","area":"IT Service Desk","area_ar":"مكتب خدمات تقنية المعلومات","event":"a support case requiring technician action","event_ar":"حالة دعم تتطلب إجراء فني","objects":["escalated service ticket","remote support request","device enrollment case","software deployment issue","asset handover"],"objects_ar":["تذكرة خدمة مصعّدة","طلب دعم عن بعد","حالة تسجيل جهاز","مشكلة نشر برنامج","تسليم أصل"],"actions":["review the support case","open the ticket","acknowledge the assignment"],"actions_ar":["مراجعة حالة الدعم","فتح التذكرة","إقرار التكليف"],"senders":["IT Service Desk","End User Computing"],"senders_ar":["مكتب خدمات تقنية المعلومات","حوسبة المستخدم النهائي"],"signatures":["IT Service Desk","End User Computing"],"signatures_ar":["مكتب الخدمات","حوسبة المستخدم النهائي"]},
+    ],
+    "other": [
+        {"id":"ops_policy","area":"Hospital Operations","area_ar":"عمليات المستشفى","event":"a hospital operations notice requiring acknowledgement","event_ar":"إشعار عمليات مستشفى يتطلب إقراراً","objects":["visitor policy update","parking permit renewal","staff directory correction","emergency contact list","facility access notice"],"objects_ar":["تحديث سياسة الزوار","تجديد تصريح موقف سيارات","تصحيح دليل الموظفين","قائمة اتصال الطوارئ","إشعار دخول المرفق"],"actions":["review the notice","acknowledge the update","open the operations record"],"actions_ar":["مراجعة الإشعار","إقرار التحديث","فتح سجل العمليات"],"senders":["Hospital Operations","Corporate Services Office"],"senders_ar":["عمليات المستشفى","مكتب الخدمات المؤسسية"],"signatures":["Hospital Operations Team","Corporate Services"],"signatures_ar":["فريق عمليات المستشفى","الخدمات المؤسسية"]},
+        {"id":"staff_training","area":"Staff Development","area_ar":"تطوير الموظفين","event":"a mandatory training item requiring completion","event_ar":"بند تدريب إلزامي يتطلب إكمالاً","objects":["mandatory induction module","cybersecurity awareness course","fire safety training","patient privacy module","annual competency record"],"objects_ar":["وحدة التهيئة الإلزامية","دورة توعية الأمن السيبراني","تدريب السلامة من الحريق","وحدة خصوصية المريض","سجل الكفاءة السنوي"],"actions":["open the learning item","confirm completion","review the assigned module"],"actions_ar":["فتح بند التعلم","تأكيد الإكمال","مراجعة الوحدة المخصصة"],"senders":["Staff Development Office","Learning and Training Centre"],"senders_ar":["مكتب تطوير الموظفين","مركز التعلم والتدريب"],"signatures":["Staff Development Team","Learning and Training"],"signatures_ar":["فريق تطوير الموظفين","التعلم والتدريب"]},
     ],
 }
 
@@ -8901,41 +6287,39 @@ V30_KNOWLEDGE = {
 # Extra workflow families ensure that 6 learning + 10 assessment items can use
 # different semantic families in one full cycle, not merely different wording.
 V30_KNOWLEDGE["clinical"].extend([
-    {"id":"emergency","area":"Emergency Medicine","event":"an emergency-care workflow item requiring review","objects":["triage escalation","observation-unit handover","trauma pathway exception","emergency discharge follow-up","critical-care transfer note"],"actions":["review the emergency record","acknowledge the handover","open the escalation note"],"senders":["Emergency Operations Desk","Acute Care Coordination"],"signatures":["Emergency Operations","Acute Care Coordination"]},
-    {"id":"surgery","area":"Surgical Services","event":"a perioperative item awaiting clinical review","objects":["surgical consent exception","theatre list amendment","pre-operative checklist","post-operative handover","implant traceability record"],"actions":["review the surgical item","acknowledge the amendment","open the perioperative record"],"senders":["Surgical Services Office","Perioperative Coordination"],"signatures":["Surgical Services","Perioperative Coordination"]},
-    {"id":"maternity","area":"Maternity Services","event":"a maternal-care item requiring follow-up","objects":["antenatal risk review","labour ward handover","newborn screening result","postnatal follow-up","fetal monitoring addendum"],"actions":["review the maternity item","acknowledge the handover","open the maternal record"],"senders":["Maternity Coordination","Women’s Health Services"],"signatures":["Maternity Services","Women’s Health Services"]},
-    {"id":"dialysis","area":"Renal Services","event":"a renal-care workflow item requiring review","objects":["dialysis schedule change","vascular access note","renal medication review","dialysis adequacy result","transplant clinic follow-up"],"actions":["review the renal item","acknowledge the update","open the dialysis record"],"senders":["Renal Services Coordination","Dialysis Unit Office"],"signatures":["Renal Services","Dialysis Unit"]},
-    {"id":"respiratory","area":"Respiratory Care","event":"a respiratory-care item awaiting acknowledgement","objects":["ventilator setting review","oxygen therapy order","pulmonary function report","respiratory isolation note","home oxygen assessment"],"actions":["review the respiratory item","acknowledge the order","open the care record"],"senders":["Respiratory Care Services","Pulmonary Coordination"],"signatures":["Respiratory Care","Pulmonary Services"]},
-    {"id":"rehabilitation","area":"Rehabilitation Services","event":"a rehabilitation plan requiring clinical review","objects":["physiotherapy plan","occupational therapy assessment","mobility risk update","speech therapy note","discharge rehabilitation plan"],"actions":["review the rehabilitation plan","acknowledge the assessment","open the therapy record"],"senders":["Rehabilitation Coordination","Allied Health Services"],"signatures":["Rehabilitation Services","Allied Health Services"]},
-    {"id":"vaccination","area":"Occupational Health","event":"a workforce-health item requiring follow-up","objects":["vaccination record","fitness-to-work review","exposure assessment","screening result","immunity status update"],"actions":["review the occupational-health item","acknowledge the notice","open the staff-health record"],"senders":["Occupational Health Services","Employee Health Clinic"],"signatures":["Occupational Health","Employee Health Clinic"]},
-    {"id":"pathology","area":"Anatomic Pathology","event":"a pathology workflow item awaiting review","objects":["histopathology addendum","specimen discrepancy","cytology report","tumour board pathology note","biopsy tracking exception"],"actions":["review the pathology item","acknowledge the addendum","open the specimen record"],"senders":["Anatomic Pathology Services","Specimen Coordination Desk"],"signatures":["Anatomic Pathology","Specimen Coordination"]},
-    {"id":"nutrition","area":"Clinical Nutrition","event":"a nutrition-care item requiring review","objects":["enteral feeding plan","nutrition risk assessment","diet order exception","parenteral nutrition review","allergy-related meal update"],"actions":["review the nutrition item","acknowledge the plan","open the nutrition record"],"senders":["Clinical Nutrition Services","Dietetic Coordination"],"signatures":["Clinical Nutrition","Dietetic Services"]},
-    {"id":"oncology","area":"Oncology Services","event":"an oncology-care item requiring clinical follow-up","objects":["chemotherapy protocol review","tumour board decision","infusion schedule change","treatment consent note","oncology follow-up plan"],"actions":["review the oncology item","acknowledge the plan","open the treatment record"],"senders":["Oncology Care Coordination","Cancer Centre Operations"],"signatures":["Oncology Services","Cancer Centre Operations"]},
+    {"id":"emergency","area":"Emergency Medicine","area_ar":"طب الطوارئ","event":"an emergency-care workflow item requiring review","event_ar":"بند بمسار رعاية طارئة يتطلب مراجعة","objects":["triage escalation","observation-unit handover","trauma pathway exception","emergency discharge follow-up","critical-care transfer note"],"objects_ar":["تصعيد فرز","تسليم وحدة الملاحظة","استثناء مسار الإصابات","متابعة خروج طارئ","ملاحظة تحويل رعاية حرجة"],"actions":["review the emergency record","acknowledge the handover","open the escalation note"],"actions_ar":["مراجعة سجل الطوارئ","إقرار التسليم","فتح ملاحظة التصعيد"],"senders":["Emergency Operations Desk","Acute Care Coordination"],"senders_ar":["مكتب عمليات الطوارئ","تنسيق الرعاية الحرجة"],"signatures":["Emergency Operations","Acute Care Coordination"],"signatures_ar":["عمليات الطوارئ","تنسيق الرعاية الحرجة"]},
+    {"id":"surgery","area":"Surgical Services","area_ar":"الخدمات الجراحية","event":"a perioperative item awaiting clinical review","event_ar":"بند محيط بالجراحة بانتظار المراجعة السريرية","objects":["surgical consent exception","theatre list amendment","pre-operative checklist","post-operative handover","implant traceability record"],"objects_ar":["استثناء موافقة جراحية","تعديل قائمة غرفة العمليات","قائمة تدقيق ما قبل الجراحة","تسليم ما بعد الجراحة","سجل تتبع غرسة"],"actions":["review the surgical item","acknowledge the amendment","open the perioperative record"],"actions_ar":["مراجعة البند الجراحي","إقرار التعديل","فتح سجل ما حول الجراحة"],"senders":["Surgical Services Office","Perioperative Coordination"],"senders_ar":["مكتب الخدمات الجراحية","تنسيق ما حول الجراحة"],"signatures":["Surgical Services","Perioperative Coordination"],"signatures_ar":["الخدمات الجراحية","تنسيق ما حول الجراحة"]},
+    {"id":"maternity","area":"Maternity Services","area_ar":"خدمات الأمومة","event":"a maternal-care item requiring follow-up","event_ar":"بند رعاية أمومة يتطلب متابعة","objects":["antenatal risk review","labour ward handover","newborn screening result","postnatal follow-up","fetal monitoring addendum"],"objects_ar":["مراجعة مخاطر ما قبل الولادة","تسليم جناح الولادة","نتيجة فحص المولود","متابعة ما بعد الولادة","ملحق مراقبة الجنين"],"actions":["review the maternity item","acknowledge the handover","open the maternal record"],"actions_ar":["مراجعة بند الأمومة","إقرار التسليم","فتح سجل الأمومة"],"senders":["Maternity Coordination","Women’s Health Services"],"senders_ar":["تنسيق الأمومة","خدمات صحة المرأة"],"signatures":["Maternity Services","Women’s Health Services"],"signatures_ar":["خدمات الأمومة","خدمات صحة المرأة"]},
+    {"id":"dialysis","area":"Renal Services","area_ar":"خدمات الكلى","event":"a renal-care workflow item requiring review","event_ar":"بند رعاية كلوية يتطلب مراجعة","objects":["dialysis schedule change","vascular access note","renal medication review","dialysis adequacy result","transplant clinic follow-up"],"objects_ar":["تغيير جدول الغسيل الكلوي","ملاحظة وصول وعائي","مراجعة دواء كلوي","نتيجة كفاءة الغسيل الكلوي","متابعة عيادة الزراعة"],"actions":["review the renal item","acknowledge the update","open the dialysis record"],"actions_ar":["مراجعة البند الكلوي","إقرار التحديث","فتح سجل الغسيل الكلوي"],"senders":["Renal Services Coordination","Dialysis Unit Office"],"senders_ar":["تنسيق خدمات الكلى","مكتب وحدة الغسيل الكلوي"],"signatures":["Renal Services","Dialysis Unit"],"signatures_ar":["خدمات الكلى","وحدة الغسيل الكلوي"]},
+    {"id":"respiratory","area":"Respiratory Care","area_ar":"الرعاية التنفسية","event":"a respiratory-care item awaiting acknowledgement","event_ar":"بند رعاية تنفسية بانتظار الإقرار","objects":["ventilator setting review","oxygen therapy order","pulmonary function report","respiratory isolation note","home oxygen assessment"],"objects_ar":["مراجعة إعدادات جهاز التنفس","طلب علاج بالأكسجين","تقرير وظائف الرئة","ملاحظة عزل تنفسي","تقييم أكسجين منزلي"],"actions":["review the respiratory item","acknowledge the order","open the care record"],"actions_ar":["مراجعة البند التنفسي","إقرار الطلب","فتح سجل الرعاية"],"senders":["Respiratory Care Services","Pulmonary Coordination"],"senders_ar":["خدمات الرعاية التنفسية","تنسيق أمراض الرئة"],"signatures":["Respiratory Care","Pulmonary Services"],"signatures_ar":["الرعاية التنفسية","خدمات الرئة"]},
+    {"id":"rehabilitation","area":"Rehabilitation Services","area_ar":"خدمات التأهيل","event":"a rehabilitation plan requiring clinical review","event_ar":"خطة تأهيل تتطلب مراجعة سريرية","objects":["physiotherapy plan","occupational therapy assessment","mobility risk update","speech therapy note","discharge rehabilitation plan"],"objects_ar":["خطة العلاج الطبيعي","تقييم العلاج الوظيفي","تحديث مخاطر الحركة","ملاحظة علاج النطق","خطة تأهيل الخروج"],"actions":["review the rehabilitation plan","acknowledge the assessment","open the therapy record"],"actions_ar":["مراجعة خطة التأهيل","إقرار التقييم","فتح سجل العلاج"],"senders":["Rehabilitation Coordination","Allied Health Services"],"senders_ar":["تنسيق التأهيل","خدمات المهن الصحية المساندة"],"signatures":["Rehabilitation Services","Allied Health Services"],"signatures_ar":["خدمات التأهيل","المهن الصحية المساندة"]},
+    {"id":"vaccination","area":"Occupational Health","area_ar":"الصحة المهنية","event":"a workforce-health item requiring follow-up","event_ar":"بند صحة القوى العاملة يتطلب متابعة","objects":["vaccination record","fitness-to-work review","exposure assessment","screening result","immunity status update"],"objects_ar":["سجل التطعيم","مراجعة اللياقة للعمل","تقييم التعرض","نتيجة الفحص","تحديث حالة المناعة"],"actions":["review the occupational-health item","acknowledge the notice","open the staff-health record"],"actions_ar":["مراجعة بند الصحة المهنية","إقرار الإشعار","فتح سجل صحة الموظف"],"senders":["Occupational Health Services","Employee Health Clinic"],"senders_ar":["خدمات الصحة المهنية","عيادة صحة الموظفين"],"signatures":["Occupational Health","Employee Health Clinic"],"signatures_ar":["الصحة المهنية","عيادة صحة الموظفين"]},
+    {"id":"pathology","area":"Anatomic Pathology","area_ar":"علم الأمراض التشريحي","event":"a pathology workflow item awaiting review","event_ar":"بند مسار علم الأمراض بانتظار المراجعة","objects":["histopathology addendum","specimen discrepancy","cytology report","tumour board pathology note","biopsy tracking exception"],"objects_ar":["ملحق الأنسجة المرضية","تباين عينة","تقرير خلوي","ملاحظة علم أمراض لمجلس الأورام","استثناء تتبع خزعة"],"actions":["review the pathology item","acknowledge the addendum","open the specimen record"],"actions_ar":["مراجعة بند علم الأمراض","إقرار الملحق","فتح سجل العينة"],"senders":["Anatomic Pathology Services","Specimen Coordination Desk"],"senders_ar":["خدمات علم الأمراض التشريحي","مكتب تنسيق العينات"],"signatures":["Anatomic Pathology","Specimen Coordination"],"signatures_ar":["علم الأمراض التشريحي","تنسيق العينات"]},
+    {"id":"nutrition","area":"Clinical Nutrition","area_ar":"التغذية السريرية","event":"a nutrition-care item requiring review","event_ar":"بند رعاية تغذوية يتطلب مراجعة","objects":["enteral feeding plan","nutrition risk assessment","diet order exception","parenteral nutrition review","allergy-related meal update"],"objects_ar":["خطة التغذية الأنبوبية","تقييم مخاطر التغذية","استثناء طلب حمية","مراجعة تغذية وريدية","تحديث وجبة متعلقة بالحساسية"],"actions":["review the nutrition item","acknowledge the plan","open the nutrition record"],"actions_ar":["مراجعة بند التغذية","إقرار الخطة","فتح سجل التغذية"],"senders":["Clinical Nutrition Services","Dietetic Coordination"],"senders_ar":["خدمات التغذية السريرية","تنسيق التغذية"],"signatures":["Clinical Nutrition","Dietetic Services"],"signatures_ar":["التغذية السريرية","خدمات التغذية"]},
+    {"id":"oncology","area":"Oncology Services","area_ar":"خدمات الأورام","event":"an oncology-care item requiring clinical follow-up","event_ar":"بند رعاية أورام يتطلب متابعة سريرية","objects":["chemotherapy protocol review","tumour board decision","infusion schedule change","treatment consent note","oncology follow-up plan"],"objects_ar":["مراجعة بروتوكول العلاج الكيميائي","قرار مجلس الأورام","تغيير جدول التسريب","ملاحظة موافقة العلاج","خطة متابعة الأورام"],"actions":["review the oncology item","acknowledge the plan","open the treatment record"],"actions_ar":["مراجعة بند الأورام","إقرار الخطة","فتح سجل العلاج"],"senders":["Oncology Care Coordination","Cancer Centre Operations"],"senders_ar":["تنسيق رعاية الأورام","عمليات مركز السرطان"],"signatures":["Oncology Services","Cancer Centre Operations"],"signatures_ar":["خدمات الأورام","عمليات مركز السرطان"]},
 ])
 
 V30_KNOWLEDGE["admin"].extend([
-    {"id":"quality_admin","area":"Quality Administration","event":"a quality-governance item requiring administrative follow-up","objects":["accreditation evidence request","policy publication record","committee action log","audit document index","quality dashboard exception"],"actions":["review the quality item","open the evidence record","acknowledge the request"],"senders":["Quality Management Office","Accreditation Coordination"],"signatures":["Quality Management","Accreditation Coordination"]},
-    {"id":"legal","area":"Legal Affairs","event":"a legal-administration item awaiting review","objects":["contract clarification","records preservation notice","consent-form revision","legal correspondence log","regulatory response draft"],"actions":["review the legal item","open the case record","acknowledge the notice"],"senders":["Legal Affairs Office","Compliance Administration"],"signatures":["Legal Affairs","Compliance Administration"]},
-    {"id":"training_admin","area":"Learning and Development","event":"an employee-learning administration item requiring action","objects":["course enrollment","attendance correction","certificate record","training nomination","orientation schedule"],"actions":["review the training item","open the learning record","confirm the nomination"],"senders":["Learning and Development","Workforce Development"],"signatures":["Learning and Development","Workforce Development"]},
-    {"id":"executive","area":"Executive Office","event":"an executive-administration item requiring coordination","objects":["committee briefing pack","leadership meeting action","executive correspondence","board document review","departmental status request"],"actions":["review the executive item","open the briefing record","acknowledge the action"],"senders":["Executive Office","Corporate Affairs"],"signatures":["Executive Office","Corporate Affairs"]},
-    {"id":"communications","area":"Corporate Communications","event":"a communications item awaiting administrative review","objects":["public notice draft","staff announcement","media enquiry log","campaign approval","website content update"],"actions":["review the communication","open the approval record","acknowledge the draft"],"senders":["Corporate Communications","Public Affairs Office"],"signatures":["Corporate Communications","Public Affairs"]},
-    {"id":"transport","area":"Transport Services","event":"a logistics item requiring coordination","objects":["patient transport schedule","fleet booking exception","courier route change","ambulance transfer log","vehicle access permit"],"actions":["review the logistics item","open the transport record","confirm the arrangement"],"senders":["Transport Services","Logistics Coordination"],"signatures":["Transport Services","Logistics Coordination"]},
-    {"id":"housing","area":"Staff Services","event":"a staff-services item requiring administrative review","objects":["housing allocation","staff shuttle request","uniform issue","employee ID replacement","staff accommodation maintenance"],"actions":["review the staff-service item","open the request record","confirm the arrangement"],"senders":["Staff Services Office","Employee Experience"],"signatures":["Staff Services","Employee Experience"]},
-    {"id":"inventory","area":"Warehouse Operations","event":"an inventory item requiring reconciliation","objects":["stock discrepancy","expiry review","goods receipt exception","inventory transfer","consignment count"],"actions":["review the inventory item","open the stock record","acknowledge the discrepancy"],"senders":["Warehouse Operations","Materials Management"],"signatures":["Warehouse Operations","Materials Management"]},
+    {"id":"quality_admin","area":"Quality Administration","area_ar":"إدارة الجودة","event":"a quality-governance item requiring administrative follow-up","event_ar":"بند حوكمة جودة يتطلب متابعة إدارية","objects":["accreditation evidence request","policy publication record","committee action log","audit document index","quality dashboard exception"],"objects_ar":["طلب دليل اعتماد","سجل نشر سياسة","سجل إجراءات لجنة","فهرس مستندات تدقيق","استثناء لوحة معلومات الجودة"],"actions":["review the quality item","open the evidence record","acknowledge the request"],"actions_ar":["مراجعة بند الجودة","فتح سجل الدليل","إقرار الطلب"],"senders":["Quality Management Office","Accreditation Coordination"],"senders_ar":["مكتب إدارة الجودة","تنسيق الاعتماد"],"signatures":["Quality Management","Accreditation Coordination"],"signatures_ar":["إدارة الجودة","تنسيق الاعتماد"]},
+    {"id":"legal","area":"Legal Affairs","area_ar":"الشؤون القانونية","event":"a legal-administration item awaiting review","event_ar":"بند إداري قانوني بانتظار المراجعة","objects":["contract clarification","records preservation notice","consent-form revision","legal correspondence log","regulatory response draft"],"objects_ar":["توضيح عقد","إشعار حفظ سجلات","تعديل نموذج موافقة","سجل مراسلات قانونية","مسودة رد تنظيمي"],"actions":["review the legal item","open the case record","acknowledge the notice"],"actions_ar":["مراجعة البند القانوني","فتح سجل الحالة","إقرار الإشعار"],"senders":["Legal Affairs Office","Compliance Administration"],"senders_ar":["مكتب الشؤون القانونية","إدارة الامتثال"],"signatures":["Legal Affairs","Compliance Administration"],"signatures_ar":["الشؤون القانونية","إدارة الامتثال"]},
+    {"id":"training_admin","area":"Learning and Development","area_ar":"التعلم والتطوير","event":"an employee-learning administration item requiring action","event_ar":"بند إداري لتعلم الموظف يتطلب إجراءً","objects":["course enrollment","attendance correction","certificate record","training nomination","orientation schedule"],"objects_ar":["تسجيل دورة","تصحيح حضور","سجل شهادة","ترشيح تدريب","جدول تهيئة"],"actions":["review the training item","open the learning record","confirm the nomination"],"actions_ar":["مراجعة بند التدريب","فتح سجل التعلم","تأكيد الترشيح"],"senders":["Learning and Development","Workforce Development"],"senders_ar":["التعلم والتطوير","تطوير القوى العاملة"],"signatures":["Learning and Development","Workforce Development"],"signatures_ar":["التعلم والتطوير","تطوير القوى العاملة"]},
+    {"id":"executive","area":"Executive Office","area_ar":"المكتب التنفيذي","event":"an executive-administration item requiring coordination","event_ar":"بند إداري تنفيذي يتطلب تنسيقاً","objects":["committee briefing pack","leadership meeting action","executive correspondence","board document review","departmental status request"],"objects_ar":["حزمة إحاطة اللجنة","إجراء اجتماع قيادي","مراسلات تنفيذية","مراجعة مستند مجلس الإدارة","طلب حالة قسم"],"actions":["review the executive item","open the briefing record","acknowledge the action"],"actions_ar":["مراجعة البند التنفيذي","فتح سجل الإحاطة","إقرار الإجراء"],"senders":["Executive Office","Corporate Affairs"],"senders_ar":["المكتب التنفيذي","الشؤون المؤسسية"],"signatures":["Executive Office","Corporate Affairs"],"signatures_ar":["المكتب التنفيذي","الشؤون المؤسسية"]},
+    {"id":"communications","area":"Corporate Communications","area_ar":"الاتصال المؤسسي","event":"a communications item awaiting administrative review","event_ar":"بند اتصال بانتظار المراجعة الإدارية","objects":["public notice draft","staff announcement","media enquiry log","campaign approval","website content update"],"objects_ar":["مسودة إشعار عام","إعلان للموظفين","سجل استفسار إعلامي","اعتماد حملة","تحديث محتوى الموقع"],"actions":["review the communication","open the approval record","acknowledge the draft"],"actions_ar":["مراجعة الاتصال","فتح سجل الاعتماد","إقرار المسودة"],"senders":["Corporate Communications","Public Affairs Office"],"senders_ar":["الاتصال المؤسسي","مكتب الشؤون العامة"],"signatures":["Corporate Communications","Public Affairs"],"signatures_ar":["الاتصال المؤسسي","الشؤون العامة"]},
+    {"id":"transport","area":"Transport Services","area_ar":"خدمات النقل","event":"a logistics item requiring coordination","event_ar":"بند لوجستي يتطلب تنسيقاً","objects":["patient transport schedule","fleet booking exception","courier route change","ambulance transfer log","vehicle access permit"],"objects_ar":["جدول نقل المرضى","استثناء حجز الأسطول","تغيير مسار المندوب","سجل نقل إسعاف","تصريح دخول مركبة"],"actions":["review the logistics item","open the transport record","confirm the arrangement"],"actions_ar":["مراجعة البند اللوجستي","فتح سجل النقل","تأكيد الترتيب"],"senders":["Transport Services","Logistics Coordination"],"senders_ar":["خدمات النقل","تنسيق اللوجستيات"],"signatures":["Transport Services","Logistics Coordination"],"signatures_ar":["خدمات النقل","تنسيق اللوجستيات"]},
+    {"id":"housing","area":"Staff Services","area_ar":"خدمات الموظفين","event":"a staff-services item requiring administrative review","event_ar":"بند خدمات موظفين يتطلب مراجعة إدارية","objects":["housing allocation","staff shuttle request","uniform issue","employee ID replacement","staff accommodation maintenance"],"objects_ar":["تخصيص سكن","طلب حافلة الموظفين","صرف زي موحد","استبدال هوية موظف","صيانة سكن الموظفين"],"actions":["review the staff-service item","open the request record","confirm the arrangement"],"actions_ar":["مراجعة بند خدمة الموظفين","فتح سجل الطلب","تأكيد الترتيب"],"senders":["Staff Services Office","Employee Experience"],"senders_ar":["مكتب خدمات الموظفين","تجربة الموظف"],"signatures":["Staff Services","Employee Experience"],"signatures_ar":["خدمات الموظفين","تجربة الموظف"]},
+    {"id":"inventory","area":"Warehouse Operations","area_ar":"عمليات المستودع","event":"an inventory item requiring reconciliation","event_ar":"بند مخزون يتطلب مطابقة","objects":["stock discrepancy","expiry review","goods receipt exception","inventory transfer","consignment count"],"objects_ar":["تباين مخزون","مراجعة انتهاء صلاحية","استثناء استلام بضائع","تحويل مخزون","جرد شحنة أمانة"],"actions":["review the inventory item","open the stock record","acknowledge the discrepancy"],"actions_ar":["مراجعة بند المخزون","فتح سجل المخزون","إقرار التباين"],"senders":["Warehouse Operations","Materials Management"],"senders_ar":["عمليات المستودع","إدارة المواد"],"signatures":["Warehouse Operations","Materials Management"],"signatures_ar":["عمليات المستودع","إدارة المواد"]},
 ])
 
 V30_KNOWLEDGE["it"].extend([
-    {"id":"integration","area":"Integration Services","event":"an interface workflow item requiring technical review","objects":["HL7 queue exception","API certificate update","interface mapping change","message-routing alert","integration endpoint review"],"actions":["review the integration item","open the interface ticket","acknowledge the change"],"senders":["Integration Services","Interoperability Team"],"signatures":["Integration Services","Interoperability Team"]},
-    {"id":"endpoint","area":"Endpoint Management","event":"a managed-device item awaiting review","objects":["device compliance exception","encryption status alert","software deployment","laptop ownership review","mobile device enrollment"],"actions":["review the endpoint item","open the device record","acknowledge the deployment"],"senders":["Endpoint Management","Digital Workplace Operations"],"signatures":["Endpoint Management","Digital Workplace"]},
-    {"id":"telecom","area":"Unified Communications","event":"a communications-platform item requiring technical review","objects":["call routing change","contact centre queue","Teams voice migration","extension ownership review","video conference gateway"],"actions":["review the communications item","open the service request","acknowledge the change"],"senders":["Unified Communications","Telecommunications Services"],"signatures":["Unified Communications","Telecommunications Services"]},
-    {"id":"pacs","area":"Imaging Informatics","event":"an imaging-system item requiring technical review","objects":["PACS archive alert","modality worklist exception","DICOM routing change","image retention policy","viewer access review"],"actions":["review the imaging-system item","open the PACS ticket","acknowledge the change"],"senders":["Imaging Informatics","PACS Support"],"signatures":["Imaging Informatics","PACS Support"]},
-    {"id":"analytics","area":"Data and Analytics","event":"a data-platform item awaiting review","objects":["dashboard refresh failure","data-quality exception","report ownership review","analytics workspace access","scheduled extract alert"],"actions":["review the data item","open the analytics ticket","acknowledge the exception"],"senders":["Data and Analytics","Business Intelligence Services"],"signatures":["Data and Analytics","Business Intelligence"]},
-    {"id":"change","area":"IT Change Management","event":"a production-change item requiring technical approval","objects":["emergency change request","maintenance window","rollback plan","change collision alert","post-implementation review"],"actions":["review the change item","open the change record","acknowledge the schedule"],"senders":["IT Change Management","Technology Governance"],"signatures":["IT Change Management","Technology Governance"]},
-    {"id":"vendor_it","area":"Technology Vendor Management","event":"a vendor-support item requiring technical coordination","objects":["support entitlement renewal","vendor remote session","license true-up","maintenance agreement","technical escalation"],"actions":["review the vendor item","open the support record","acknowledge the request"],"senders":["Technology Vendor Management","IT Commercial Services"],"signatures":["Technology Vendor Management","IT Commercial Services"]},
-    {"id":"continuity","area":"IT Service Continuity","event":"a resilience item requiring technical review","objects":["disaster recovery exercise","business continuity dependency","recovery time validation","failover test","critical service inventory"],"actions":["review the continuity item","open the resilience record","acknowledge the test"],"senders":["IT Service Continuity","Technology Resilience Office"],"signatures":["IT Service Continuity","Technology Resilience"]},
+    {"id":"integration","area":"Integration Services","area_ar":"خدمات التكامل","event":"an interface workflow item requiring technical review","event_ar":"بند مسار واجهة يتطلب مراجعة تقنية","objects":["HL7 queue exception","API certificate update","interface mapping change","message-routing alert","integration endpoint review"],"objects_ar":["استثناء قائمة انتظار HL7","تحديث شهادة API","تغيير تخطيط الواجهة","تنبيه توجيه الرسائل","مراجعة نقطة نهاية التكامل"],"actions":["review the integration item","open the interface ticket","acknowledge the change"],"actions_ar":["مراجعة بند التكامل","فتح تذكرة الواجهة","إقرار التغيير"],"senders":["Integration Services","Interoperability Team"],"senders_ar":["خدمات التكامل","فريق التشغيل البيني"],"signatures":["Integration Services","Interoperability Team"],"signatures_ar":["خدمات التكامل","فريق التشغيل البيني"]},
+    {"id":"endpoint","area":"Endpoint Management","area_ar":"إدارة الأجهزة الطرفية","event":"a managed-device item awaiting review","event_ar":"بند جهاز مُدار بانتظار المراجعة","objects":["device compliance exception","encryption status alert","software deployment","laptop ownership review","mobile device enrollment"],"objects_ar":["استثناء امتثال جهاز","تنبيه حالة التشفير","نشر برنامج","مراجعة ملكية جهاز محمول","تسجيل جهاز جوال"],"actions":["review the endpoint item","open the device record","acknowledge the deployment"],"actions_ar":["مراجعة بند الجهاز الطرفي","فتح سجل الجهاز","إقرار النشر"],"senders":["Endpoint Management","Digital Workplace Operations"],"senders_ar":["إدارة الأجهزة الطرفية","عمليات مكان العمل الرقمي"],"signatures":["Endpoint Management","Digital Workplace"],"signatures_ar":["إدارة الأجهزة الطرفية","مكان العمل الرقمي"]},
+    {"id":"telecom","area":"Unified Communications","area_ar":"الاتصالات الموحدة","event":"a communications-platform item requiring technical review","event_ar":"بند منصة اتصالات يتطلب مراجعة تقنية","objects":["call routing change","contact centre queue","Teams voice migration","extension ownership review","video conference gateway"],"objects_ar":["تغيير توجيه المكالمات","قائمة انتظار مركز الاتصال","ترحيل صوت Teams","مراجعة ملكية تحويلة","بوابة مؤتمر فيديو"],"actions":["review the communications item","open the service request","acknowledge the change"],"actions_ar":["مراجعة بند الاتصالات","فتح طلب الخدمة","إقرار التغيير"],"senders":["Unified Communications","Telecommunications Services"],"senders_ar":["الاتصالات الموحدة","خدمات الاتصالات"],"signatures":["Unified Communications","Telecommunications Services"],"signatures_ar":["الاتصالات الموحدة","خدمات الاتصالات"]},
+    {"id":"pacs","area":"Imaging Informatics","area_ar":"معلوماتية التصوير","event":"an imaging-system item requiring technical review","event_ar":"بند نظام تصوير يتطلب مراجعة تقنية","objects":["PACS archive alert","modality worklist exception","DICOM routing change","image retention policy","viewer access review"],"objects_ar":["تنبيه أرشيف نظام الصور","استثناء قائمة عمل الجهاز","تغيير توجيه DICOM","سياسة الاحتفاظ بالصور","مراجعة وصول العارض"],"actions":["review the imaging-system item","open the PACS ticket","acknowledge the change"],"actions_ar":["مراجعة بند نظام التصوير","فتح تذكرة نظام الصور","إقرار التغيير"],"senders":["Imaging Informatics","PACS Support"],"senders_ar":["معلوماتية التصوير","دعم نظام الصور"],"signatures":["Imaging Informatics","PACS Support"],"signatures_ar":["معلوماتية التصوير","دعم نظام الصور"]},
+    {"id":"analytics","area":"Data and Analytics","area_ar":"البيانات والتحليلات","event":"a data-platform item awaiting review","event_ar":"بند منصة بيانات بانتظار المراجعة","objects":["dashboard refresh failure","data-quality exception","report ownership review","analytics workspace access","scheduled extract alert"],"objects_ar":["فشل تحديث لوحة المعلومات","استثناء جودة البيانات","مراجعة ملكية تقرير","وصول مساحة عمل التحليلات","تنبيه استخراج مجدول"],"actions":["review the data item","open the analytics ticket","acknowledge the exception"],"actions_ar":["مراجعة بند البيانات","فتح تذكرة التحليلات","إقرار الاستثناء"],"senders":["Data and Analytics","Business Intelligence Services"],"senders_ar":["البيانات والتحليلات","خدمات ذكاء الأعمال"],"signatures":["Data and Analytics","Business Intelligence"],"signatures_ar":["البيانات والتحليلات","ذكاء الأعمال"]},
+    {"id":"change","area":"IT Change Management","area_ar":"إدارة التغيير التقني","event":"a production-change item requiring technical approval","event_ar":"بند تغيير إنتاج يتطلب اعتماداً تقنياً","objects":["emergency change request","maintenance window","rollback plan","change collision alert","post-implementation review"],"objects_ar":["طلب تغيير طارئ","نافذة صيانة","خطة تراجع","تنبيه تعارض تغيير","مراجعة ما بعد التنفيذ"],"actions":["review the change item","open the change record","acknowledge the schedule"],"actions_ar":["مراجعة بند التغيير","فتح سجل التغيير","إقرار الجدول"],"senders":["IT Change Management","Technology Governance"],"senders_ar":["إدارة التغيير التقني","حوكمة التقنية"],"signatures":["IT Change Management","Technology Governance"],"signatures_ar":["إدارة التغيير التقني","حوكمة التقنية"]},
+    {"id":"vendor_it","area":"Technology Vendor Management","area_ar":"إدارة موردي التقنية","event":"a vendor-support item requiring technical coordination","event_ar":"بند دعم مورد يتطلب تنسيقاً تقنياً","objects":["support entitlement renewal","vendor remote session","license true-up","maintenance agreement","technical escalation"],"objects_ar":["تجديد استحقاق الدعم","جلسة عن بعد للمورد","تسوية ترخيص","اتفاقية صيانة","تصعيد تقني"],"actions":["review the vendor item","open the support record","acknowledge the request"],"actions_ar":["مراجعة بند المورد","فتح سجل الدعم","إقرار الطلب"],"senders":["Technology Vendor Management","IT Commercial Services"],"senders_ar":["إدارة موردي التقنية","الخدمات التجارية لتقنية المعلومات"],"signatures":["Technology Vendor Management","IT Commercial Services"],"signatures_ar":["إدارة موردي التقنية","الخدمات التجارية"]},
+    {"id":"continuity","area":"IT Service Continuity","area_ar":"استمرارية خدمات تقنية المعلومات","event":"a resilience item requiring technical review","event_ar":"بند مرونة يتطلب مراجعة تقنية","objects":["disaster recovery exercise","business continuity dependency","recovery time validation","failover test","critical service inventory"],"objects_ar":["تمرين التعافي من الكوارث","اعتمادية استمرارية الأعمال","تحقق زمن الاستعادة","اختبار التبديل التلقائي","جرد الخدمات الحرجة"],"actions":["review the continuity item","open the resilience record","acknowledge the test"],"actions_ar":["مراجعة بند الاستمرارية","فتح سجل المرونة","إقرار الاختبار"],"senders":["IT Service Continuity","Technology Resilience Office"],"senders_ar":["استمرارية خدمات تقنية المعلومات","مكتب مرونة التقنية"],"signatures":["IT Service Continuity","Technology Resilience"],"signatures_ar":["استمرارية الخدمات","مرونة التقنية"]},
 ])
-
-V30_STRUCTURES = ["context-action-deadline", "notice-background-action", "case-summary-request", "follow-up-reference-action", "service-impact-action", "policy-context-response", "handover-context-review", "exception-summary-resolution"]
 V30_GENERIC_GREETINGS = {"English":["Dear Staff Member","Hello Clinical Team","Dear Healthcare Employee","Attention Clinical Staff","Dear Colleague"], "Arabic":["عزيزي الموظف","فريق العمل السريري","عزيزي الممارس الصحي","إلى الزملاء السريريين","عزيزي الزميل"]}
 V30_DEPARTMENT_GREETINGS = {"English":["Dear {area} Team","Hello {area} Colleague","To the {area} Team"], "Arabic":["فريق {area} العزيز","الزميل في {area}","إلى فريق {area}"]}
 V30_FIRST_NAMES = ["Sarah Almutairi","Ahmed Alotaibi","Noura Alshamri","Fahad Aldosari","Mona Alharbi","Khalid Alanazi","Lama Alqahtani","Faisal Alzahrani"]
@@ -8945,79 +6329,18 @@ V30_SIMILAR_DOMAINS = ["hospital-portal.org","hospital-services.net","moh-clinic
 V30_NEAR_DOMAINS = ["hospitaI.org","hospital-sso.org","hospital365.org","hospital-sharepoint.org","hospital-sa.org"]
 
 
-def _v30_load_history():
-    try:
-        with open(_V30_HISTORY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
 
 
-def _v30_save_history(rows):
-    try:
-        with open(_V30_HISTORY_PATH, "w", encoding="utf-8") as f:
-            json.dump(rows[-12000:], f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
 
 
 def _v30_role_type(role):
     return ROLE_MAP.get(role, ROLE_MAP["Clinical"])[2]
 
 
-def _v30_session_init(phase, index):
-    key = f"v30_{phase}_used"
-    if index == 0 or key not in st.session_state:
-        st.session_state[key] = {"fingerprints": [], "families": [], "structures": [], "senders": [], "objects": [], "channels": []}
-    return st.session_state[key]
 
 
-def _v30_fingerprint(plan):
-    raw = "|".join(str(plan.get(k,"")) for k in ["role_type","difficulty","family_id","object","action","structure","channel","sender","indicator_pattern"])
-    return _v30_hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
-def _v30_plan(role, index, language, difficulty, phase, is_phishing):
-    role_type = _v30_role_type(role)
-    if role_type == "other":
-        role_type = _V30_RNG.choice(["clinical","admin","it"])
-    difficulty = str(difficulty or "medium").lower()
-    if difficulty not in V30_DIFFICULTY: difficulty = "medium"
-    used = _v30_session_init(phase, index)
-    history_fps = {r.get("fingerprint") for r in _v30_load_history()[-8000:] if isinstance(r, dict)}
-    learning_families = set(st.session_state.get("v30_learn_used", {}).get("families", [])) if phase == "assess" else set()
-    families = V30_KNOWLEDGE[role_type]
-    candidates = [f for f in families if f["id"] not in used["families"] and f["id"] not in learning_families]
-    if not candidates:
-        candidates = [f for f in families if f["id"] not in learning_families] or families
-
-    for _ in range(250):
-        fam = _V30_RNG.choice(candidates)
-        obj = _V30_RNG.choice(fam["objects"])
-        action = _V30_RNG.choice(fam["actions"])
-        sender = _V30_RNG.choice(fam["senders"])
-        signature = fam["signatures"][fam["senders"].index(sender) % len(fam["signatures"])]
-        structure_opts = [x for x in V30_STRUCTURES if x not in used["structures"]] or V30_STRUCTURES
-        structure = _V30_RNG.choice(structure_opts)
-        channel_opts = list(V30_DIFFICULTY[difficulty]["allowed_channels"])
-        channel = _V30_RNG.choice([x for x in channel_opts if x not in used["channels"]] or channel_opts)
-        plan = {"role_type":role_type,"difficulty":difficulty,"language":language,"phase":phase,
-                "family_id":fam["id"],"area":fam["area"],"event":fam["event"],"object":obj,
-                "action":action,"sender":sender,"signature":signature,"structure":structure,
-                "channel":channel,"is_phishing":bool(is_phishing)}
-        plan["indicator_pattern"] = {"easy":"domain+urgency+credential+link+greeting","medium":"domain+workflow+channel","hard":"identity+channel"}[difficulty]
-        fp = _v30_fingerprint(plan)
-        if fp not in used["fingerprints"] and fp not in history_fps and obj not in used["objects"] and sender not in used["senders"]:
-            plan["fingerprint"] = fp
-            break
-    else:
-        plan["fingerprint"] = _v30_fingerprint(plan) + str(_V30_RNG.randrange(1000,9999))
-
-    for k, val in [("fingerprints",plan["fingerprint"]),("families",plan["family_id"]),("structures",plan["structure"]),("senders",plan["sender"]),("objects",plan["object"]),("channels",plan["channel"])]:
-        used[k].append(val)
-    hist = _v30_load_history(); hist.append({"timestamp":_v30_time.time(),"fingerprint":plan["fingerprint"],"role":role_type,"difficulty":difficulty,"family":plan["family_id"],"object":obj,"phase":phase}); _v30_save_history(hist)
-    return plan
 
 
 def _v30_recipient(role, index, language, phase):
@@ -9036,8 +6359,10 @@ def _v30_domain(difficulty):
 
 
 def _v30_subject(plan, urgency_phrase):
-    obj = plan["object"].title()
-    if plan.get("language") == "Arabic":
+    is_ar = plan.get("language") == "Arabic"
+    disp = plan.get("object_disp", plan["object"])
+    obj = disp if is_ar else disp.title()
+    if is_ar:
         easy = [f"عاجل: إجراء مطلوب اليوم بشأن {obj}", f"مراجعة فورية مطلوبة: {obj}", f"إشعار أخير: متابعة {obj}", f"إجراء مطلوب اليوم — {obj}"]
         medium = [f"متابعة مطلوبة: {obj}", f"إشعار سير عمل — {obj}", f"فترة مراجعة {obj}", f"بانتظار التأكيد: {obj}"]
         hard = [f"{obj} — تحديث المرجع", f"متابعة بشأن {obj}", f"ملاحظة مراجعة: {obj}", f"بخصوص {obj}"]
@@ -9121,22 +6446,26 @@ def _v30_compose_phishing(plan, role, index):
         # hard uses subtle channel/identity issue; no direct credentials or artificial deadline
         channel=plan["channel"]
         attachment=""
+        disp_obj = plan.get("object_disp", plan["object"])
+        disp_area = plan.get("area_disp", plan["area"])
+        disp_action = plan.get("action_disp", plan["action"])
+        disp_signature = plan.get("signature_disp", plan["signature"])
         if channel in ("pdf","xlsx"):
             ext = ".pdf" if channel=="pdf" else ".xlsx"; attachment=re.sub(r"[^a-z0-9]+","_",plan["family_id"])+f"_{_V30_RNG.randrange(10,99)}{ext}"
         if ar:
-            body=f"{greeting}،\n\nأرسل لك متابعة بخصوص {plan['object']} التي نوقشت ضمن {plan['area']}. أضفت مرجع الحالة حتى تتمكن من {plan['action']} عند توفر الوقت، ثم تدوين الملاحظة في السجل المعتاد.\n\n"
+            body=f"{greeting}،\n\nأرسل لك متابعة بخصوص {disp_obj} التي نوقشت ضمن {disp_area}. أضفت مرجع الحالة حتى تتمكن من {disp_action} عند توفر الوقت، ثم تدوين الملاحظة في السجل المعتاد.\n\n"
             if attachment: body += f"ستجد التفاصيل في المرفق {attachment}. يرجى مطابقته مع رقم الحالة في النظام قبل اعتماده.\n\n"
             else: body += f"مرجع المتابعة متاح هنا: [عرض مرجع الحالة]({link})\n\n"
-            body += f"لا توجد حاجة لإرسال أي معلومات حساسة عبر البريد.\n\nمع التقدير،\n{plan['signature']}"
+            body += f"لا توجد حاجة لإرسال أي معلومات حساسة عبر البريد.\n\nمع التقدير،\n{disp_signature}"
             indicators=[_v30_indicator(1,"domain","اختلاف دقيق في هوية النطاق",f"النطاق {domain} قريب بصريًا من النطاق الرسمي لكنه مختلف.",domain,"from")]
             if attachment: indicators.append(_v30_indicator(2,"attachment","مرفق غير متوقع","يجب التحقق من المرفق عبر النظام الداخلي قبل فتحه، حتى لو بدا السياق واقعيًا.",attachment,"attachment"))
             else: indicators.append(_v30_indicator(2,"link","رابط خارجي خفي",f"نص الرابط يبدو مهنيًا لكن وجهته هي {domain}.",link,"link"))
             why="السياق واللغة طبيعيان جدًا، لكن هناك اختلافًا دقيقًا في هوية النطاق وقناة خارجية غير متوقعة. هذه مؤشرات متقدمة تتطلب التحقق من التفاصيل."; tip="في الرسائل الواقعية، ركّز على النطاق الفعلي ومسار العمل، وليس على جودة اللغة أو معرفة المرسل بالسياق."
         else:
-            body=f"{greeting},\n\nI am following up on {plan['object']}, which was discussed through {plan['area']}. I included the case reference so you can {plan['action']} when convenient and record the outcome in the usual system.\n\n"
+            body=f"{greeting},\n\nI am following up on {disp_obj}, which was discussed through {disp_area}. I included the case reference so you can {disp_action} when convenient and record the outcome in the usual system.\n\n"
             if attachment: body += f"The supporting detail is in {attachment}. Please match it against the case number in the internal system before relying on it.\n\n"
             else: body += f"The reference is available here: [View case reference]({link})\n\n"
-            body += f"No sensitive information needs to be sent by email.\n\nKind regards,\n{plan['signature']}"
+            body += f"No sensitive information needs to be sent by email.\n\nKind regards,\n{disp_signature}"
             indicators=[_v30_indicator(1,"domain","Subtle domain discrepancy",f"The domain {domain} is visually close to the official domain but is not identical.",domain,"from")]
             if attachment: indicators.append(_v30_indicator(2,"attachment","Unexpected contextual attachment","The attachment should be verified in the internal system before it is opened, despite the realistic context.",attachment,"attachment"))
             else: indicators.append(_v30_indicator(2,"link","Hidden external destination",f"The professional-looking link text resolves to {domain}.",link,"link"))
@@ -9149,57 +6478,14 @@ def _v30_compose_phishing(plan, role, index):
             "risk_level":diff,"scenario_id":plan["fingerprint"],"scenario_meta":plan,"display_time":_V30_RNG.choice(["Today, 8:15 AM","Today, 10:42 AM","Monday, 2:31 PM","Yesterday, 4:05 PM","Thursday, 9:18 AM"])}
 
 
-def _v30_compose_legitimate(plan, role, index):
-    lang=plan["language"]; ar=lang=="Arabic"; recipient=_v30_recipient(role,index,lang,plan["phase"]); person=_v30_display_name(recipient)
-    sender=f'{plan["sender"]} <notifications@hospital.org>'; subject=f'{plan["object"].title()} — Information Notice'
-    if ar:
-        greeting=f"عزيزي {person}"; body=f"{greeting}،\n\nنود إحاطتك بأن {plan['area']} حدّثت سجل {plan['object']}. يمكنك {plan['action']} من خلال النظام الداخلي المعتاد عند توفر الوقت.\n\nلا تتطلب هذه الرسالة إرسال كلمة مرور أو رمز تحقق، ولا تحتوي على رابط تسجيل دخول خارجي. للاستفسار، استخدم دليل الهاتف الداخلي أو افتح تذكرة عبر البوابة الرسمية.\n\nمع التحية،\n{plan['signature']}"; tip="الرسالة تستخدم النطاق الرسمي وتوجّهك إلى القناة الداخلية المعروفة دون طلب بيانات حساسة."
-    else:
-        greeting=f"Dear {person}"; body=f"{greeting},\n\n{plan['area']} has updated the record for {plan['object']}. You may {plan['action']} through the usual internal system when convenient.\n\nThis message does not request a password or verification code and contains no external sign-in link. For questions, use the internal directory or open a ticket through the official portal.\n\nKind regards,\n{plan['signature']}"; tip="The message uses the official domain and directs you to a known internal channel without requesting sensitive information."
-    return {"from":sender,"to":recipient,"subject":subject,"body":body,"attachment":"","suspicious_link":"","suspicious_text":"","indicators":[],"why_risky":"","learning_tip":tip,"is_phishing":False,"email_type":"Legitimate","attack_type":"None","risk_level":plan["difficulty"],"scenario_id":plan["fingerprint"],"scenario_meta":plan,"display_time":_V30_RNG.choice(["Today, 9:05 AM","Tuesday, 11:20 AM","Yesterday, 3:40 PM"])}
 
 
-def _v30_validate(result, plan):
-    if not isinstance(result,dict): return False
-    body=str(result.get("body", "")); subject=str(result.get("subject", "")); sender=str(result.get("from", ""))
-    if not all([body.strip(),subject.strip(),sender.strip()]): return False
-    if subject.lower() in body.lower(): return False
-    # exact difficulty indicator contract
-    if result.get("is_phishing") and len(result.get("indicators",[])) != V30_DIFFICULTY[plan["difficulty"]]["indicator_count"]: return False
-    # all evidence must visibly exist in the correct field
-    fields={"from":sender,"subject":subject,"body":body,"greeting":body,"link":body,"attachment":str(result.get("attachment", ""))}
-    for ind in result.get("indicators",[]):
-        if str(ind.get("evidence", "")).lower() not in fields.get(ind.get("target"),"").lower(): return False
-    # difficulty hard prohibitions
-    if plan["difficulty"]=="hard" and re.search(r"password|PIN|OTP|immediately|account suspension",body,re.I): return False
-    if plan["difficulty"]=="easy" and result.get("attachment"): return False
-    # sender/signature coherence
-    if plan["signature"].lower() not in body.lower(): return False
-    # role-family lock
-    if plan["family_id"] not in {f["id"] for f in V30_KNOWLEDGE[plan["role_type"]]}: return False
-    return True
 
 
-def _v30_generate(role,index,language,difficulty="medium",is_phishing=True,assessment=False):
-    phase="assess" if assessment else "learn"
-    plan=_v30_plan(role,index,language,difficulty,phase,is_phishing)
-    result=_v30_compose_phishing(plan,role,index) if is_phishing else _v30_compose_legitimate(plan,role,index)
-    if not _v30_validate(result,plan):
-        # A second independently planned deterministic generation is safer than
-        # displaying a rule-breaking model response.
-        plan=_v30_plan(role,index+1009,language,difficulty,phase,is_phishing)
-        result=_v30_compose_phishing(plan,role,index) if is_phishing else _v30_compose_legitimate(plan,role,index)
-    try: evaluate_and_log_auto_scores(result,str(difficulty or "medium").lower(),language,is_phishing=bool(is_phishing))
-    except Exception: pass
-    return result
 
 
-def generate_email(role,index,language,difficulty="medium"):
-    return _v30_generate(role,index,language,difficulty,True,False)
 
 
-def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
-    return _v30_generate(role,index,language,difficulty,bool(is_phishing),True)
 
 # =============================================================
 # END RULE-GUIDED ENGINE v30
@@ -9215,10 +6501,6 @@ def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
 V31_PHISHING_STYLES = [
     "brief_alert", "case_followup", "manager_escalation", "service_notice",
     "deadline_reminder", "workflow_exception", "handover_request", "record_release"
-]
-V31_LEGIT_STYLES = [
-    "informational_update", "meeting_followup", "record_correction", "schedule_note",
-    "quality_review", "colleague_request", "policy_notice", "case_handover"
 ]
 V31_BANNED_PHRASES = [
     "has received a notification concerning",
@@ -9341,63 +6623,8 @@ def _v31_compose_phishing(plan, role, index):
     return result
 
 
-def _v31_legit_subject(plan, style):
-    obj = plan["object"].title(); area = plan["area"]
-    bank = {
-        "informational_update": [f"{obj} — Information Update", f"Update: {obj}"],
-        "meeting_followup": [f"Follow-up Before the {area} Meeting", f"{obj} for Thursday's Review"],
-        "record_correction": [f"Correction Needed: {obj}", f"Please Check the {obj} Record"],
-        "schedule_note": [f"Schedule Note — {obj}", f"Timing Update for {obj}"],
-        "quality_review": [f"Quality Review: {obj}", f"{obj} Audit Follow-up"],
-        "colleague_request": [f"Could You Review {obj}?", f"Quick Check on {obj}"],
-        "policy_notice": [f"{area} Guidance Update", f"Policy Note: {obj}"],
-        "case_handover": [f"Handover Note: {obj}", f"{obj} for the Incoming Team"],
-    }
-    return _v31_pick(bank[style])
 
 
-def _v31_compose_legitimate(plan, role, index):
-    lang = plan["language"]; ar = lang == "Arabic"
-    recipient = _v30_recipient(role,index,lang,plan["phase"]); person = _v30_display_name(recipient)
-    used_key = f"v31_{plan['phase']}_legit_styles"
-    used = st.session_state.setdefault(used_key, [])
-    options = [s for s in V31_LEGIT_STYLES if s not in used] or list(V31_LEGIT_STYLES)
-    style = _v31_pick(options, index); used.append(style)
-    sender_mailbox = _v31_pick(["notifications","coordination","quality","clinical.ops","records"], index)
-    sender = f'{plan["sender"]} <{sender_mailbox}@hospital.org>'
-    subject = _v31_legit_subject(plan, style) if not ar else f"تحديث: {plan['object']}"
-    obj=plan["object"]; action=plan["action"]; area=plan["area"]; signature=plan["signature"]
-
-    if ar:
-        templates = {
-            "informational_update": f"عزيزي {person}،\n\nتم تحديث {obj} في {area}. يمكنك {action} من خلال النظام الداخلي عند توفر الوقت.\n\nمع التحية،\n{signature}",
-            "meeting_followup": f"عزيزي {person}،\n\nنجهز لمراجعة {obj} في اجتماع {area} القادم. يرجى إضافة ملاحظتك في مساحة العمل الداخلية قبل نهاية يوم الأربعاء.\n\nشكرًا،\n{signature}",
-            "record_correction": f"عزيزي {person}،\n\nلاحظنا اختلافًا بسيطًا في سجل {obj}. هل يمكنك مراجعة الحقل الأخير وتصحيحه من خلال النظام المعتاد؟\n\nمع التقدير،\n{signature}",
-            "schedule_note": f"عزيزي {person}،\n\nتم تعديل توقيت {obj}. سيظهر الموعد الجديد في الجدول الداخلي خلال هذا اليوم. يرجى الرد فقط إذا تعارض مع مناوبتك.\n\n{signature}",
-            "quality_review": f"عزيزي {person}،\n\nأصبحت خلاصة مراجعة الجودة الخاصة بـ {obj} متاحة في مساحة {area}. توجد ملاحظتان تحتاجان تعليق القسم قبل الاجتماع القادم.\n\nمع التحية،\n{signature}",
-            "colleague_request": f"مرحبًا {person}،\n\nهل تستطيع مراجعة {obj} عندما تسمح المناوبة؟ أضفت ملاحظة في السجل الداخلي توضح النقطة المطلوبة.\n\nشكرًا،\n{signature}",
-            "policy_notice": f"عزيزي {person}،\n\nنُشرت النسخة المحدثة من إرشادات {obj} في مكتبة السياسات الداخلية. سيبدأ تطبيقها الأسبوع القادم، وسنناقش التغيير في اجتماع الفريق.\n\n{signature}",
-            "case_handover": f"عزيزي {person}،\n\nأضفت ملخص تسليم يتعلق بـ {obj} للفريق القادم. يرجى مراجعته في السجل السريري وإضافة أي نقطة ناقصة قبل نهاية المناوبة.\n\nمع التحية،\n{signature}",
-        }
-        body=templates[style]; tip="الرسالة تستخدم نطاق المستشفى الرسمي وسياقًا مهنيًا طبيعيًا وتوجّه إلى قناة داخلية معروفة."
-    else:
-        templates = {
-            "informational_update": f"Dear {person},\n\nThe {obj} record has been updated in {area}. You can {action} it through the usual internal workspace when convenient.\n\nKind regards,\n{signature}",
-            "meeting_followup": f"Dear {person},\n\nWe are preparing the {obj} item for the next {area} meeting. Please add your comment in the internal workspace by Wednesday afternoon.\n\nThank you,\n{signature}",
-            "record_correction": f"Dear {person},\n\nWe noticed a minor discrepancy in the {obj} record. Could you check the final field and correct it in the usual system?\n\nBest regards,\n{signature}",
-            "schedule_note": f"Dear {person},\n\nThe timing for {obj} has changed. The revised slot will appear in the internal schedule later today. Please reply only if it conflicts with your shift.\n\nRegards,\n{signature}",
-            "quality_review": f"Dear {person},\n\nThe quality-review summary for {obj} is now available in the {area} workspace. Two observations need the department's comments before the next meeting.\n\nKind regards,\n{signature}",
-            "colleague_request": f"Hello {person},\n\nCould you review {obj} when the shift allows? I added a note in the internal record showing the point that needs confirmation.\n\nThanks,\n{signature}",
-            "policy_notice": f"Dear {person},\n\nThe revised guidance for {obj} has been published in the internal policy library. It takes effect next week, and the change will be covered at the team briefing.\n\nRegards,\n{signature}",
-            "case_handover": f"Dear {person},\n\nI added a handover summary for {obj} for the incoming team. Please review it in the clinical record and add anything missing before the end of the shift.\n\nKind regards,\n{signature}",
-        }
-        body=templates[style]; tip="The message uses the official hospital domain, a natural workplace context, and a known internal workflow without asking for sensitive information."
-
-    return {"from":sender,"to":recipient,"subject":subject,"body":body,"attachment":"",
-            "suspicious_link":"","suspicious_text":"","indicators":[],"why_risky":"","learning_tip":tip,
-            "is_phishing":False,"email_type":"Legitimate","attack_type":"None","risk_level":plan["difficulty"],
-            "scenario_id":plan["fingerprint"],"scenario_meta":dict(plan, writer_style=style),
-            "display_time":_v31_pick(["Today, 9:05 AM","Tuesday, 11:20 AM","Yesterday, 3:40 PM","Thursday, 1:15 PM"],index)}
 
 
 def _v31_validate(result, plan):
@@ -9406,7 +6633,7 @@ def _v31_validate(result, plan):
     if not all([body.strip(), subject.strip(), sender.strip()]): return False
     if subject.lower() in body.lower(): return False
     if any(p in body.lower() for p in V31_BANNED_PHRASES): return False
-    if plan["role_type"] not in ("clinical","admin","it"): return False
+    if plan["role_type"] not in ("clinical","admin","it","other"): return False
     if plan["family_id"] not in {f["id"] for f in V30_KNOWLEDGE[plan["role_type"]]}: return False
     if result.get("is_phishing"):
         count=len(result.get("indicators",[]))
@@ -9425,25 +6652,10 @@ def _v31_validate(result, plan):
     return True
 
 
-def _v31_generate(role,index,language,difficulty="medium",is_phishing=True,assessment=False):
-    phase="assess" if assessment else "learn"
-    for attempt in range(4):
-        plan=_v30_plan(role,index + attempt*1009,language,difficulty,phase,is_phishing)
-        result=_v31_compose_phishing(plan,role,index) if is_phishing else _v31_compose_legitimate(plan,role,index)
-        if _v31_validate(result,plan):
-            try: evaluate_and_log_auto_scores(result,str(difficulty or "medium").lower(),language,is_phishing=bool(is_phishing))
-            except Exception: pass
-            return result
-    # Last-resort compatible output, but normally unreachable.
-    return result
 
 
-def generate_email(role,index,language,difficulty="medium"):
-    return _v31_generate(role,index,language,difficulty,True,False)
 
 
-def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
-    return _v31_generate(role,index,language,difficulty,bool(is_phishing),True)
 
 # =============================================================
 # END RULE-GUIDED ENGINE v31
@@ -9461,7 +6673,6 @@ def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
 #   * stores semantic history so later sessions avoid recent combinations
 # =============================================================
 
-_V32_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenario_history_v32.json")
 _V32_RNG = random.SystemRandom()
 
 V32_PHISH_STRUCTURES = [
@@ -9470,89 +6681,15 @@ V32_PHISH_STRUCTURES = [
     "coordination_request", "unresolved_item", "status_change", "final_followup",
 ]
 
-V32_LEGIT_STRUCTURES = [
-    "brief_update", "colleague_note", "meeting_preparation", "record_correction",
-    "schedule_change", "quality_followup", "policy_notice", "handover_summary",
-    "request_for_comment", "completion_notice", "clarification_request", "team_briefing",
-]
-
-V32_GENERIC_GREETINGS_EN = [
-    "Dear Staff Member", "Dear Healthcare Employee", "Dear Colleague",
-    "Hello Clinical Team", "Attention Clinical Staff", "Dear Clinical Team",
-]
-V32_GENERIC_GREETINGS_AR = [
-    "عزيزي الموظف", "عزيزي الزميل", "فريق العمل السريري", "الزملاء الأعزاء",
-    "إلى أعضاء الفريق السريري", "عزيزي عضو الفريق",
-]
-
-V32_CREDENTIAL_REQUESTS_EN = [
-    "confirm your staff PIN", "provide your verification code",
-    "verify your account details", "submit your login credentials",
-    "enter your password", "approve the sign-in verification",
-]
-V32_CREDENTIAL_REQUESTS_AR = [
-    "تأكيد الرقم السري للموظف", "إدخال رمز التحقق", "التحقق من بيانات الحساب",
-    "إرسال بيانات الدخول", "إدخال كلمة المرور", "اعتماد طلب تسجيل الدخول",
-]
-
-V32_DEADLINES_EN = [
-    "today", "immediately", "within the next hour", "before your next shift",
-    "before the record is returned", "before 3:00 PM",
-]
-V32_DEADLINES_AR = [
-    "اليوم", "فورًا", "خلال الساعة القادمة", "قبل مناوبتك القادمة",
-    "قبل إعادة السجل", "قبل الساعة الثالثة مساءً",
-]
-
-V32_MAILBOXES = ["review", "workflow", "alerts", "coordination", "updates", "case-notice"]
-V32_FAKE_DOMAINS = [
-    "portal-confirm-now.net", "staff-verify-center.com", "secure-staff-check.net",
-    "hospital-access-alert.co", "clinical-update-login.org", "care-review-portal.net",
-]
-
-V32_FAMILY_CONTEXT = {
-    "clinical": {
-        "lab_critical": ["the result was flagged during final validation", "the specimen record was returned for correction", "the result release is being held"],
-        "referral": ["the referral is waiting in the acceptance queue", "the destination service has not recorded a response", "the transfer request is pending release"],
-        "radiology": ["the reporting queue contains an unresolved addendum", "the imaging record was paused during reconciliation", "the report is awaiting clinician acknowledgement"],
-        "medication": ["the medication workflow contains an unresolved exception", "the pharmacy review was returned for clarification", "the order remains in the safety queue"],
-        "infection": ["the infection-control item was escalated after no response", "the exposure follow-up remains incomplete", "the precaution update has not been acknowledged"],
-        "patient_safety": ["the case review is still open", "the incident record was returned for a missing acknowledgement", "the safety item is waiting for documented follow-up"],
-        "schedule": ["the revised roster has not been confirmed", "the coverage change remains pending", "the schedule item was returned to the staffing queue"],
-        "blood_bank": ["the transfusion item is awaiting release", "the blood-product request remains unmatched", "the crossmatch workflow is pending acknowledgement"],
-        "discharge": ["the documentation item remains unsigned", "the record was returned by the coding queue", "the discharge workflow is waiting for completion"],
-        "education": ["the assigned module remains incomplete", "the competency item was escalated", "the training record has not been acknowledged"],
-        "equipment": ["the device advisory is awaiting acknowledgement", "the inspection record was returned", "the equipment notice remains open"],
-        "telehealth": ["the virtual consultation record is waiting for review", "the remote-care item was returned", "the telehealth workflow remains open"],
-        "emergency": ["the acute-care item is awaiting handover", "the observation record remains open", "the escalation note was returned"],
-        "icu": ["the critical-care review is still pending", "the monitoring item has not been acknowledged", "the ICU workflow contains an unresolved exception"],
-        "oncology": ["the treatment-plan item remains pending", "the oncology record is waiting for acknowledgement", "the infusion workflow was returned"],
-        "maternity": ["the maternity record is awaiting review", "the monitoring note remains incomplete", "the obstetric workflow was returned"],
-        "renal": ["the renal-care item is awaiting release", "the dialysis review remains incomplete", "the renal workflow was returned"],
-        "pathology": ["the specimen record is awaiting review", "the pathology addendum remains unreleased", "the tracking item was returned"],
-        "rehabilitation": ["the therapy handover remains open", "the rehabilitation note is awaiting acknowledgement", "the care-plan item was returned"],
-        "occupational_health": ["the employee-health record is awaiting review", "the fitness item remains open", "the screening workflow was returned"],
-    },
-    "admin": {},
-    "it": {},
-}
 
 
-def _v32_load_history():
-    try:
-        with open(_V32_HISTORY_PATH, "r", encoding="utf-8") as f:
-            rows = json.load(f)
-        return rows if isinstance(rows, list) else []
-    except Exception:
-        return []
 
 
-def _v32_save_history(rows):
-    try:
-        with open(_V32_HISTORY_PATH, "w", encoding="utf-8") as f:
-            json.dump(rows[-3000:], f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+
+
+
+
+
 
 
 def _v32_choice(items, used=None):
@@ -9576,154 +6713,20 @@ def _v32_session_bucket(role_type, language, difficulty):
     })
 
 
-def _v32_plan(role, index, language, difficulty, phase, is_phishing):
-    """Generate a coherent plan only. It never writes links or tutor analysis."""
-    diff = str(difficulty or "medium").lower()
-    if diff not in V30_DIFFICULTY:
-        diff = "medium"
-    role_type = _v30_role_type(role)
-    memory = _v32_session_bucket(role_type, language, diff)
-    history = _v32_load_history()
-    recent = {r.get("semantic") for r in history[-1200:] if r.get("role_type") == role_type}
-
-    families = list(V30_KNOWLEDGE[role_type])
-    # Try many compatible combinations before accepting one.
-    for _ in range(120):
-        family = _V32_RNG.choice(families)
-        obj = _v32_choice(family["objects"], set(memory["objects"]))
-        action = _V32_RNG.choice(family["actions"])
-        sender = _v32_choice(family["senders"], set(memory["senders"]))
-        signature = family["signatures"][family["senders"].index(sender) % len(family["signatures"])]
-        styles = V32_PHISH_STRUCTURES if is_phishing else V32_LEGIT_STRUCTURES
-        style = _v32_choice(styles, set(memory["styles"]))
-        contexts = V32_FAMILY_CONTEXT.get(role_type, {}).get(family["id"], [family["event"]])
-        context = _V32_RNG.choice(contexts)
-        semantic = "|".join([role_type, family["id"], obj, action, style, context, "P" if is_phishing else "L"])
-        if semantic not in recent and semantic not in memory["semantic"]:
-            break
-
-    plan = {
-        "role_type": role_type, "language": language, "difficulty": diff,
-        "phase": phase, "is_phishing": bool(is_phishing),
-        "family_id": family["id"], "area": family["area"], "event": family["event"],
-        "object": obj, "action": action, "sender": sender, "signature": signature,
-        "structure": style, "operational_context": context,
-        "channel": _V32_RNG.choice(V30_DIFFICULTY[diff]["allowed_channels"]),
-        "semantic": semantic,
-    }
-    plan["fingerprint"] = "v32:" + str(abs(hash(semantic)))
-
-    memory["semantic"].append(semantic); memory["objects"].append(obj)
-    memory["styles"].append(style); memory["senders"].append(sender)
-    for k in memory:
-        memory[k] = memory[k][-40:]
-    history.append({
-        "semantic": semantic, "role_type": role_type, "difficulty": diff,
-        "phase": phase, "family_id": family["id"], "object": obj, "style": style,
-    })
-    _v32_save_history(history)
-    return plan
 
 
-def _v32_subject(plan, urgency, style):
-    obj = plan["object"].title()
-    bank = {
-        "pending_release": [f"Release Pending: {obj}", f"{obj} Awaiting Release"],
-        "failed_review": [f"Review Could Not Be Completed: {obj}", f"Unresolved Review — {obj}"],
-        "workflow_handover": [f"Before Your Next Shift — {obj}", f"Handover Item: {obj}"],
-        "service_interruption": [f"Access Notice: {obj}", f"Service Alert — {obj}"],
-        "escalation_notice": [f"Escalated: {obj} Awaiting Your Response", f"Escalation Notice — {obj}"],
-        "case_return": [f"Returned to Queue: {obj}", f"Case Returned — {obj}"],
-        "deadline_reminder": [f"Final Reminder — {obj}", f"Action Required {urgency.title()}: {obj}"],
-        "record_exception": [f"Record Exception: {obj}", f"Correction Required — {obj}"],
-        "coordination_request": [f"Coordination Request: {obj}", f"Response Requested — {obj}"],
-        "unresolved_item": [f"Unresolved Item: {obj}", f"Pending Item — {obj}"],
-        "status_change": [f"Status Change: {obj}", f"Update Required — {obj}"],
-        "final_followup": [f"Final Follow-up: {obj}", f"Outstanding Response — {obj}"],
-    }
-    return _V32_RNG.choice(bank[style])
 
 
-def _v32_easy_phishing(plan, role, index):
-    ar = plan["language"] == "Arabic"
-    recipient = _v30_recipient(role, index, plan["language"], plan["phase"])
-    domain = _v32_choice(V32_FAKE_DOMAINS)
-    mailbox = _v32_choice(V32_MAILBOXES)
-    sender = f'{plan["sender"]} <{mailbox}@{domain}>'
-    greeting = _v32_choice(V32_GENERIC_GREETINGS_AR if ar else V32_GENERIC_GREETINGS_EN)
-    credential = _v32_choice(V32_CREDENTIAL_REQUESTS_AR if ar else V32_CREDENTIAL_REQUESTS_EN)
-    deadline = _v32_choice(V32_DEADLINES_AR if ar else V32_DEADLINES_EN)
-    slug = re.sub(r"[^a-z0-9]+", "-", plan["family_id"].lower()).strip("-")
-    link = f"http://{domain}/{slug}/{_V32_RNG.randrange(1000,9999)}"
-    subject = _v32_subject(plan, deadline if not ar else "اليوم", plan["structure"]) if not ar else f"إجراء مطلوب: {plan['object']}"
-    obj, area, action, context, style = plan["object"], plan["area"], plan["action"], plan["operational_context"], plan["structure"]
-
-    if ar:
-        variants = {
-            "pending_release": f"{greeting}،\n\nأصبح {obj} جاهزًا للإطلاق، لكن يلزم التحقق من الهوية أولًا. يرجى {credential} {deadline} حتى تتمكن من {action}.\n\nفتح السجل: {link}\n\nسيُسحب العنصر إذا لم يكتمل الإجراء.\n\n{plan['signature']}",
-            "failed_review": f"{greeting}،\n\nتعذرت مراجعة {obj} ضمن {area}. يرجى {credential} {deadline} لفتح السجل ومراجعة التفاصيل.\n\nفتح عنصر المراجعة: {link}\n\nقد يتم تعليق الوصول مؤقتًا إذا لم يكتمل الإجراء.\n\nمع التحية،\n{plan['signature']}",
-            "workflow_handover": f"{greeting}،\n\nيوجد عنصر تسليم مرتبط بـ {obj} ينتظر المتابعة {deadline}. يرجى {credential} لعرضه وتأكيد الاستلام.\n\nفتح عنصر التسليم: {link}\n\nقد يؤدي عدم التأكيد إلى حجب الوصول أثناء المناوبة.\n\n{plan['signature']}",
-            "service_interruption": f"{greeting}،\n\nتم إيقاف الوصول إلى {obj} أثناء تحديث الخدمة. لاستعادته، يرجى {credential} {deadline}.\n\nاستعادة الوصول: {link}\n\nسيظل السجل غير متاح حتى اكتمال الخطوة.\n\n{plan['signature']}",
-            "escalation_notice": f"{greeting}،\n\nتم تصعيد {obj} إلى {area} لعدم تسجيل استجابة. أكمل التحقق عبر {credential} {deadline}.\n\nمراجعة التصعيد: {link}\n\nقد تؤدي التأخيرات إلى تعليق وصولك لهذا المسار.\n\nشكرًا،\n{plan['signature']}",
-            "case_return": f"{greeting}،\n\nأُعيد {obj} إلى قائمة المتابعة لأن خطوة التحقق لم تكتمل. يرجى {credential} {deadline} ثم {action}.\n\nعرض الحالة: {link}\n\nستبقى الحالة معلقة حتى استكمال الطلب.\n\n{plan['signature']}",
-            "deadline_reminder": f"{greeting}،\n\nهذه متابعة أخيرة بخصوص {obj}. ما زالت الخطوة المطلوبة معلقة. يرجى {credential} {deadline} حتى تتمكن من {action}.\n\nعرض الحالة: {link}\n\nقد يؤدي عدم الرد إلى تقييد الوصول.\n\n{plan['signature']}",
-            "record_exception": f"{greeting}،\n\nرُصد استثناء في سجل {obj}. يلزم {credential} {deadline} لتصحيح الحالة ومتابعة {action}.\n\nفتح الاستثناء: {link}\n\nسيبقى السجل محجوبًا حتى إنهاء الخطوة.\n\n{plan['signature']}",
-            "coordination_request": f"{greeting}،\n\nيحتاج فريق {area} إلى ردك على {obj}. يرجى {credential} {deadline} حتى تتمكن من {action}.\n\nفتح الطلب: {link}\n\nقد يُعاد الطلب إلى قائمة الانتظار إذا لم يصل الرد.\n\n{plan['signature']}",
-            "unresolved_item": f"{greeting}،\n\nما زال {obj} غير مكتمل ضمن {area}. يرجى {credential} {deadline} لفتح العنصر وإنهاء {action}.\n\nفتح العنصر: {link}\n\nقد يُعلّق الوصول إلى المسار حتى اكتمال الإجراء.\n\n{plan['signature']}",
-            "status_change": f"{greeting}،\n\nتغيرت حالة {obj} بعد تحديث النظام. لتأكيد الحالة الجديدة، يرجى {credential} {deadline}.\n\nمراجعة التغيير: {link}\n\nلن يتاح السجل قبل اعتماد الخطوة.\n\n{plan['signature']}",
-            "final_followup": f"{greeting}،\n\nلم نتلق ردًا على {obj}. يرجى {credential} {deadline} ثم {action}.\n\nمتابعة الطلب: {link}\n\nسيُغلق الطلب ويُقيّد الوصول إذا لم تكتمل الخطوة.\n\n{plan['signature']}",
-        }
-    else:
-        variants = {
-            "pending_release": f"{greeting},\n\n{obj.title()} is ready for release, but identity confirmation is required first. Please {credential} {deadline} so you can {action}.\n\nOpen the record: {link}\n\nThe item will be withdrawn if the action is not completed.\n\n{plan['signature']}",
-            "failed_review": f"{greeting},\n\nA review item for {obj} could not be completed in {area}. Please {credential} {deadline} to open the record and review the details.\n\nOpen the review item: {link}\n\nIf the step is not completed, access may be suspended temporarily.\n\nRegards,\n{plan['signature']}",
-            "workflow_handover": f"{greeting},\n\nA handover item linked to {obj} is waiting {deadline}. Please {credential} to view it and acknowledge receipt.\n\nOpen the handover item: {link}\n\nFailure to acknowledge it may block access during the shift.\n\n{plan['signature']}",
-            "service_interruption": f"{greeting},\n\nAccess to {obj} was paused during a service update. To restore it, please {credential} {deadline}.\n\nRestore access: {link}\n\nThe record will remain unavailable until the step is completed.\n\n{plan['signature']}",
-            "escalation_notice": f"{greeting},\n\n{obj.title()} has been escalated to {area} because no response was recorded. Complete verification by {credential} {deadline}.\n\nReview the escalation: {link}\n\nDelays may suspend your access to this workflow.\n\nThank you,\n{plan['signature']}",
-            "case_return": f"{greeting},\n\n{obj.title()} was returned to the queue because the verification step was not completed. Please {credential} {deadline}, then {action}.\n\nView the case: {link}\n\nThe case will remain pending until the request is completed.\n\n{plan['signature']}",
-            "deadline_reminder": f"{greeting},\n\nThis is a final follow-up regarding {obj}. The requested step is still outstanding. Please {credential} {deadline} so you can {action}.\n\nView the case: {link}\n\nAn unanswered request may be returned to the queue and may restrict access.\n\n{plan['signature']}",
-            "record_exception": f"{greeting},\n\nA record exception was detected for {obj}. You must {credential} {deadline} to correct the status and {action}.\n\nOpen the exception: {link}\n\nThe record will stay locked until the step is finished.\n\n{plan['signature']}",
-            "coordination_request": f"{greeting},\n\n{area} needs your response on {obj}. Please {credential} {deadline} so you can {action}.\n\nOpen the request: {link}\n\nThe request may be returned to the queue if no response is received.\n\n{plan['signature']}",
-            "unresolved_item": f"{greeting},\n\n{obj.title()} remains unresolved in {area}. Please {credential} {deadline} to open the item and complete the required review.\n\nOpen the item: {link}\n\nAccess to the workflow may be suspended until the action is completed.\n\n{plan['signature']}",
-            "status_change": f"{greeting},\n\nThe status of {obj} changed after a system update. To confirm the new status, please {credential} {deadline}.\n\nReview the change: {link}\n\nThe record will not be available until the step is approved.\n\n{plan['signature']}",
-            "final_followup": f"{greeting},\n\nNo response has been recorded for {obj}. Please {credential} {deadline}, then {action}.\n\nFollow up on the request: {link}\n\nThe request may be closed and access restricted if the step is not completed.\n\n{plan['signature']}",
-        }
-    body = variants[style]
-
-    # Stable grounded indicator contract. Evidence is guaranteed to exist.
-    first_line = next(x.strip() for x in body.splitlines() if x.strip()).rstrip(",،")
-    indicators = [
-        _v30_indicator(1, "domain", "Non-official sender domain" if not ar else "نطاق مرسل غير رسمي",
-                       (f"The sender uses {domain}, not the hospital's official domain." if not ar else f"يستخدم المرسل النطاق {domain} وليس نطاق المستشفى الرسمي."), domain, "from"),
-        _v30_indicator(2, "urgency", "Strong urgency or threat" if not ar else "استعجال أو تهديد واضح",
-                       ("The message uses a short deadline or an access consequence to pressure the recipient." if not ar else "تستخدم الرسالة مهلة قصيرة أو نتيجة مرتبطة بالوصول للضغط على المستلم."), deadline, "body"),
-        _v30_indicator(3, "credential", "Direct credential request" if not ar else "طلب مباشر لبيانات الدخول",
-                       ("The message directly asks for a password, staff PIN, login credentials, or verification code." if not ar else "تطلب الرسالة مباشرة كلمة مرور أو رقمًا سريًا أو بيانات دخول أو رمز تحقق."), credential, "body"),
-        _v30_indicator(4, "link", "Visible external link" if not ar else "رابط خارجي ظاهر",
-                       (f"The link points to the non-official domain {domain}." if not ar else f"يقود الرابط إلى النطاق غير الرسمي {domain}."), link, "link"),
-        _v30_indicator(5, "greeting", "Generic greeting" if not ar else "تحية عامة",
-                       ("The message does not address the recipient by name, which may indicate bulk targeting." if not ar else "لا تخاطب الرسالة المستلم باسمه، وقد يدل ذلك على إرسال جماعي."), first_line, "greeting"),
-    ]
-    why = ("The message combines a non-official domain, a direct credential request, an external link, and strong time pressure—clear beginner-level phishing indicators."
-           if not ar else "تجمع الرسالة بين نطاق غير رسمي وطلب مباشر لبيانات الدخول ورابط خارجي وضغط زمني واضح، وهي مؤشرات تصيد مناسبة للمستوى المبتدئ.")
-    tip = ("Never enter a password, staff PIN, or verification code through an unexpected email link. Open the official system directly or verify the request through a trusted channel."
-           if not ar else "لا تُدخل كلمة مرور أو رقمًا سريًا أو رمز تحقق عبر رابط بريد غير متوقع. افتح النظام الرسمي مباشرة أو تحقق من الطلب عبر قناة موثوقة.")
-    return {
-        "from": sender, "to": recipient, "subject": subject, "body": body,
-        "attachment": "", "suspicious_link": link, "suspicious_text": credential,
-        "indicators": indicators, "why_risky": why, "learning_tip": tip,
-        "is_phishing": True, "email_type": "Phishing", "attack_type": "Credential harvesting",
-        "risk_level": "easy", "scenario_id": plan["fingerprint"], "scenario_meta": plan,
-        "display_time": _V32_RNG.choice(["Today, 8:15 AM", "Today, 10:42 AM", "Monday, 2:31 PM", "Yesterday, 4:05 PM", "Thursday, 9:18 AM"]),
-    }
 
 
 def _v32_legitimate(plan, role, index):
     ar = plan["language"] == "Arabic"
     recipient = _v30_recipient(role, index, plan["language"], plan["phase"])
     person = _v30_display_name(recipient)
-    sender = f'{plan["sender"]} <{_v32_choice(["notifications", "coordination", "quality", "clinical.ops", "records"])}@hospital.org>'
-    obj, area, action, style = plan["object"], plan["area"], plan["action"], plan["structure"]
+    sender_name = plan.get("sender_disp", plan["sender"]) if ar else plan["sender"]
+    sender = f'{sender_name} <{_v32_choice(["notifications", "coordination", "quality", "clinical.ops", "records"])}@hospital.org>'
+    disp_signature = plan.get("signature_disp", plan["signature"]) if ar else plan["signature"]
+    obj, area, action, style = (plan.get("object_disp", plan["object"]), plan.get("area_disp", plan["area"]), plan.get("action_disp", plan["action"]), plan["structure"]) if ar else (plan["object"], plan["area"], plan["action"], plan["structure"])
     if ar:
         subjects = {
             "brief_update": f"تحديث موجز: {obj}", "colleague_note": f"ملاحظة بخصوص {obj}",
@@ -9734,18 +6737,18 @@ def _v32_legitimate(plan, role, index):
             "clarification_request": f"استفسار بسيط: {obj}", "team_briefing": f"إحاطة الفريق: {obj}",
         }
         bodies = {
-            "brief_update": f"عزيزي {person}،\n\nتم تحديث {obj} في {area}. يمكنك {action} من خلال مساحة العمل الداخلية عند توفر الوقت.\n\nمع التحية،\n{plan['signature']}",
-            "colleague_note": f"مرحبًا {person}،\n\nأضفت ملاحظة قصيرة في سجل {obj}. هل يمكنك مراجعتها خلال المناوبة وإخباري إذا كانت هناك نقطة تحتاج تعديلًا؟\n\nشكرًا،\n{plan['signature']}",
-            "meeting_preparation": f"عزيزي {person}،\n\nنجهز بند {obj} لاجتماع {area} القادم. يرجى إضافة تعليقك في النظام الداخلي قبل ظهر الأربعاء.\n\nشكرًا،\n{plan['signature']}",
-            "record_correction": f"عزيزي {person}،\n\nلاحظنا اختلافًا بسيطًا في سجل {obj}. هل يمكنك مراجعة الحقل الأخير وتصحيحه في النظام المعتاد؟\n\nمع التقدير،\n{plan['signature']}",
-            "schedule_change": f"عزيزي {person}،\n\nتم تعديل توقيت {obj}. سيظهر الموعد الجديد في الجدول الداخلي اليوم؛ يرجى الرد فقط إذا تعارض مع مناوبتك.\n\n{plan['signature']}",
-            "quality_followup": f"عزيزي {person}،\n\nأصبحت خلاصة مراجعة الجودة الخاصة بـ {obj} متاحة في مساحة {area}. توجد ملاحظتان تحتاجان تعليق القسم قبل الاجتماع القادم.\n\nمع التحية،\n{plan['signature']}",
-            "policy_notice": f"عزيزي {person}،\n\nنُشرت النسخة المحدثة من إرشادات {obj} في مكتبة السياسات الداخلية. سيبدأ تطبيقها الأسبوع القادم وسنغطي التغيير في إحاطة الفريق.\n\n{plan['signature']}",
-            "handover_summary": f"عزيزي {person}،\n\nأضفت ملخص تسليم يتعلق بـ {obj} للفريق القادم. يرجى مراجعته في السجل وإضافة أي نقطة ناقصة قبل نهاية المناوبة.\n\nمع التحية،\n{plan['signature']}",
-            "request_for_comment": f"مرحبًا {person}،\n\nهل يمكنك إضافة ملاحظتك على {obj} في مساحة {area} الداخلية قبل نهاية اليوم؟ لا يلزم الرد بالبريد إذا لم توجد تغييرات.\n\nشكرًا،\n{plan['signature']}",
-            "completion_notice": f"عزيزي {person}،\n\nاكتمل تحديث {obj} وأصبح السجل متاحًا في النظام الداخلي. لا يلزم اتخاذ إجراء ما لم تلاحظ اختلافًا في التفاصيل.\n\nمع التقدير،\n{plan['signature']}",
-            "clarification_request": f"مرحبًا {person}،\n\nلدينا استفسار بسيط بخصوص {obj}. يرجى مراجعة الملاحظة في السجل الداخلي وإضافة التصحيح عند توفر الوقت.\n\nشكرًا،\n{plan['signature']}",
-            "team_briefing": f"عزيزي {person}،\n\nسيُناقش {obj} في إحاطة فريق {area} القادمة. أضفنا الملخص إلى مساحة العمل الداخلية للقراءة المسبقة.\n\nمع التحية،\n{plan['signature']}",
+            "brief_update": f"عزيزي {person}،\n\nتم تحديث {obj} في {area}. يمكنك {action} من خلال مساحة العمل الداخلية عند توفر الوقت.\n\nمع التحية،\n{disp_signature}",
+            "colleague_note": f"مرحبًا {person}،\n\nأضفت ملاحظة قصيرة في سجل {obj}. هل يمكنك مراجعتها خلال المناوبة وإخباري إذا كانت هناك نقطة تحتاج تعديلًا؟\n\nشكرًا،\n{disp_signature}",
+            "meeting_preparation": f"عزيزي {person}،\n\nنجهز بند {obj} لاجتماع {area} القادم. يرجى إضافة تعليقك في النظام الداخلي قبل ظهر الأربعاء.\n\nشكرًا،\n{disp_signature}",
+            "record_correction": f"عزيزي {person}،\n\nلاحظنا اختلافًا بسيطًا في سجل {obj}. هل يمكنك مراجعة الحقل الأخير وتصحيحه في النظام المعتاد؟\n\nمع التقدير،\n{disp_signature}",
+            "schedule_change": f"عزيزي {person}،\n\nتم تعديل توقيت {obj}. سيظهر الموعد الجديد في الجدول الداخلي اليوم؛ يرجى الرد فقط إذا تعارض مع مناوبتك.\n\n{disp_signature}",
+            "quality_followup": f"عزيزي {person}،\n\nأصبحت خلاصة مراجعة الجودة الخاصة بـ {obj} متاحة في مساحة {area}. توجد ملاحظتان تحتاجان تعليق القسم قبل الاجتماع القادم.\n\nمع التحية،\n{disp_signature}",
+            "policy_notice": f"عزيزي {person}،\n\nنُشرت النسخة المحدثة من إرشادات {obj} في مكتبة السياسات الداخلية. سيبدأ تطبيقها الأسبوع القادم وسنغطي التغيير في إحاطة الفريق.\n\n{disp_signature}",
+            "handover_summary": f"عزيزي {person}،\n\nأضفت ملخص تسليم يتعلق بـ {obj} للفريق القادم. يرجى مراجعته في السجل وإضافة أي نقطة ناقصة قبل نهاية المناوبة.\n\nمع التحية،\n{disp_signature}",
+            "request_for_comment": f"مرحبًا {person}،\n\nهل يمكنك إضافة ملاحظتك على {obj} في مساحة {area} الداخلية قبل نهاية اليوم؟ لا يلزم الرد بالبريد إذا لم توجد تغييرات.\n\nشكرًا،\n{disp_signature}",
+            "completion_notice": f"عزيزي {person}،\n\nاكتمل تحديث {obj} وأصبح السجل متاحًا في النظام الداخلي. لا يلزم اتخاذ إجراء ما لم تلاحظ اختلافًا في التفاصيل.\n\nمع التقدير،\n{disp_signature}",
+            "clarification_request": f"مرحبًا {person}،\n\nلدينا استفسار بسيط بخصوص {obj}. يرجى مراجعة الملاحظة في السجل الداخلي وإضافة التصحيح عند توفر الوقت.\n\nشكرًا،\n{disp_signature}",
+            "team_briefing": f"عزيزي {person}،\n\nسيُناقش {obj} في إحاطة فريق {area} القادمة. أضفنا الملخص إلى مساحة العمل الداخلية للقراءة المسبقة.\n\nمع التحية،\n{disp_signature}",
         }
         subject, body = subjects[style], bodies[style]
         tip = "الرسالة تستخدم نطاق المستشفى الرسمي وسياقًا مهنيًا طبيعيًا وقناة داخلية معروفة دون طلب بيانات حساسة."
@@ -9759,18 +6762,18 @@ def _v32_legitimate(plan, role, index):
             "clarification_request": f"Quick Clarification: {obj.title()}", "team_briefing": f"Team Briefing — {obj.title()}",
         }
         bodies = {
-            "brief_update": f"Dear {person},\n\nThe {obj} record has been updated in {area}. You can {action} it through the usual internal workspace when convenient.\n\nKind regards,\n{plan['signature']}",
-            "colleague_note": f"Hello {person},\n\nI added a short note to the {obj} record. Could you review it during your shift and let me know if anything needs changing?\n\nThanks,\n{plan['signature']}",
-            "meeting_preparation": f"Dear {person},\n\nWe are preparing the {obj} item for the next {area} meeting. Please add your comment in the internal workspace by Wednesday noon.\n\nThank you,\n{plan['signature']}",
-            "record_correction": f"Dear {person},\n\nWe noticed a minor discrepancy in the {obj} record. Could you check the final field and correct it in the usual system?\n\nBest regards,\n{plan['signature']}",
-            "schedule_change": f"Dear {person},\n\nThe timing for {obj} has changed. The revised slot will appear in the internal schedule today; please reply only if it conflicts with your shift.\n\nRegards,\n{plan['signature']}",
-            "quality_followup": f"Dear {person},\n\nThe quality-review summary for {obj} is now available in the {area} workspace. Two observations need the department's comments before the next meeting.\n\nKind regards,\n{plan['signature']}",
-            "policy_notice": f"Dear {person},\n\nThe revised guidance for {obj} has been published in the internal policy library. It takes effect next week and will be covered at the team briefing.\n\nRegards,\n{plan['signature']}",
-            "handover_summary": f"Dear {person},\n\nI added a handover summary for {obj} for the incoming team. Please review it in the record and add anything missing before the end of the shift.\n\nKind regards,\n{plan['signature']}",
-            "request_for_comment": f"Hello {person},\n\nCould you add your comment to {obj} in the internal {area} workspace before the end of the day? There is no need to reply by email if nothing has changed.\n\nThanks,\n{plan['signature']}",
-            "completion_notice": f"Dear {person},\n\nThe update to {obj} has been completed and the record is available in the internal system. No action is needed unless you notice a discrepancy.\n\nBest regards,\n{plan['signature']}",
-            "clarification_request": f"Hello {person},\n\nWe have a quick clarification regarding {obj}. Please check the note in the internal record and add the correction when convenient.\n\nThanks,\n{plan['signature']}",
-            "team_briefing": f"Dear {person},\n\n{obj.title()} will be discussed at the next {area} team briefing. The summary has been added to the internal workspace for advance reading.\n\nKind regards,\n{plan['signature']}",
+            "brief_update": f"Dear {person},\n\nThe {obj} record has been updated in {area}. You can {action} it through the usual internal workspace when convenient.\n\nKind regards,\n{disp_signature}",
+            "colleague_note": f"Hello {person},\n\nI added a short note to the {obj} record. Could you review it during your shift and let me know if anything needs changing?\n\nThanks,\n{disp_signature}",
+            "meeting_preparation": f"Dear {person},\n\nWe are preparing the {obj} item for the next {area} meeting. Please add your comment in the internal workspace by Wednesday noon.\n\nThank you,\n{disp_signature}",
+            "record_correction": f"Dear {person},\n\nWe noticed a minor discrepancy in the {obj} record. Could you check the final field and correct it in the usual system?\n\nBest regards,\n{disp_signature}",
+            "schedule_change": f"Dear {person},\n\nThe timing for {obj} has changed. The revised slot will appear in the internal schedule today; please reply only if it conflicts with your shift.\n\nRegards,\n{disp_signature}",
+            "quality_followup": f"Dear {person},\n\nThe quality-review summary for {obj} is now available in the {area} workspace. Two observations need the department's comments before the next meeting.\n\nKind regards,\n{disp_signature}",
+            "policy_notice": f"Dear {person},\n\nThe revised guidance for {obj} has been published in the internal policy library. It takes effect next week and will be covered at the team briefing.\n\nRegards,\n{disp_signature}",
+            "handover_summary": f"Dear {person},\n\nI added a handover summary for {obj} for the incoming team. Please review it in the record and add anything missing before the end of the shift.\n\nKind regards,\n{disp_signature}",
+            "request_for_comment": f"Hello {person},\n\nCould you add your comment to {obj} in the internal {area} workspace before the end of the day? There is no need to reply by email if nothing has changed.\n\nThanks,\n{disp_signature}",
+            "completion_notice": f"Dear {person},\n\nThe update to {obj} has been completed and the record is available in the internal system. No action is needed unless you notice a discrepancy.\n\nBest regards,\n{disp_signature}",
+            "clarification_request": f"Hello {person},\n\nWe have a quick clarification regarding {obj}. Please check the note in the internal record and add the correction when convenient.\n\nThanks,\n{disp_signature}",
+            "team_briefing": f"Dear {person},\n\n{obj.title()} will be discussed at the next {area} team briefing. The summary has been added to the internal workspace for advance reading.\n\nKind regards,\n{disp_signature}",
         }
         subject, body = subjects[style], bodies[style]
         tip = "The message uses the official hospital domain, a natural workplace context, and a known internal workflow without asking for sensitive information."
@@ -9808,33 +6811,10 @@ def _v32_validate(result, plan):
     return True
 
 
-def _v32_generate(role, index, language, difficulty="medium", is_phishing=True, assessment=False):
-    phase = "assess" if assessment else "learn"
-    result = None
-    for attempt in range(10):
-        plan = _v32_plan(role, index + attempt * 104729, language, difficulty, phase, is_phishing)
-        if is_phishing and plan["difficulty"] == "easy":
-            result = _v32_easy_phishing(plan, role, index)
-        elif is_phishing:
-            # Keep v31's proven medium/hard writer and indicator mapping.
-            result = _v31_compose_phishing(plan, role, index)
-        else:
-            result = _v32_legitimate(plan, role, index)
-        if _v32_validate(result, plan):
-            try:
-                evaluate_and_log_auto_scores(result, plan["difficulty"], language, is_phishing=bool(is_phishing))
-            except Exception:
-                pass
-            return result
-    return result
 
 
-def generate_email(role, index, language, difficulty="medium"):
-    return _v32_generate(role, index, language, difficulty, True, False)
 
 
-def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    return _v32_generate(role, index, language, difficulty, bool(is_phishing), True)
 
 # =============================================================
 # END RULE-GUIDED SCENARIO PLANNER v32
@@ -10020,6 +7000,7 @@ def _v33_plan(role, index, language, difficulty, phase, is_phishing):
     }
 
     families = list(V30_KNOWLEDGE[role_type])
+    ar = language == "Arabic"
     for _ in range(240):
         family = _v33_pick(families, [])
         obj = _v33_pick(family["objects"], mem["objects"][-24:])
@@ -10040,11 +7021,22 @@ def _v33_plan(role, index, language, difficulty, phase, is_phishing):
         if semantic not in recent and semantic not in mem["semantic"] and family_recent_count < 2:
             break
 
+    obj_idx = family["objects"].index(obj)
+    action_idx = family["actions"].index(action)
+    area_disp = family.get("area_ar", family["area"]) if ar else family["area"]
+    event_disp = family.get("event_ar", family["event"]) if ar else family["event"]
+    obj_disp = family.get("objects_ar", family["objects"])[obj_idx] if ar else obj
+    action_disp = family.get("actions_ar", family["actions"])[action_idx] if ar else action
+    sender_disp = family.get("senders_ar", family["senders"])[sender_idx] if ar else sender
+    signature_disp = family.get("signatures_ar", family["signatures"])[sender_idx % len(family["signatures"])] if ar else signature
+
     plan = {
         "role_type": role_type, "language": language, "difficulty": diff,
         "phase": phase, "is_phishing": bool(is_phishing),
         "family_id": family["id"], "area": family["area"], "event": family["event"],
         "object": obj, "action": action, "sender": sender, "signature": signature,
+        "area_disp": area_disp, "event_disp": event_disp, "object_disp": obj_disp,
+        "action_disp": action_disp, "sender_disp": sender_disp, "signature_disp": signature_disp,
         "structure": archetype, "tone": tone, "opening_mode": opening_mode,
         "channel": _V33_RNG.choice(V30_DIFFICULTY[diff]["allowed_channels"]),
         "semantic": semantic,
@@ -10071,11 +7063,11 @@ def _v33_subject(plan):
     ar = plan["language"] == "Arabic"
     bank = V33_SUBJECT_PATTERNS_AR if ar else V33_SUBJECT_PATTERNS_EN
     templates = bank[plan["structure"]]
-    return _v33_pick(templates).format(obj=plan["object"].title() if not ar else plan["object"])
+    return _v33_pick(templates).format(obj=plan["object_disp"] if ar else plan["object_disp"].title())
 
 
 def _v33_context_sentence(plan, ar=False):
-    obj, area, mode = plan["object"], plan["area"], plan["opening_mode"]
+    obj, area, mode = plan["object_disp"], plan["area_disp"], plan["opening_mode"]
     if ar:
         bank = {
             "state_change": f"تغيرت حالة {obj} في {area} بعد تحديث السجل.",
@@ -10109,7 +7101,8 @@ def _v33_easy_phishing(plan, role, index):
 
     domain = _v33_pick(V33_FAKE_DOMAINS, mem["domains"][-8:])
     mailbox = _v33_pick(V33_MAILBOXES)
-    sender = f'{plan["sender"]} <{mailbox}@{domain}>'
+    sender_name = plan["sender_disp"] if ar else plan["sender"]
+    sender = f'{sender_name} <{mailbox}@{domain}>'
     greeting = _v33_pick(V33_GENERIC_GREETINGS_AR if ar else V33_GENERIC_GREETINGS_EN)
     credential = _v33_pick(V33_CREDENTIAL_ACTIONS_AR if ar else V33_CREDENTIAL_ACTIONS_EN, mem["credentials"][-5:])
     deadline = _v33_pick(V33_PRESSURE_STYLES_AR if ar else V33_PRESSURE_STYLES_EN, mem["deadlines"][-5:])
@@ -10119,7 +7112,7 @@ def _v33_easy_phishing(plan, role, index):
     slug = re.sub(r"[^a-z0-9]+", "-", plan["family_id"].lower()).strip("-")
     link = f"http://{domain}/{slug}/{_V33_RNG.randrange(1000,9999)}"
     context = _v33_context_sentence(plan, ar)
-    obj, action, archetype = plan["object"], plan["action"], plan["structure"]
+    obj, action, archetype = plan["object_disp"], plan["action_disp"], plan["structure"]
 
     if ar:
         action_sentence = f"يرجى {credential} {deadline} حتى تتمكن من {action}."
@@ -10141,7 +7134,7 @@ def _v33_easy_phishing(plan, role, index):
             "safety_followup": f"{context} يحتاج بند السلامة إلى استجابة موثقة.",
             "document_release": f"{context} يتوقف إصدار المستند على إكمال التحقق.",
         }
-        body = f"{greeting}،\n\n{connectors[archetype]} {action_sentence}\n\n{cta}: {link}\n\n{consequence}\n\n{plan['signature']}"
+        body = f"{greeting}،\n\n{connectors[archetype]} {action_sentence}\n\n{cta}: {link}\n\n{consequence}\n\n{plan['signature_disp']}"
     else:
         action_sentence = f"Please {credential} {deadline} so you can {action}."
         connectors = {
@@ -10162,7 +7155,7 @@ def _v33_easy_phishing(plan, role, index):
             "safety_followup": f"{context} The safety item requires a documented response.",
             "document_release": f"{context} Document release is waiting for verification.",
         }
-        body = f"{greeting},\n\n{connectors[archetype]} {action_sentence}\n\n{cta}: {link}\n\n{consequence}\n\n{plan['signature']}"
+        body = f"{greeting},\n\n{connectors[archetype]} {action_sentence}\n\n{cta}: {link}\n\n{consequence}\n\n{plan['signature_disp']}"
 
     first_line = next(x.strip() for x in body.splitlines() if x.strip()).rstrip(",،")
     indicators = [
@@ -10260,12 +7253,8 @@ def _v33_generate(role, index, language, difficulty="medium", is_phishing=True, 
     return result
 
 
-def generate_email(role, index, language, difficulty="medium"):
-    return _v33_generate(role, index, language, difficulty, True, False)
 
 
-def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    return _v33_generate(role, index, language, difficulty, bool(is_phishing), True)
 
 # =============================================================
 # END SCENARIO ENGINE v33
@@ -10803,11 +7792,7 @@ def _v35_generate(role, index, language, difficulty="medium", is_phishing=True, 
             return result
     return result
 
-def generate_email(role, index, language, difficulty="medium"):
-    return _v35_generate(role, index, language, difficulty, True, False)
 
-def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    return _v35_generate(role, index, language, difficulty, bool(is_phishing), True)
 
 # =============================================================
 # END MEDIUM GENERATION ENGINE v35
@@ -11069,12 +8054,8 @@ def _v36_generate(role, index, language, difficulty="medium", is_phishing=True, 
     return _V36_BASE_V35_GENERATE(role, index, language, difficulty, is_phishing, assessment)
 
 
-def generate_email(role, index, language, difficulty="medium"):
-    return _v36_generate(role, index, language, difficulty, True, False)
 
 
-def generate_assess_email(role, index, is_phishing, language, difficulty="medium"):
-    return _v36_generate(role, index, language, difficulty, bool(is_phishing), True)
 
 # =============================================================
 # END MEDIUM GENERATION ENGINE v36 — PHASE 1
@@ -11120,78 +8101,122 @@ V40_STYLES = [
 
 V40_SCENARIOS = {
     "clinical": [
-        {"id":"medication_safety","area":"Medication Safety","senders":["Medication Safety Office","Clinical Pharmacy","Pharmacy Quality Unit"],
+        {"id":"medication_safety","area":"Medication Safety","senders":["Medication Safety Office","Clinical Pharmacy","Pharmacy Quality Unit"],"senders_ar":["مكتب سلامة الدواء","الصيدلية السريرية","وحدة جودة الصيدلة"],
          "events":["dose clarification pending","high-alert medication review","formulary exception follow-up","medication reconciliation discrepancy","antimicrobial approval note"],
-         "objects":["insulin order","anticoagulant record","discharge medication list","restricted antibiotic request","infusion concentration"]},
-        {"id":"laboratory","area":"Laboratory Services","senders":["Laboratory Quality","Pathology Coordination","Diagnostic Services"],
+         "events_ar":["توضيح جرعة معلق","مراجعة دواء عالي الخطورة","متابعة استثناء بالتشكيلة الدوائية","تباين في مطابقة الأدوية","ملاحظة اعتماد مضاد حيوي"],
+         "objects":["insulin order","anticoagulant record","discharge medication list","restricted antibiotic request","infusion concentration"],
+         "objects_ar":["طلب الإنسولين","سجل مضاد التخثر","قائمة أدوية الخروج","طلب مضاد حيوي مقيّد","تركيز محلول التسريب"]},
+        {"id":"laboratory","area":"Laboratory Services","senders":["Laboratory Quality","Pathology Coordination","Diagnostic Services"],"senders_ar":["جودة المختبر","تنسيق الباثولوجيا","الخدمات التشخيصية"],
          "events":["specimen exception review","critical-result acknowledgement","sample rejection follow-up","reference range update","external test reconciliation"],
-         "objects":["blood culture specimen","histopathology slide","coagulation sample","molecular test request","critical potassium result"]},
-        {"id":"radiology","area":"Radiology","senders":["Radiology Operations","Imaging Quality","PACS Coordination"],
+         "events_ar":["مراجعة استثناء عينة","إقرار نتيجة حرجة","متابعة رفض عينة","تحديث المعدل المرجعي","مطابقة فحص خارجي"],
+         "objects":["blood culture specimen","histopathology slide","coagulation sample","molecular test request","critical potassium result"],
+         "objects_ar":["عينة مزرعة الدم","شريحة الأنسجة المرضية","عينة تخثر","طلب فحص جزيئي","نتيجة بوتاسيوم حرجة"]},
+        {"id":"radiology","area":"Radiology","senders":["Radiology Operations","Imaging Quality","PACS Coordination"],"senders_ar":["عمليات الأشعة","جودة التصوير","تنسيق نظام الصور"],
          "events":["report addendum pending","contrast checklist correction","image-routing exception","urgent finding acknowledgement","protocol change notice"],
-         "objects":["CT pulmonary angiogram","MRI safety form","portable chest image","ultrasound referral","contrast administration record"]},
-        {"id":"infection_control","area":"Infection Prevention","senders":["Infection Prevention","IPC Surveillance","Occupational Health"],
+         "events_ar":["ملحق تقرير معلق","تصحيح قائمة تدقيق الصبغة","استثناء توجيه الصورة","إقرار نتيجة عاجلة","إشعار تغيير البروتوكول"],
+         "objects":["CT pulmonary angiogram","MRI safety form","portable chest image","ultrasound referral","contrast administration record"],
+         "objects_ar":["تصوير مقطعي للشريان الرئوي","نموذج سلامة الرنين المغناطيسي","صورة صدر متنقلة","إحالة الموجات فوق الصوتية","سجل إعطاء الصبغة"]},
+        {"id":"infection_control","area":"Infection Prevention","senders":["Infection Prevention","IPC Surveillance","Occupational Health"],"senders_ar":["مكافحة العدوى","ترصد مكافحة العدوى","الصحة المهنية"],
          "events":["exposure follow-up","isolation audit finding","screening list correction","outbreak contact review","hand-hygiene observation"],
-         "objects":["MRSA screening record","needle-stick exposure","isolation room log","staff vaccination status","contact tracing list"]},
-        {"id":"patient_safety","area":"Patient Safety","senders":["Patient Safety Office","Clinical Governance","Risk Management"],
+         "events_ar":["متابعة تعرض","نتيجة تدقيق العزل","تصحيح قائمة الفحص","مراجعة مخالطي التفشي","ملاحظة نظافة اليدين"],
+         "objects":["MRSA screening record","needle-stick exposure","isolation room log","staff vaccination status","contact tracing list"],
+         "objects_ar":["سجل فحص المكورات المقاومة","تعرض بوخز إبرة","سجل غرفة العزل","حالة تطعيم الموظف","قائمة تتبع المخالطين"]},
+        {"id":"patient_safety","area":"Patient Safety","senders":["Patient Safety Office","Clinical Governance","Risk Management"],"senders_ar":["مكتب سلامة المرضى","الحوكمة السريرية","إدارة المخاطر"],
          "events":["incident follow-up","near-miss clarification","safety action acknowledgement","case-review assignment","root-cause evidence request"],
-         "objects":["fall incident","medication near miss","wrong-label event","handover omission","delayed escalation case"]},
-        {"id":"referral","area":"Referral Coordination","senders":["Referral Management","Care Coordination","Transfer Centre"],
+         "events_ar":["متابعة حادثة","توضيح حالة كادت تقع","إقرار إجراء سلامة","تكليف مراجعة حالة","طلب دليل السبب الجذري"],
+         "objects":["fall incident","medication near miss","wrong-label event","handover omission","delayed escalation case"],
+         "objects_ar":["حادثة سقوط","خطأ دوائي وشيك","حدث خطأ في الملصق","إغفال بالتسليم","حالة تأخر تصعيد"]},
+        {"id":"referral","area":"Referral Coordination","senders":["Referral Management","Care Coordination","Transfer Centre"],"senders_ar":["إدارة الإحالات","تنسيق الرعاية","مركز التحويل"],
          "events":["referral returned for correction","transfer acceptance pending","specialist response requested","appointment pathway update","external facility note"],
-         "objects":["cardiology referral","oncology transfer","neonatal consultation","rehabilitation request","tertiary-care referral"]},
-        {"id":"equipment","area":"Biomedical Engineering","senders":["Biomedical Engineering","Medical Devices Unit","Clinical Engineering"],
+         "events_ar":["إحالة معادة للتصحيح","قبول تحويل معلق","رد استشاري مطلوب","تحديث مسار الموعد","ملاحظة منشأة خارجية"],
+         "objects":["cardiology referral","oncology transfer","neonatal consultation","rehabilitation request","tertiary-care referral"],
+         "objects_ar":["إحالة قلبية","تحويل أورام","استشارة حديثي الولادة","طلب تأهيل","إحالة رعاية متخصصة"]},
+        {"id":"equipment","area":"Biomedical Engineering","senders":["Biomedical Engineering","Medical Devices Unit","Clinical Engineering"],"senders_ar":["الهندسة الطبية الحيوية","وحدة الأجهزة الطبية","الهندسة السريرية"],
          "events":["device recall acknowledgement","maintenance slot confirmation","calibration exception","service bulletin review","asset-location verification"],
-         "objects":["infusion pump","ventilator","defibrillator","patient monitor","laboratory analyser"]},
-        {"id":"training","area":"Clinical Education","senders":["Clinical Education","Simulation Centre","Competency Office"],
+         "events_ar":["إقرار سحب جهاز","تأكيد موعد صيانة","استثناء معايرة","مراجعة نشرة خدمة","تحقق موقع الأصل"],
+         "objects":["infusion pump","ventilator","defibrillator","patient monitor","laboratory analyser"],
+         "objects_ar":["مضخة التسريب","جهاز التنفس الصناعي","جهاز الصدمات الكهربائية","جهاز مراقبة المريض","محلل المختبر"]},
+        {"id":"training","area":"Clinical Education","senders":["Clinical Education","Simulation Centre","Competency Office"],"senders_ar":["التعليم السريري","مركز المحاكاة","مكتب الكفاءات"],
          "events":["competency evidence pending","mandatory module follow-up","simulation booking change","certificate correction","annual skills validation"],
-         "objects":["basic life support certificate","medication competency","infection-control module","device training record","emergency response drill"]},
+         "events_ar":["دليل كفاءة معلق","متابعة وحدة إلزامية","تغيير حجز محاكاة","تصحيح شهادة","اعتماد مهارات سنوي"],
+         "objects":["basic life support certificate","medication competency","infection-control module","device training record","emergency response drill"],
+         "objects_ar":["شهادة الإنعاش الأساسي","كفاءة الأدوية","وحدة مكافحة العدوى","سجل تدريب الأجهزة","تمرين الاستجابة للطوارئ"]},
     ],
     "admin": [
-        {"id":"hr","area":"Human Resources","senders":["HR Operations","Workforce Services","Employee Relations"],
+        {"id":"hr","area":"Human Resources","senders":["HR Operations","Workforce Services","Employee Relations"],"senders_ar":["عمليات الموارد البشرية","خدمات القوى العاملة","علاقات الموظفين"],
          "events":["employee record verification","leave balance correction","benefit enrolment follow-up","contract detail confirmation","attendance exception"],
-         "objects":["bank information record","annual leave request","housing allowance","employment contract","attendance log"]},
-        {"id":"finance","area":"Finance","senders":["Finance Operations","Accounts Payable","Revenue Cycle"],
+         "events_ar":["تحقق سجل موظف","تصحيح رصيد إجازة","متابعة تسجيل مزايا","تأكيد تفاصيل عقد","استثناء حضور"],
+         "objects":["bank information record","annual leave request","housing allowance","employment contract","attendance log"],
+         "objects_ar":["سجل بيانات بنكية","طلب إجازة سنوية","بدل سكن","عقد العمل","سجل الحضور"]},
+        {"id":"finance","area":"Finance","senders":["Finance Operations","Accounts Payable","Revenue Cycle"],"senders_ar":["عمليات المالية","الحسابات الدائنة","دورة الإيرادات"],
          "events":["invoice exception review","payment batch confirmation","cost-centre correction","refund approval follow-up","reconciliation item"],
-         "objects":["medical supplier invoice","insurance remittance","patient refund","purchase order","monthly reconciliation file"]},
-        {"id":"procurement","area":"Procurement","senders":["Procurement Office","Supply Chain","Vendor Management"],
+         "events_ar":["مراجعة استثناء فاتورة","تأكيد دفعة سداد","تصحيح مركز تكلفة","متابعة اعتماد استرداد","بند مطابقة"],
+         "objects":["medical supplier invoice","insurance remittance","patient refund","purchase order","monthly reconciliation file"],
+         "objects_ar":["فاتورة مورد طبي","تحويل تأميني","استرداد مريض","أمر شراء","ملف مطابقة شهري"]},
+        {"id":"procurement","area":"Procurement","senders":["Procurement Office","Supply Chain","Vendor Management"],"senders_ar":["مكتب المشتريات","سلسلة الإمداد","إدارة الموردين"],
          "events":["supplier document renewal","quotation clarification","delivery discrepancy","contract review","vendor onboarding update"],
-         "objects":["surgical consumables contract","laboratory reagent order","PPE delivery","maintenance agreement","pharmacy supplier profile"]},
-        {"id":"insurance","area":"Insurance Coordination","senders":["Insurance Office","Claims Management","Revenue Integrity"],
+         "events_ar":["تجديد مستند مورد","توضيح عرض سعر","تباين تسليم","مراجعة عقد","تحديث تسجيل مورد"],
+         "objects":["surgical consumables contract","laboratory reagent order","PPE delivery","maintenance agreement","pharmacy supplier profile"],
+         "objects_ar":["عقد مستلزمات جراحية","طلب كواشف مختبر","تسليم معدات وقاية","اتفاقية صيانة","ملف مورد الصيدلية"]},
+        {"id":"insurance","area":"Insurance Coordination","senders":["Insurance Office","Claims Management","Revenue Integrity"],"senders_ar":["مكتب التأمين","إدارة المطالبات","نزاهة الإيرادات"],
          "events":["claim documentation correction","coverage verification","pre-authorisation follow-up","rejected claim review","payer rule update"],
-         "objects":["inpatient claim","day-surgery approval","radiology authorisation","pharmacy claim","emergency admission record"]},
-        {"id":"records","area":"Health Information Management","senders":["Medical Records","Document Control","Health Information Management"],
+         "events_ar":["تصحيح مستندات مطالبة","تحقق تغطية","متابعة تصريح مسبق","مراجعة مطالبة مرفوضة","تحديث قواعد جهة الدفع"],
+         "objects":["inpatient claim","day-surgery approval","radiology authorisation","pharmacy claim","emergency admission record"],
+         "objects_ar":["مطالبة تنويم","اعتماد جراحة يوم واحد","تصريح أشعة","مطالبة صيدلية","سجل دخول طوارئ"]},
+        {"id":"records","area":"Health Information Management","senders":["Medical Records","Document Control","Health Information Management"],"senders_ar":["السجلات الطبية","ضبط المستندات","إدارة المعلومات الصحية"],
          "events":["record completion reminder","scanning discrepancy","release request follow-up","retention notice","coding clarification"],
-         "objects":["discharge summary","consent form","patient file index","coding worksheet","record release form"]},
-        {"id":"audit","area":"Internal Audit","senders":["Internal Audit","Compliance Office","Quality Assurance"],
+         "events_ar":["تذكير إكمال سجل","تباين مسح ضوئي","متابعة طلب إفراج","إشعار احتفاظ","توضيح ترميز"],
+         "objects":["discharge summary","consent form","patient file index","coding worksheet","record release form"],
+         "objects_ar":["ملخص خروج","نموذج موافقة","فهرس ملف مريض","ورقة ترميز","نموذج إفراج سجل"]},
+        {"id":"audit","area":"Internal Audit","senders":["Internal Audit","Compliance Office","Quality Assurance"],"senders_ar":["التدقيق الداخلي","مكتب الامتثال","ضمان الجودة"],
          "events":["sample evidence request","audit finding response","control-owner confirmation","policy exception review","closure evidence reminder"],
-         "objects":["cash handling control","patient identity audit","procurement sample","access review","document retention control"]},
-        {"id":"schedule","area":"Workforce Scheduling","senders":["Scheduling Office","Operations Planning","Roster Coordination"],
+         "events_ar":["طلب دليل عينة","رد على نتيجة تدقيق","تأكيد مالك الضابط","مراجعة استثناء سياسة","تذكير دليل إغلاق"],
+         "objects":["cash handling control","patient identity audit","procurement sample","access review","document retention control"],
+         "objects_ar":["ضابط تداول نقدي","تدقيق هوية مريض","عينة مشتريات","مراجعة صلاحيات","ضابط احتفاظ مستندات"]},
+        {"id":"schedule","area":"Workforce Scheduling","senders":["Scheduling Office","Operations Planning","Roster Coordination"],"senders_ar":["مكتب الجدولة","تخطيط العمليات","تنسيق الجداول"],
          "events":["roster revision","coverage gap follow-up","overtime confirmation","shift-swap exception","holiday schedule update"],
-         "objects":["weekend coverage","Ramadan roster","on-call schedule","clinic reception rota","annual leave coverage"]},
+         "events_ar":["مراجعة جدول","متابعة فجوة تغطية","تأكيد وقت إضافي","استثناء تبديل مناوبة","تحديث جدول إجازة"],
+         "objects":["weekend coverage","Ramadan roster","on-call schedule","clinic reception rota","annual leave coverage"],
+         "objects_ar":["تغطية عطلة نهاية الأسبوع","جدول رمضان","جدول المناوبة","جدول استقبال العيادة","تغطية إجازة سنوية"]},
     ],
     "it": [
-        {"id":"access","area":"Identity and Access","senders":["Identity Services","Access Governance","IT Security"],
+        {"id":"access","area":"Identity and Access","senders":["Identity Services","Access Governance","IT Security"],"senders_ar":["خدمات الهوية","حوكمة الصلاحيات","أمن تقنية المعلومات"],
          "events":["access recertification","privileged account review","inactive account follow-up","role assignment correction","MFA registration notice"],
-         "objects":["EMR access","PACS account","VPN profile","shared mailbox permission","administrator role"]},
-        {"id":"network","area":"Network Operations","senders":["Network Operations","Infrastructure Services","NOC Team"],
+         "events_ar":["إعادة اعتماد صلاحية","مراجعة حساب مميز","متابعة حساب غير نشط","تصحيح تعيين دور","إشعار تسجيل تحقق ثنائي"],
+         "objects":["EMR access","PACS account","VPN profile","shared mailbox permission","administrator role"],
+         "objects_ar":["صلاحية النظام الطبي","حساب نظام الصور","ملف VPN","صلاحية بريد مشترك","دور مسؤول"]},
+        {"id":"network","area":"Network Operations","senders":["Network Operations","Infrastructure Services","NOC Team"],"senders_ar":["عمليات الشبكة","خدمات البنية التحتية","فريق مركز العمليات"],
          "events":["gateway maintenance notice","certificate update","wireless profile change","firewall exception review","remote access follow-up"],
-         "objects":["clinical Wi-Fi profile","VPN gateway","patient portal certificate","firewall rule","remote support session"]},
-        {"id":"service_desk","area":"IT Service Desk","senders":["IT Service Desk","Technical Support","Endpoint Services"],
+         "events_ar":["إشعار صيانة بوابة","تحديث شهادة","تغيير ملف لاسلكي","مراجعة استثناء جدار حماية","متابعة وصول عن بعد"],
+         "objects":["clinical Wi-Fi profile","VPN gateway","patient portal certificate","firewall rule","remote support session"],
+         "objects_ar":["ملف واي فاي سريري","بوابة VPN","شهادة بوابة المريض","قاعدة جدار حماية","جلسة دعم عن بعد"]},
+        {"id":"service_desk","area":"IT Service Desk","senders":["IT Service Desk","Technical Support","Endpoint Services"],"senders_ar":["مكتب خدمات تقنية المعلومات","الدعم الفني","خدمات الأجهزة الطرفية"],
          "events":["ticket closure confirmation","device compliance alert","software deployment notice","remote support request","asset assignment correction"],
-         "objects":["laptop encryption status","clinical workstation","printer driver","antivirus agent","mobile device enrolment"]},
-        {"id":"backup","area":"Data Protection","senders":["Backup Operations","Data Protection","Infrastructure Reliability"],
+         "events_ar":["تأكيد إغلاق تذكرة","تنبيه امتثال جهاز","إشعار نشر برنامج","طلب دعم عن بعد","تصحيح تعيين أصل"],
+         "objects":["laptop encryption status","clinical workstation","printer driver","antivirus agent","mobile device enrolment"],
+         "objects_ar":["حالة تشفير الجهاز المحمول","محطة عمل سريرية","برنامج تشغيل طابعة","برنامج مكافحة فيروسات","تسجيل جهاز محمول"]},
+        {"id":"backup","area":"Data Protection","senders":["Backup Operations","Data Protection","Infrastructure Reliability"],"senders_ar":["عمليات النسخ الاحتياطي","حماية البيانات","موثوقية البنية التحتية"],
          "events":["backup failure review","restore test confirmation","retention policy update","storage quota alert","replication exception"],
-         "objects":["EMR backup job","radiology archive","shared drive snapshot","database restore test","cloud backup account"]},
-        {"id":"change","area":"Change Management","senders":["Change Advisory Board","Release Management","Clinical Systems"],
+         "events_ar":["مراجعة فشل نسخ احتياطي","تأكيد اختبار استعادة","تحديث سياسة الاحتفاظ","تنبيه حصة تخزين","استثناء تكرار"],
+         "objects":["EMR backup job","radiology archive","shared drive snapshot","database restore test","cloud backup account"],
+         "objects_ar":["مهمة نسخ النظام الطبي","أرشيف الأشعة","لقطة قرص مشترك","اختبار استعادة قاعدة بيانات","حساب نسخ سحابي"]},
+        {"id":"change","area":"Change Management","senders":["Change Advisory Board","Release Management","Clinical Systems"],"senders_ar":["مجلس استشارة التغيير","إدارة الإصدارات","الأنظمة السريرية"],
          "events":["change approval pending","release window confirmation","rollback plan review","emergency change notice","post-change validation"],
-         "objects":["EMR upgrade","pharmacy interface","laboratory middleware","patient portal release","network core update"]},
+         "events_ar":["اعتماد تغيير معلق","تأكيد نافذة إصدار","مراجعة خطة تراجع","إشعار تغيير طارئ","تحقق ما بعد التغيير"],
+         "objects":["EMR upgrade","pharmacy interface","laboratory middleware","patient portal release","network core update"],
+         "objects_ar":["ترقية النظام الطبي","واجهة الصيدلية","برمجية وسيطة للمختبر","إصدار بوابة المريض","تحديث الشبكة الأساسية"]},
     ],
     "other": [
-        {"id":"policy","area":"Hospital Operations","senders":["Hospital Operations","Policy Office","Corporate Services"],
+        {"id":"policy","area":"Hospital Operations","senders":["Hospital Operations","Policy Office","Corporate Services"],"senders_ar":["عمليات المستشفى","مكتب السياسات","الخدمات المؤسسية"],
          "events":["policy acknowledgement","service update","department contact verification","facility notice","staff information update"],
-         "objects":["visitor policy","parking permit","staff directory","emergency contact list","facility access notice"]},
-        {"id":"training","area":"Staff Development","senders":["Staff Development","Learning Office","Training Coordination"],
+         "events_ar":["إقرار سياسة","تحديث خدمة","تحقق جهة اتصال قسم","إشعار مرفق","تحديث بيانات موظف"],
+         "objects":["visitor policy","parking permit","staff directory","emergency contact list","facility access notice"],
+         "objects_ar":["سياسة الزوار","تصريح موقف سيارات","دليل الموظفين","قائمة اتصال الطوارئ","إشعار دخول المرفق"]},
+        {"id":"training","area":"Staff Development","senders":["Staff Development","Learning Office","Training Coordination"],"senders_ar":["تطوير الموظفين","مكتب التعلم","تنسيق التدريب"],
          "events":["training completion follow-up","certificate review","course booking change","attendance confirmation","learning record correction"],
-         "objects":["mandatory induction","cybersecurity module","fire safety course","patient privacy training","annual competency record"]},
+         "events_ar":["متابعة إكمال تدريب","مراجعة شهادة","تغيير حجز دورة","تأكيد حضور","تصحيح سجل تعلم"],
+         "objects":["mandatory induction","cybersecurity module","fire safety course","patient privacy training","annual competency record"],
+         "objects_ar":["تهيئة إلزامية","وحدة الأمن السيبراني","دورة السلامة من الحريق","تدريب خصوصية المريض","سجل كفاءة سنوي"]},
     ],
 }
 
@@ -11237,20 +8262,27 @@ def _v40_plan(role, index, language, phase):
     mem = _v40_memory(role_type, language, phase)
     families = [x for x in bank if x["id"] not in set(mem["family"][-5:])] or bank
     family = _V40_RNG.choice(families)
-    event = _v40_choose_fresh(family["events"], mem["event"], 14)
-    obj = _v40_choose_fresh(family["objects"], mem["object"], 14)
+    ar = language == "Arabic"
+    ev_idx = family["events"].index(_v40_choose_fresh(family["events"], mem["event"], 14))
+    ob_idx = family["objects"].index(_v40_choose_fresh(family["objects"], mem["object"], 14))
+    event = family["events"][ev_idx]; obj = family["objects"][ob_idx]
+    event_disp = family.get("events_ar", family["events"])[ev_idx] if ar else event
+    obj_disp = family.get("objects_ar", family["objects"])[ob_idx] if ar else obj
     action = _v40_weighted_action(mem)
     goal = _v40_choose_fresh(V40_GOALS[action], mem["goal"], 6)
     style = _v40_choose_fresh(V40_STYLES, mem["style"], 7)
     combo = f"{family['id']}|{event}|{obj}|{action}|{goal}|{style}"
     for _ in range(30):
         if combo not in mem["combo"][-100:]: break
-        event = _V40_RNG.choice(family["events"]); obj = _V40_RNG.choice(family["objects"])
+        ev_idx = _V40_RNG.randrange(len(family["events"])); ob_idx = _V40_RNG.randrange(len(family["objects"]))
+        event = family["events"][ev_idx]; obj = family["objects"][ob_idx]
+        event_disp = family.get("events_ar", family["events"])[ev_idx] if ar else event
+        obj_disp = family.get("objects_ar", family["objects"])[ob_idx] if ar else obj
         action = _v40_weighted_action(mem); goal = _V40_RNG.choice(V40_GOALS[action]); style = _V40_RNG.choice(V40_STYLES)
         combo = f"{family['id']}|{event}|{obj}|{action}|{goal}|{style}"
     for k,v in [("family",family["id"]),("event",event),("object",obj),("action",action),("goal",goal),("style",style),("combo",combo)]:
         mem[k].append(v); mem[k] = mem[k][-120:]
-    return {"role_type":role_type,"family":family,"event":event,"object":obj,"action":action,"goal":goal,"style":style,"combo":combo,"phase":phase,"language":language}
+    return {"role_type":role_type,"family":family,"event":event,"object":obj,"event_disp":event_disp,"object_disp":obj_disp,"action":action,"goal":goal,"style":style,"combo":combo,"phase":phase,"language":language}
 
 
 def _v40_deadline(language):
@@ -11260,10 +8292,15 @@ def _v40_deadline(language):
 
 
 def _v40_domain():
+    # Medium-level domains should visually resemble the hospital's real
+    # domain family (per spec: "يبدو قريبًا من الرسمي") rather than a
+    # fully generic/unrelated word, while still being clearly unofficial.
     return _V40_RNG.choice([
-        "care-workflow.org","clinical-review.net","hospital-tasks.com","med-docs.org",
-        "staff-services.net","health-workspace.com","carecoordination.org","moh-services.net",
-        "hospital-share.org","clinical-portal.net","medsupport-services.com","health-records.org"
+        "hospital-portal.net", "hospital-tasks.org", "hospital-docs.net",
+        "hospital-connect.com", "hospital-workspace.org", "moh-hospital.net",
+        "hospital-secure.net", "hospitalstaff-services.com", "hospital-review.org",
+        "care-hospital.net", "hospital-records.org", "hospital-update.com",
+        "clinical-hospital.net", "hospital-hr.org", "hospital-quality.net",
     ])
 
 
@@ -11275,7 +8312,9 @@ def _v40_goal_label(goal, language):
 
 def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase):
     ar = plan["language"] == "Arabic"; fam=plan["family"]; area=fam["area"]
-    sender=_V40_RNG.choice(fam["senders"]); event=plan["event"]; obj=plan["object"]; goal=_v40_goal_label(plan["goal"],plan["language"]); deadline=_v40_deadline(plan["language"])
+    _sidx=_V40_RNG.randrange(len(fam["senders"]))
+    sender=(fam.get("senders_ar",fam["senders"])[_sidx] if ar else fam["senders"][_sidx])
+    event=plan["event_disp"]; obj=plan["object_disp"]; goal=_v40_goal_label(plan["goal"],plan["language"]); deadline=_v40_deadline(plan["language"])
     if ar:
         area_ar=V40_AR_TERMS.get(area,area)
         greetings=[f"فريق {area_ar}","الزملاء الكرام","صباح الخير","الزملاء المعنيون","تحية طيبة"]
@@ -11313,7 +8352,15 @@ Recipient: {recipient}
 MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}
 Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action."""
     try:
-        raw=call_ai(instruction,max_tokens=900)
+        data = call_ai(instruction, max_tokens=900)
+        if not isinstance(data, dict) or "error" in data:
+            try: _store_debug("v40_api_copy", f"provider error: {str(data)[:300]}")
+            except Exception: pass
+            return None
+        text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "")
+        if not text:
+            return None
+        raw = text
         obj=parse_json_response(raw)
         if isinstance(obj,dict):
             subject=str(obj.get("subject","")).strip(); body=str(obj.get("body","")).strip()
@@ -11323,6 +8370,171 @@ Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order a
         try: _store_debug("v40_api_copy",str(e))
         except Exception: pass
     return None
+
+
+# =============================================================
+# v41 patch — scenario-derived indicators & analysis
+# -------------------------------------------------------------
+# Goal: indicators #2/#3(/#4) and the "why risky" / "learning tip"
+# text must be DERIVED from the actual scenario data (family/area/
+# event/object/action/deadline), not from a fixed template keyed
+# only on action_type. This keeps every generation reproducible
+# and schema-safe while making the content vary naturally with the
+# scenario, matching the "Indicators -> Analysis" requirement.
+# Nothing here touches Easy/Hard, UI, or any file outside this
+# engine.
+# =============================================================
+
+def _v41_domain_indicator(domain, area, ar):
+    if ar:
+        variants = [
+            (f"نطاق مرسل غير معتمد", f"النطاق {domain} ليس ضمن نطاقات المستشفى الرسمية، رغم أن الرسالة تخص {area}."),
+            (f"نطاق مرسل غير معتمد", f"يستخدم المرسل {domain} بدل النطاق الرسمي، وهذا لا يتطابق مع مراسلات {area} المعتادة."),
+        ]
+    else:
+        variants = [
+            ("Unapproved sender domain", f"The sender uses {domain}, not the hospital's official domain, even though the message concerns {area}."),
+            ("Unapproved sender domain", f"This message claims to be from {area}, but {domain} does not match any approved hospital domain."),
+        ]
+    title, desc = _V40_RNG.choice(variants)
+    return _v30_indicator(1, "domain", title, desc, domain, "from")
+
+
+def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phrase, deadline, ar):
+    """Returns the 2-3 action-specific indicator tuples (title, desc, evidence, target, key)."""
+    raw_area = plan["family"]["area"]
+    area = V40_AR_TERMS.get(raw_area, raw_area) if ar else raw_area
+    event = plan["event_disp"]; obj = plan["object_disp"]
+    out = []
+    if action == "pdf_attachment":
+        if ar:
+            out.append(("attachment","مرفق PDF غير متوقع",
+                _V40_RNG.choice([f"المرفق {attachment} يخص {obj} ولم يُطلب عبر مسار {area} المعتاد.",
+                                 f"يرسل هذا المرفق ملخص {obj} كملف PDF بدل مراجعته داخل النظام."]), attachment, "attachment"))
+            out.append(("workflow","طلب مراجعة خارج المسار المعتاد",
+                _V40_RNG.choice([f"تُحوّل الرسالة بند {event} إلى مرفق بريدي بدل نظام {area} الداخلي.",
+                                 f"مراجعة {obj} تتم عادة داخل النظام، لا عبر مرفق بريد وارد."]), evidence_phrase, "body"))
+        else:
+            out.append(("attachment","Unexpected PDF attachment",
+                _V40_RNG.choice([f"The attachment {attachment} concerns {obj} but was not requested through the usual {area} workflow.",
+                                 f"A summary of {obj} is sent as a PDF instead of being reviewed inside the system."]), attachment, "attachment"))
+            out.append(("workflow","Unexpected document workflow",
+                _V40_RNG.choice([f"The message moves the {event} item into an emailed attachment instead of the normal {area} system.",
+                                  f"{obj.capitalize()} items are normally reviewed inside the system, not via an emailed attachment."]), evidence_phrase, "body"))
+    elif action == "reply_request":
+        if ar:
+            out.append(("reply_request","طلب معلومات عبر الرد",
+                _V40_RNG.choice([f"تطلب الرسالة بيانات الموظف عبر الرد بخصوص {event} بدل النظام الرسمي.",
+                                  f"يُطلب تأكيد الهوية بالرد على رسالة تخص {obj}، بدل القناة المعتمدة."]), evidence_phrase, "body"))
+            out.append(("workflow","مسار تحقق غير قياسي",
+                _V40_RNG.choice([f"لا يُفترض تأكيد رقم الموظف والقسم عبر رسالة غير متوقعة بخصوص {area}.",
+                                  f"مسار {area} المعتمد لا يعتمد على الرد ببيانات شخصية داخل البريد."]),
+                "رقم الموظف والقسم" if ar else "employee number and department", "body"))
+        else:
+            out.append(("reply_request","Reply-based information request",
+                _V40_RNG.choice([f"The email asks for employee details by reply regarding {event}, instead of the official system.",
+                                  f"Identity confirmation for {obj} is requested by reply rather than the approved channel."]), evidence_phrase, "body"))
+            out.append(("workflow","Non-standard verification workflow",
+                _V40_RNG.choice([f"Employee identity details should not be confirmed through an unexpected email about {area}.",
+                                  f"The approved {area} workflow never verifies staff identity by email reply."]),
+                "employee number and department", "body"))
+    elif action == "sharepoint":
+        if ar:
+            out.append(("sharepoint","إشعار مشاركة غير متوقع",
+                _V40_RNG.choice([f"تدّعي الرسالة مشاركة مستند يخص {obj} دون سياق مؤكد من داخل {area}.",
+                                  f"لا يوجد إشعار مسبق داخل النظام عن مشاركة مستند {event}."]), evidence_phrase, "body"))
+            out.append(("link","وجهة مشاركة خارجية",
+                f"الزر يقود إلى {domain} وليس Microsoft أو نطاق المستشفى.", link, "link"))
+        else:
+            out.append(("sharepoint","Unexpected shared-document notice",
+                _V40_RNG.choice([f"The message claims a shared document about {obj} without confirmed context from {area}.",
+                                  f"There is no prior in-system notice about sharing a {event} document."]), evidence_phrase, "body"))
+            out.append(("link","Unapproved sharing destination",
+                f"The shared-document button resolves to {domain}, not an approved Microsoft or hospital domain.", link, "link"))
+    elif action == "internal_workspace":
+        if ar:
+            out.append(("workflow","مساحة عمل غير معروفة",
+                _V40_RNG.choice([f"تشير الرسالة إلى مساحة عمل عامة بخصوص {obj} بدل نظام {area} المحفوظ.",
+                                  f"لا يوجد اسم نظام معروف يربط {event} بهذه المساحة."]), evidence_phrase, "body"))
+            out.append(("link","زر إلى نطاق خارجي", f"وجهة مساحة العمل هي {domain}.", link, "link"))
+        else:
+            out.append(("workflow","Unrecognized internal workspace",
+                _V40_RNG.choice([f"The email references a generic workspace for {obj} rather than a known {area} system.",
+                                  f"No bookmarked hospital system is named for this {event} task."]), evidence_phrase, "body"))
+            out.append(("link","Workspace button leads externally", f"The workspace button resolves to the external domain {domain}.", link, "link"))
+    elif action == "visible_link":
+        if ar:
+            out.append(("deadline","ضغط زمني معقول ظاهريًا",
+                f"المهلة ({deadline}) بخصوص {event} تبدو مهنية لكنها تشجع على التصرف قبل التحقق المستقل.", deadline, "body"))
+            out.append(("link","رابط خارجي ظاهر", f"الرابط الظاهر لمتابعة {obj} يستخدم النطاق غير المعتمد {domain}.", link, "link"))
+        else:
+            out.append(("deadline","Plausible time pressure",
+                f"The deadline ({deadline}) tied to {event} sounds routine but encourages action before independent verification.", deadline, "body"))
+            out.append(("link","Visible external link", f"The visible URL for the {obj} follow-up uses the unapproved domain {domain}.", link, "link"))
+    else:  # button
+        if ar:
+            out.append(("workflow","إجراء عبر زر غير متوقع",
+                _V40_RNG.choice([f"يحول الطلب إجراء {area} الداخلي بخصوص {obj} إلى زر داخل رسالة غير متوقعة.",
+                                  f"عادة لا يُنجز بند {event} عبر زر داخل بريد وارد."]), evidence_phrase, "body"))
+            out.append(("link","وجهة زر غير معتمدة", f"الزر يقود إلى {domain} بدل نظام {area} الرسمي.", link, "link"))
+        else:
+            out.append(("workflow","Unexpected button-based workflow",
+                _V40_RNG.choice([f"The message turns an internal {area} process about {obj} into an unexpected emailed button.",
+                                  f"The {event} task is not normally completed through an emailed button."]), evidence_phrase, "body"))
+            out.append(("link","Button leads to an unapproved domain", f"The button resolves to {domain}, not the official {area} system.", link, "link"))
+    return out
+
+
+def _v41_optional_fourth_indicator(action, plan, domain, link, sender_name, deadline, ar):
+    """Adds a 4th indicator ~half the time, matching the 3-4 range for Medium.
+    Uses a signal not already covered by the action's own indicators."""
+    event = plan["event_disp"]
+    if action == "visible_link":
+        # deadline already covered; add a generic-signer indicator instead
+        if ar:
+            return ("sender_identity","توقيع عام بدل اسم شخص",
+                    f"وقّعت الرسالة باسم جهة عامة ({sender_name}) لا اسم شخص محدد، وهو نمط شائع بالانتحال الداخلي.",
+                    sender_name, "from")
+        return ("sender_identity","Generic signer identity",
+                f"The email is signed by a general office name ({sender_name}), not a specific person — typical of impersonated internal senders.",
+                sender_name, "from")
+    # otherwise add an urgency/deadline indicator tied to this event
+    if ar:
+        return ("deadline","مهلة زمنية مرفقة بالطلب",
+                f"حددت الرسالة مهلة ({deadline}) مرتبطة بـ {event}، ما يشجع على التصرف السريع قبل التحقق.",
+                deadline, "body")
+    return ("deadline","Attached time pressure",
+            f"The message sets a deadline ({deadline}) tied to {event}, encouraging quick action before verification.",
+            deadline, "body")
+
+
+def _v41_build_analysis(plan, inds, domain, ar):
+    area = plan["family"]["area"]; event = plan["event_disp"]; obj = plan["object_disp"]
+    goal_label = _v40_goal_label(plan["goal"], plan["language"])
+    if ar:
+        area_ar = V40_AR_TERMS.get(area, area)
+        why_options = [
+            f"ترتبط الرسالة بسياق {area_ar} واقعي حول {obj}، لكن الأدلة أعلاه — خصوصًا نطاق المرسل وطريقة طلب {goal_label} — لا تتوافق مع مسار العمل الرسمي، لذلك يجب التحقق منها عبر قناة مستقلة.",
+            f"رغم أن الرسالة تبدو منطقية ضمن سيناريو {area_ar} المتعلق بـ {event}، فإن الأدلة المحددة أعلاه (وخصوصًا {domain}) لا تطابق الطريقة المعتمدة للتعامل مع هذا النوع من الطلبات.",
+            f"سياق {obj} يبدو واقعيًا، لكن المؤشرات المحددة أعلاه تُظهر أن الرسالة لم تصدر عن قناة معتمدة داخل المستشفى، لذلك يلزم التحقق المستقل قبل أي إجراء.",
+        ]
+        tip_options = [
+            f"قبل {goal_label} أي بند يخص {obj}، افتح نظام {area_ar} الرسمي من اختصار محفوظ، أو تأكد عبر الدليل الداخلي — وليس عبر الرابط أو المرفق داخل الرسالة.",
+            f"عند وصول رسالة غير متوقعة بخصوص {event}، تحقق من المرسل والطلب عبر قناة {area_ar} الداخلية بدل الضغط أو الرد مباشرة.",
+            f"تعامل بحذر مع أي طلب يخص {obj} يصل عبر البريد: راجع نظام المستشفى الداخلي أو اتصل بفريق {area_ar} مباشرة بدل استخدام رابط أو مرفق الرسالة.",
+        ]
+    else:
+        why_options = [
+            f"The email fits a realistic {area} scenario around {obj}, but the evidence above — especially the sender domain and how it asks you to {plan['goal']} — does not match the hospital's approved workflow, so it should be verified independently.",
+            f"Although the message reads as a plausible {area} update about {event}, the specific evidence above (particularly {domain}) does not align with how the hospital normally handles this kind of request.",
+            f"The context around {obj} feels realistic, but the indicators above show this did not originate from an approved hospital channel, so independent verification is required before acting.",
+        ]
+        tip_options = [
+            f"Before you {plan['goal']} anything related to {obj}, open the official {area} system from a saved bookmark, or confirm through the internal directory — never through the link or attachment in the email itself.",
+            f"When an unexpected message about {event} arrives, verify the sender and the request through the internal {area} channel instead of clicking or replying directly.",
+            f"Treat any request about {obj} that arrives by email with caution: check the hospital's internal system or contact the {area} team directly instead of using the email's link or attachment.",
+        ]
+    return _V40_RNG.choice(why_options), _V40_RNG.choice(tip_options)
 
 
 def _v40_build(role,index,language,phase):
@@ -11343,34 +8555,29 @@ def _v40_build(role,index,language,phase):
     subject,body=api if api else (local_subject,local_body)
     mailbox=_V40_RNG.choice(["coordination","workflow","quality","operations","records","updates"])
     sender=f"{sender_name} <{mailbox}@{domain}>"
-    inds=[_v30_indicator(1,"domain","نطاق مرسل غير معتمد" if ar else "Unapproved sender domain",f"النطاق {domain} ليس نطاق المستشفى الرسمي." if ar else f"The sender uses {domain}, not the hospital's official domain.",domain,"from")]
-    if action=="pdf_attachment":
-        inds += [_v30_indicator(2,"attachment","مرفق PDF غير متوقع" if ar else "Unexpected PDF attachment","المرفق لم يُطلب عبر المسار المعتاد ويجب التحقق منه قبل فتحه." if ar else "The PDF was not requested through the usual workflow and should be verified before opening.",attachment,"attachment"),
-                 _v30_indicator(3,"workflow","طلب مراجعة خارج المسار المعتاد" if ar else "Unexpected document workflow","تطلب الرسالة التعامل مع مستند وصل بالبريد بدل النظام الداخلي." if ar else "The message moves a work item into an emailed attachment instead of the normal internal system.",evidence_phrase,"body")]
-    elif action=="reply_request":
-        inds += [_v30_indicator(2,"reply_request","طلب معلومات عبر الرد" if ar else "Reply-based information request","تطلب الرسالة بيانات موظف عبر الرد بدل النظام الرسمي." if ar else "The email asks for employee information by reply rather than through the official system.",evidence_phrase,"body"),
-                 _v30_indicator(3,"workflow","مسار تحقق غير قياسي" if ar else "Non-standard verification workflow","رقم الموظف والقسم لا يُفترض تأكيدهما عبر رسالة غير متوقعة." if ar else "Employee identity details should not be verified through an unexpected email reply.","رقم الموظف والقسم" if ar else "employee number and department","body")]
-    elif action=="sharepoint":
-        inds += [_v30_indicator(2,"sharepoint","إشعار مشاركة غير متوقع" if ar else "Unexpected shared-document notice","تدعي الرسالة مشاركة مستند دون سياق مؤكد من داخل النظام." if ar else "The message claims a shared document without a confirmed internal context.",evidence_phrase,"body"),
-                 _v30_indicator(3,"link","وجهة مشاركة خارجية" if ar else "Unapproved sharing destination",f"الزر يقود إلى {domain} وليس Microsoft أو نطاق المستشفى." if ar else f"The shared-document button resolves to {domain}, not an approved Microsoft or hospital domain.",link,"link")]
-    elif action=="internal_workspace":
-        inds += [_v30_indicator(2,"workflow","مساحة عمل غير معروفة" if ar else "Unrecognized internal workspace","تستخدم الرسالة اسم مساحة عمل عامة بدل نظام معروف ومحفوظ." if ar else "The email references a generic workspace rather than a known bookmarked hospital system.",evidence_phrase,"body"),
-                 _v30_indicator(3,"link","زر إلى نطاق خارجي" if ar else "Workspace button leads externally",f"وجهة مساحة العمل هي {domain}." if ar else f"The workspace button resolves to the external domain {domain}.",link,"link")]
-    elif action=="visible_link":
-        inds += [_v30_indicator(2,"deadline","ضغط زمني معقول ظاهريًا" if ar else "Plausible time pressure","المهلة تبدو مهنية لكنها تشجع على التصرف قبل التحقق المستقل." if ar else "The deadline sounds routine but encourages action before independent verification.",deadline,"body"),
-                 _v30_indicator(3,"link","رابط خارجي ظاهر" if ar else "Visible external link",f"الرابط الظاهر يستخدم النطاق غير المعتمد {domain}." if ar else f"The visible URL uses the unapproved domain {domain}.",link,"link")]
-    else:
-        inds += [_v30_indicator(2,"workflow","إجراء عبر زر غير متوقع" if ar else "Unexpected button-based workflow","الطلب يحول إجراء داخلي إلى زر داخل رسالة غير متوقعة." if ar else "The message converts an internal work process into an unexpected emailed button.",evidence_phrase,"body"),
-                 _v30_indicator(3,"link","وجهة زر غير معتمدة" if ar else "Button leads to an unapproved domain",f"الزر يقود إلى {domain} بدل النظام الرسمي." if ar else f"The button resolves to {domain}, not the official hospital system.",link,"link")]
-    why=("ترتبط الرسالة بسياق صحي واقعي، لكن الأدلة المحددة أعلاه لا تتوافق مع مسار العمل الرسمي، لذلك يجب التحقق منها عبر قناة مستقلة." if ar else "The email uses a realistic healthcare context, but the specific evidence above does not match the approved workflow and should be verified independently.")
-    tip=("افتح النظام الرسمي من الاختصار المحفوظ أو اتصل بالقسم عبر الدليل الداخلي، ولا تستخدم الإجراء الموجود في الرسالة." if ar else "Open the official system from a saved bookmark or contact the department through the internal directory instead of using the email action.")
-    return {"from":sender,"to":recipient,"subject":subject,"body":_v35_compact(body),"attachment":attachment,"suspicious_link":suspicious_link,"suspicious_text":next((i.get("evidence","") for i in inds if i.get("target")=="body"),""),"indicators":inds,"why_risky":why,"learning_tip":tip,"is_phishing":True,"email_type":"Phishing","attack_type":{"button":"Look-alike workflow button","visible_link":"External review link","pdf_attachment":"Unexpected PDF lure","sharepoint":"Fake shared document","internal_workspace":"Fake internal workspace","reply_request":"Reply-based information harvesting"}[action],"risk_level":"medium","scenario_id":"v40:"+plan["combo"],"scenario_meta":{"engine":"v40","medium_channel_type":{"button":"button","visible_link":"visible_link","pdf_attachment":"pdf_attachment","sharepoint":"sharepoint_button","internal_workspace":"button","reply_request":"internal_reply"}[action],"action_type":action,"goal":plan["goal"],"style":plan["style"],"family_id":plan["family"]["id"],"event":plan["event"],"object":plan["object"]},"medium_channel":medium_channel,"display_time":_V40_RNG.choice(["Monday, 9:18 AM","Tuesday, 1:26 PM","Wednesday, 11:04 AM","Thursday, 8:47 AM","Friday, 2:12 PM","Yesterday, 3:39 PM"])}
+
+    # --- v41: scenario-derived indicators (3, sometimes 4) ---
+    _raw_area = plan["family"]["area"]
+    inds=[_v41_domain_indicator(domain, (V40_AR_TERMS.get(_raw_area, _raw_area) if ar else _raw_area), ar)]
+    action_tuples = _v41_action_indicators(action, plan, domain, link, attachment, evidence_phrase, deadline, ar)
+    n = 2
+    for key, title, desc, evidence, target in action_tuples:
+        inds.append(_v30_indicator(n, key, title, desc, evidence, target)); n += 1
+    if _V40_RNG.random() < 0.5:
+        key, title, desc, evidence, target = _v41_optional_fourth_indicator(action, plan, domain, link, sender_name, deadline, ar)
+        # avoid duplicating evidence already used by another indicator
+        if not any(str(i.get("evidence","")).strip().lower() == str(evidence).strip().lower() for i in inds):
+            inds.append(_v30_indicator(n, key, title, desc, evidence, target)); n += 1
+
+    why, tip = _v41_build_analysis(plan, inds, domain, ar)
+
+    return {"from":sender,"to":recipient,"subject":subject,"body":_v35_compact(body),"attachment":attachment,"suspicious_link":suspicious_link,"suspicious_text":next((i.get("evidence","") for i in inds if i.get("target")=="body"),""),"indicators":inds,"why_risky":why,"learning_tip":tip,"is_phishing":True,"email_type":"Phishing","attack_type":{"button":"Look-alike workflow button","visible_link":"External review link","pdf_attachment":"Unexpected PDF lure","sharepoint":"Fake shared document","internal_workspace":"Fake internal workspace","reply_request":"Reply-based information harvesting"}[action],"risk_level":"medium","scenario_id":"v40:"+plan["combo"],"scenario_meta":{"engine":"v41","medium_channel_type":{"button":"button","visible_link":"visible_link","pdf_attachment":"pdf_attachment","sharepoint":"sharepoint_button","internal_workspace":"button","reply_request":"internal_reply"}[action],"action_type":action,"goal":plan["goal"],"style":plan["style"],"family_id":plan["family"]["id"],"event":plan["event"],"object":plan["object"]},"medium_channel":medium_channel,"display_time":_V40_RNG.choice(["Monday, 9:18 AM","Tuesday, 1:26 PM","Wednesday, 11:04 AM","Thursday, 8:47 AM","Friday, 2:12 PM","Yesterday, 3:39 PM"])}
 
 
 def _v40_validate(result):
     if not isinstance(result,dict) or not result.get("is_phishing"): return False
     body=str(result.get("body",'')); link=str(result.get("suspicious_link",'') or ''); att=str(result.get("attachment",'') or ''); inds=result.get("indicators",[])
-    if len(inds) != 3 or "[QR" in body.upper(): return False
+    if len(inds) not in (3,4) or "[QR" in body.upper(): return False
     if _DIRECT_PASSWORD_RE.search(body) or _DIRECT_THREAT_RE.search(body): return False
     action=str(result.get("scenario_meta",{}).get("action_type",'')); buttons=re.findall(r"\[[^\]]+\]\(https?://[^\)]+\)",body); urls=re.findall(r"https?://[^\s\)\]]+",body)
     if action in {"button","sharepoint","internal_workspace"} and (len(buttons)!=1 or not link or att): return False
