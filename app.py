@@ -1837,7 +1837,7 @@ def render_email_window(email, is_arabic, show_badges=False):
 
     # Keep the suspicious URL exactly once and always before the signature.
     # Provider output may include it inline and again as a trailing standalone line.
-    if suspicious_link and not (_difficulty == "medium" and _medium_channel in {"none", "button"}):
+    if suspicious_link and not has_link_button and not (_difficulty == "medium" and _medium_channel in {"none", "button"}):
         _url_re = re.compile(re.escape(suspicious_link), re.I)
         _seen = [0]
         def _keep_first_url(m):
@@ -6244,7 +6244,7 @@ V30_DIFFICULTY = {
     "hard": {
         "indicator_count": 2, "generic_greeting": False, "personal_greeting": True,
         "direct_credentials": False, "urgency": "logical", "domain_style": "near",
-        "allowed_channels": ("button", "pdf", "xlsx", "sharepoint", "m365", "qr"),
+        "allowed_channels": ("button", "pdf", "xlsx", "docx", "sharepoint", "m365", "qr"),
         "attachments": "allowed", "qr": "allowed", "body_words": (95, 165),
     },
 }
@@ -6363,6 +6363,17 @@ def _v30_display_name(email):
     return " ".join(p.capitalize() for p in parts[-2:]) or _V30_RNG.choice(V30_FIRST_NAMES)
 
 
+def _v30_title_for(email, language):
+    """Hard-level greetings use the real person's name — for physicians that
+    should read naturally too (e.g. "Dear Dr. Ahmed Alotaibi"), since a real
+    internal message would never drop a colleague's title."""
+    local = (email or "").split("@")[0].lower()
+    prefix = local.split(".")[0] if "." in local else local
+    if prefix == "dr":
+        return "Dr. " if language != "Arabic" else "د. "
+    return ""
+
+
 def _v30_domain(difficulty):
     return _V30_RNG.choice({"easy":V30_OBVIOUS_DOMAINS,"medium":V30_SIMILAR_DOMAINS,"hard":V30_NEAR_DOMAINS}[difficulty])
 
@@ -6451,32 +6462,49 @@ def _v30_compose_phishing(plan, role, index):
             ]; why="The message is professionally written and job-relevant, but the look-alike domain and external sign-in workflow are inconsistent with approved hospital practice."; tip="Navigate to the official system independently. Do not use an emailed sign-in button unless the destination has been verified."
         attachment=""
     else:
-        greeting = (f"Dear {person}" if not ar else f"عزيزي {person}")
+        title = _v30_title_for(recipient, lang)
+        greeting = (f"Dear {title}{person}" if not ar else f"عزيزي {title}{person}")
         # hard uses subtle channel/identity issue; no direct credentials or artificial deadline
         channel=plan["channel"]
-        attachment=""
+        attachment=""; qr_marker=""
         disp_obj = plan.get("object_disp", plan["object"])
         disp_area = plan.get("area_disp", plan["area"])
         disp_action = plan.get("action_disp", plan["action"])
         disp_signature = plan.get("signature_disp", plan["signature"])
-        if channel in ("pdf","xlsx"):
-            ext = ".pdf" if channel=="pdf" else ".xlsx"; attachment=re.sub(r"[^a-z0-9]+","_",plan["family_id"])+f"_{_V30_RNG.randrange(10,99)}{ext}"
+        if channel in ("pdf","xlsx","docx"):
+            ext = {"pdf":".pdf","xlsx":".xlsx","docx":".docx"}[channel]
+            attachment=re.sub(r"[^a-z0-9]+","_",plan["family_id"])+f"_{_V30_RNG.randrange(10,99)}{ext}"
+        elif channel == "qr":
+            qr_label = "Verification code" if not ar else "رمز التحقق"
+            qr_marker = f"[QR: {qr_label}]"
+        elif channel == "m365":
+            domain = "hospital365.org" if "365" not in domain else domain
         if ar:
             body=f"{greeting}،\n\nأرسل لك متابعة بخصوص {disp_obj} التي نوقشت ضمن {disp_area}. أضفت مرجع الحالة حتى تتمكن من {disp_action} عند توفر الوقت، ثم تدوين الملاحظة في السجل المعتاد.\n\n"
             if attachment: body += f"ستجد التفاصيل في المرفق {attachment}. يرجى مطابقته مع رقم الحالة في النظام قبل اعتماده.\n\n"
+            elif qr_marker: body += f"للوصول السريع من جوالك، امسح الرمز التالي: {qr_marker}\n\n"
+            elif channel == "m365": body += f"سجّل الدخول عبر [تسجيل الدخول بحساب Microsoft 365]({link}) لعرض المرجع.\n\n"
+            elif channel == "sharepoint": body += f"المستند متاح على SharePoint: [فتح في SharePoint]({link})\n\n"
             else: body += f"مرجع المتابعة متاح هنا: [عرض مرجع الحالة]({link})\n\n"
             body += f"لا توجد حاجة لإرسال أي معلومات حساسة عبر البريد.\n\nمع التقدير،\n{disp_signature}"
             indicators=[_v30_indicator(1,"domain","اختلاف دقيق في هوية النطاق",f"النطاق {domain} قريب بصريًا من النطاق الرسمي لكنه مختلف.",domain,"from")]
             if attachment: indicators.append(_v30_indicator(2,"attachment","مرفق غير متوقع","يجب التحقق من المرفق عبر النظام الداخلي قبل فتحه، حتى لو بدا السياق واقعيًا.",attachment,"attachment"))
+            elif qr_marker: indicators.append(_v30_indicator(2,"qr","رمز QR غير متوقع","لا يُفترض مسح رمز غير معروف للوصول إلى نظام داخلي؛ افتح النظام مباشرة بدل المسح.",qr_label,"body"))
+            elif channel == "m365": indicators.append(_v30_indicator(2,"m365","انتحال تسجيل دخول Microsoft 365","يطلب زر تسجيل الدخول بحساب Microsoft عبر رابط بريدي بدل بوابة المستشفى الرسمية.",domain,"link"))
             else: indicators.append(_v30_indicator(2,"link","رابط خارجي خفي",f"نص الرابط يبدو مهنيًا لكن وجهته هي {domain}.",link,"link"))
             why="السياق واللغة طبيعيان جدًا، لكن هناك اختلافًا دقيقًا في هوية النطاق وقناة خارجية غير متوقعة. هذه مؤشرات متقدمة تتطلب التحقق من التفاصيل."; tip="في الرسائل الواقعية، ركّز على النطاق الفعلي ومسار العمل، وليس على جودة اللغة أو معرفة المرسل بالسياق."
         else:
             body=f"{greeting},\n\nI am following up on {disp_obj}, which was discussed through {disp_area}. I included the case reference so you can {disp_action} when convenient and record the outcome in the usual system.\n\n"
             if attachment: body += f"The supporting detail is in {attachment}. Please match it against the case number in the internal system before relying on it.\n\n"
+            elif qr_marker: body += f"For quick access from your phone, scan the code below: {qr_marker}\n\n"
+            elif channel == "m365": body += f"Please [Sign in with Microsoft 365]({link}) to view the reference.\n\n"
+            elif channel == "sharepoint": body += f"The document is available on SharePoint: [Open in SharePoint]({link})\n\n"
             else: body += f"The reference is available here: [View case reference]({link})\n\n"
             body += f"No sensitive information needs to be sent by email.\n\nKind regards,\n{disp_signature}"
             indicators=[_v30_indicator(1,"domain","Subtle domain discrepancy",f"The domain {domain} is visually close to the official domain but is not identical.",domain,"from")]
             if attachment: indicators.append(_v30_indicator(2,"attachment","Unexpected contextual attachment","The attachment should be verified in the internal system before it is opened, despite the realistic context.",attachment,"attachment"))
+            elif qr_marker: indicators.append(_v30_indicator(2,"qr","Unexpected QR code","An unfamiliar QR code should never be scanned to reach an internal system; open the system directly instead.","Verification code","body"))
+            elif channel == "m365": indicators.append(_v30_indicator(2,"m365","Impersonated Microsoft 365 sign-in","The button asks for a Microsoft 365 sign-in through an emailed link instead of the hospital's own portal.",domain,"link"))
             else: indicators.append(_v30_indicator(2,"link","Hidden external destination",f"The professional-looking link text resolves to {domain}.",link,"link"))
             why="The message is natural and context-aware, but a subtle domain discrepancy and an unexpected external channel indicate a sophisticated phishing attempt."; tip="For realistic emails, inspect the exact domain and verify the workflow independently; polished language is not proof of legitimacy."
 
