@@ -2138,6 +2138,7 @@ def page_home():
     is_arabic      = st.session_state.get("language") == "Arabic"
     dir_attr       = 'rtl' if is_arabic else 'ltr'
     text_align     = 'right' if is_arabic else 'left'
+    flex_justify   = 'flex-end' if is_arabic else 'flex-start'
     hero_grid_cols = '1fr 230px' if is_arabic else '230px 1fr'
 
     st.markdown(f"""<style>
@@ -2179,6 +2180,10 @@ div[data-baseweb="select"] [data-value]{{color:white !important;-webkit-text-fil
 .stSelectbox div[class*="placeholder"]{{color:white !important;-webkit-text-fill-color:white!important;opacity:1!important;}}
 div[data-baseweb="select"] input{{color:white !important;caret-color:white;-webkit-text-fill-color:white!important;}}
 div[data-baseweb="popover"] ul li{{text-align:{text_align} !important;direction:{dir_attr} !important;}}
+div[data-baseweb="popover"] [role="option"]{{text-align:{text_align} !important;direction:{dir_attr} !important;justify-content:{flex_justify} !important;}}
+div[data-baseweb="popover"] [role="listbox"]{{direction:{dir_attr} !important;}}
+div[data-baseweb="menu"] [role="option"]{{text-align:{text_align} !important;direction:{dir_attr} !important;justify-content:{flex_justify} !important;}}
+div[data-baseweb="popover"] li > div{{text-align:{text_align} !important;direction:{dir_attr} !important;width:100%;}}
 .footer-bar{{margin-top:2rem;padding:1.5rem 0;border-top:1px solid rgba(37,99,235,.35);display:flex;justify-content:space-between;align-items:center;color:#7DD3FC;font-size:.95rem;direction:{dir_attr};}}
 .footer-side{{display:flex;align-items:center;gap:.8rem;}}
 button[kind="secondary"]{{width:100% !important;min-height:52px !important;border-radius:14px !important;font-weight:800 !important;font-size:.95rem !important;transition:.2s ease !important;background:rgba(2,6,23,.55) !important;border:2px solid rgba(37,99,235,.35) !important;color:#94A3B8 !important;}}
