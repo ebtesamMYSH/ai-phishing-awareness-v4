@@ -6480,33 +6480,136 @@ def _v30_compose_phishing(plan, role, index):
         elif channel == "m365":
             domain = "hospital365.org" if "365" not in domain else domain
         if ar:
-            body=f"{greeting}،\n\nأرسل لك متابعة بخصوص {disp_obj} التي نوقشت ضمن {disp_area}. أضفت مرجع الحالة حتى تتمكن من {disp_action} عند توفر الوقت، ثم تدوين الملاحظة في السجل المعتاد.\n\n"
-            if attachment: body += f"ستجد التفاصيل في المرفق {attachment}. يرجى مطابقته مع رقم الحالة في النظام قبل اعتماده.\n\n"
-            elif qr_marker: body += f"للوصول السريع من جوالك، امسح الرمز التالي: {qr_marker}\n\n"
-            elif channel == "m365": body += f"سجّل الدخول عبر [تسجيل الدخول بحساب Microsoft 365]({link}) لعرض المرجع.\n\n"
-            elif channel == "sharepoint": body += f"المستند متاح على SharePoint: [فتح في SharePoint]({link})\n\n"
-            else: body += f"مرجع المتابعة متاح هنا: [عرض مرجع الحالة]({link})\n\n"
-            body += f"لا توجد حاجة لإرسال أي معلومات حساسة عبر البريد.\n\nمع التقدير،\n{disp_signature}"
+            area_ar_disp = disp_area
+            intro = _V30_RNG.choice([
+                f"أرسل لك متابعة بخصوص {disp_obj} التي نوقشت ضمن {area_ar_disp}.",
+                f"بالإشارة إلى ما ناقشناه مع {area_ar_disp}، حبيت أشاركك تفاصيل {disp_obj}.",
+                f"طلب مني فريق {area_ar_disp} إرسال تحديث {disp_obj} لك مباشرة.",
+                f"لدي تفاصيل {disp_obj} جاهزة — تطرقنا لها بإيجاز باجتماع {area_ar_disp}.",
+                f"أتابع معك بخصوص {disp_obj} من {area_ar_disp} — حبيت أوصلها لك قبل نهاية اليوم.",
+                f"كما اتفقنا مع {area_ar_disp}، هذا مرجع {disp_obj} اللي تحتاجه.",
+            ])
+            bridge = _V30_RNG.choice([
+                f"أضفت مرجع الحالة حتى تتمكن من {disp_action} عند توفر الوقت، ثم تدوين الملاحظة في السجل المعتاد.",
+                f"تقدر {disp_action} مباشرة من هذا، وتسجل النتيجة بالسجل المعتاد بعدها.",
+                f"خذ وقتك بالإطلاع، وبعدها {disp_action} ودوّن الملاحظة بالنظام كالعادة.",
+                f"ما فيه استعجال — بس {disp_action} متى ما ناسبك ودوّنها بالنظام كالمعتاد.",
+            ])
+            body=f"{greeting}،\n\n{intro} {bridge}\n\n"
+            if attachment: body += _V30_RNG.choice([
+                f"ستجد التفاصيل في المرفق {attachment}. يرجى مطابقته مع رقم الحالة في النظام قبل اعتماده.\n\n",
+                f"أرفقت {attachment} وفيه التفاصيل كاملة — يفضل تتأكد من رقم الحالة قبل الاعتماد عليه.\n\n",
+                f"{attachment} فيه كل التفاصيل. طابقه مع رقم الحالة بالنظام قبل ما تتصرف بناءً عليه.\n\n",
+                f"التفاصيل موجودة بالمرفق {attachment}؛ تأكد إن رقم الحالة يطابق قبل ما تكمل.\n\n",
+            ])
+            elif qr_marker: body += _V30_RNG.choice([
+                f"للوصول السريع من جوالك، امسح الرمز التالي: {qr_marker}\n\n",
+                f"إذا أسهل لك، تقدر تمسح الرمز التالي من جوالك: {qr_marker}\n\n",
+                f"مسح الرمز أدناه بياخذك للصفحة مباشرة: {qr_marker}\n\n",
+            ])
+            elif channel == "m365": body += _V30_RNG.choice([
+                f"سجّل الدخول عبر [تسجيل الدخول بحساب Microsoft 365]({link}) لعرض المرجع.\n\n",
+                f"بتحتاج [تسجيل الدخول بحساب Microsoft 365]({link}) عشان تفتح هذا.\n\n",
+                f"الوصول يتطلب [تسجيل دخول سريع بحساب Microsoft 365]({link}).\n\n",
+            ])
+            elif channel == "sharepoint": body += _V30_RNG.choice([
+                f"المستند متاح على SharePoint: [فتح في SharePoint]({link})\n\n",
+                f"حطيته على SharePoint — [فتح في SharePoint]({link}) متى ما جهزت.\n\n",
+                f"بتلقاه على SharePoint حقنا: [فتح في SharePoint]({link})\n\n",
+            ])
+            else: body += _V30_RNG.choice([
+                f"مرجع المتابعة متاح هنا: [عرض مرجع الحالة]({link})\n\n",
+                f"هذا رابط مرجع الحالة: [عرض مرجع الحالة]({link})\n\n",
+                f"تقدر تفتحه من هنا: [عرض مرجع الحالة]({link})\n\n",
+            ])
+            closing = _V30_RNG.choice([
+                "لا توجد حاجة لإرسال أي معلومات حساسة عبر البريد.",
+                "كالعادة، الرجاء عدم تضمين أي تفاصيل حساسة بالبريد.",
+                "ما فيه شي حساس يحتاج يرسل بالبريد بخصوص هذا.",
+                "بس تذكير — خلي أي معلومات حساسة برا البريد الإلكتروني.",
+            ])
+            sign_off = _V30_RNG.choice(["مع التقدير","مع خالص الشكر","تحياتي"])
+            body += f"{closing}\n\n{sign_off}،\n{disp_signature}"
             indicators=[_v30_indicator(1,"domain","اختلاف دقيق في هوية النطاق",f"النطاق {domain} قريب بصريًا من النطاق الرسمي لكنه مختلف.",domain,"from")]
             if attachment: indicators.append(_v30_indicator(2,"attachment","مرفق غير متوقع","يجب التحقق من المرفق عبر النظام الداخلي قبل فتحه، حتى لو بدا السياق واقعيًا.",attachment,"attachment"))
             elif qr_marker: indicators.append(_v30_indicator(2,"qr","رمز QR غير متوقع","لا يُفترض مسح رمز غير معروف للوصول إلى نظام داخلي؛ افتح النظام مباشرة بدل المسح.",qr_label,"body"))
             elif channel == "m365": indicators.append(_v30_indicator(2,"m365","انتحال تسجيل دخول Microsoft 365","يطلب زر تسجيل الدخول بحساب Microsoft عبر رابط بريدي بدل بوابة المستشفى الرسمية.",domain,"link"))
             else: indicators.append(_v30_indicator(2,"link","رابط خارجي خفي",f"نص الرابط يبدو مهنيًا لكن وجهته هي {domain}.",link,"link"))
-            why="السياق واللغة طبيعيان جدًا، لكن هناك اختلافًا دقيقًا في هوية النطاق وقناة خارجية غير متوقعة. هذه مؤشرات متقدمة تتطلب التحقق من التفاصيل."; tip="في الرسائل الواقعية، ركّز على النطاق الفعلي ومسار العمل، وليس على جودة اللغة أو معرفة المرسل بالسياق."
+            why=_V30_RNG.choice([
+                "السياق واللغة طبيعيان جدًا، لكن هناك اختلافًا دقيقًا في هوية النطاق وقناة خارجية غير متوقعة. هذه مؤشرات متقدمة تتطلب التحقق من التفاصيل.",
+                "الرسالة مكتوبة بأسلوب داخلي مقنع تمامًا، إلا أن دقة النطاق والقناة المستخدمة لا تطابقان الإجراءات المعتمدة — وهذا نمط تصيد متقدم يصعب رصده بالنظر السريع.",
+                "لا يوجد استعجال أو لغة تهديد هنا، وهذا بالضبط ما يجعل هذا النوع خطيرًا: الاعتماد فقط على واقعية السياق دون التحقق من النطاق والقناة قد يؤدي لخطأ.",
+            ])
+            tip=_V30_RNG.choice([
+                "في الرسائل الواقعية، ركّز على النطاق الفعلي ومسار العمل، وليس على جودة اللغة أو معرفة المرسل بالسياق.",
+                "لا تحكم على الرسالة من طبيعتها أو معرفتها بتفاصيل عملك — تحقق دائمًا من النطاق الدقيق للمرسل قبل أي إجراء.",
+                "اجعل عادتك التحقق من مسار العمل نفسه: هل هذا القناة اللي تُستخدم فعليًا لهذا النوع من الطلبات، أم قناة جديدة غير معتادة؟",
+            ])
         else:
-            body=f"{greeting},\n\nI am following up on {disp_obj}, which was discussed through {disp_area}. I included the case reference so you can {disp_action} when convenient and record the outcome in the usual system.\n\n"
-            if attachment: body += f"The supporting detail is in {attachment}. Please match it against the case number in the internal system before relying on it.\n\n"
-            elif qr_marker: body += f"For quick access from your phone, scan the code below: {qr_marker}\n\n"
-            elif channel == "m365": body += f"Please [Sign in with Microsoft 365]({link}) to view the reference.\n\n"
-            elif channel == "sharepoint": body += f"The document is available on SharePoint: [Open in SharePoint]({link})\n\n"
-            else: body += f"The reference is available here: [View case reference]({link})\n\n"
-            body += f"No sensitive information needs to be sent by email.\n\nKind regards,\n{disp_signature}"
+            intro = _V30_RNG.choice([
+                f"I am following up on {disp_obj}, which was discussed through {disp_area}.",
+                f"Following our conversation with {disp_area}, I wanted to send over the {disp_obj} details.",
+                f"{disp_area} asked me to share the {disp_obj} update with you directly.",
+                f"I have the {disp_obj} item ready — we touched on this briefly during the {disp_area} meeting.",
+                f"Circling back on {disp_obj} from {disp_area} — wanted to get this to you before end of day.",
+                f"As discussed with {disp_area}, here is the {disp_obj} reference you needed.",
+            ])
+            bridge = _V30_RNG.choice([
+                f"I included the case reference so you can {disp_action} when convenient and record the outcome in the usual system.",
+                f"You should be able to {disp_action} directly from this and log it in the usual system afterward.",
+                f"Take a look when you get a chance and {disp_action}; the usual system will pick up the update.",
+                f"No rush — just {disp_action} whenever it suits you and note it in the system as usual.",
+            ])
+            body=f"{greeting},\n\n{intro} {bridge}\n\n"
+            if attachment: body += _V30_RNG.choice([
+                f"The supporting detail is in {attachment}. Please match it against the case number in the internal system before relying on it.\n\n",
+                f"I've attached {attachment} with the full breakdown — worth checking it against the case number first.\n\n",
+                f"{attachment} has the details. Cross-check it with the case number in the system before acting on it.\n\n",
+                f"Details are in the attached {attachment}; confirm the case number matches before you proceed.\n\n",
+            ])
+            elif qr_marker: body += _V30_RNG.choice([
+                f"For quick access from your phone, scan the code below: {qr_marker}\n\n",
+                f"If it's easier, you can scan this from your phone instead: {qr_marker}\n\n",
+                f"Scanning the code below will take you straight there: {qr_marker}\n\n",
+            ])
+            elif channel == "m365": body += _V30_RNG.choice([
+                f"Please [Sign in with Microsoft 365]({link}) to view the reference.\n\n",
+                f"You'll need to [sign in with your Microsoft 365 account]({link}) to open this.\n\n",
+                f"Access requires a quick [Microsoft 365 sign-in]({link}).\n\n",
+            ])
+            elif channel == "sharepoint": body += _V30_RNG.choice([
+                f"The document is available on SharePoint: [Open in SharePoint]({link})\n\n",
+                f"I've put this on SharePoint — [Open in SharePoint]({link}) when ready.\n\n",
+                f"You'll find it on our SharePoint: [Open in SharePoint]({link})\n\n",
+            ])
+            else: body += _V30_RNG.choice([
+                f"The reference is available here: [View case reference]({link})\n\n",
+                f"Here's the link to the case reference: [View case reference]({link})\n\n",
+                f"You can pull it up here: [View case reference]({link})\n\n",
+            ])
+            closing = _V30_RNG.choice([
+                "No sensitive information needs to be sent by email.",
+                "As always, please don't include any sensitive details over email.",
+                "Nothing sensitive needs to go over email for this one.",
+                "Just a reminder — keep any sensitive information out of email.",
+            ])
+            sign_off = _V30_RNG.choice(["Kind regards","Best regards","Many thanks"])
+            body += f"{closing}\n\n{sign_off},\n{disp_signature}"
             indicators=[_v30_indicator(1,"domain","Subtle domain discrepancy",f"The domain {domain} is visually close to the official domain but is not identical.",domain,"from")]
             if attachment: indicators.append(_v30_indicator(2,"attachment","Unexpected contextual attachment","The attachment should be verified in the internal system before it is opened, despite the realistic context.",attachment,"attachment"))
             elif qr_marker: indicators.append(_v30_indicator(2,"qr","Unexpected QR code","An unfamiliar QR code should never be scanned to reach an internal system; open the system directly instead.","Verification code","body"))
             elif channel == "m365": indicators.append(_v30_indicator(2,"m365","Impersonated Microsoft 365 sign-in","The button asks for a Microsoft 365 sign-in through an emailed link instead of the hospital's own portal.",domain,"link"))
             else: indicators.append(_v30_indicator(2,"link","Hidden external destination",f"The professional-looking link text resolves to {domain}.",link,"link"))
-            why="The message is natural and context-aware, but a subtle domain discrepancy and an unexpected external channel indicate a sophisticated phishing attempt."; tip="For realistic emails, inspect the exact domain and verify the workflow independently; polished language is not proof of legitimacy."
+            why=_V30_RNG.choice([
+                "The message is natural and context-aware, but a subtle domain discrepancy and an unexpected external channel indicate a sophisticated phishing attempt.",
+                "The email reads like a genuinely internal message, yet the exact domain and the delivery channel don't match approved practice — an advanced pattern that's easy to miss at a glance.",
+                "There is no urgency or threatening language here, which is exactly what makes this dangerous: relying on how realistic the context feels, without checking the domain and channel, can lead to a costly mistake.",
+            ])
+            tip=_V30_RNG.choice([
+                "For realistic emails, inspect the exact domain and verify the workflow independently; polished language is not proof of legitimacy.",
+                "Don't judge a message by how natural it sounds or how well it knows your work — always verify the sender's exact domain before acting.",
+                "Make it a habit to check the workflow itself: is this really the channel normally used for this type of request, or an unfamiliar one?",
+            ])
 
     return {"from":sender,"to":recipient,"subject":subject,"body":body,"attachment":attachment,
             "suspicious_link":link if not attachment else (link if diff!="hard" else ""),"suspicious_text":next((i["evidence"] for i in indicators if i["target"]=="body"),""),
