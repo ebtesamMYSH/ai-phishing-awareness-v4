@@ -6329,7 +6329,7 @@ V30_KNOWLEDGE["it"].extend([
     {"id":"vendor_it","area":"Technology Vendor Management","area_ar":"إدارة موردي التقنية","event":"a vendor-support item requiring technical coordination","event_ar":"بند دعم مورد يتطلب تنسيقاً تقنياً","objects":["support entitlement renewal","vendor remote session","license true-up","maintenance agreement","technical escalation"],"objects_ar":["تجديد استحقاق الدعم","جلسة عن بعد للمورد","تسوية ترخيص","اتفاقية صيانة","تصعيد تقني"],"actions":["review the vendor item","open the support record","acknowledge the request"],"actions_ar":["مراجعة بند المورد","فتح سجل الدعم","إقرار الطلب"],"senders":["Technology Vendor Management","IT Commercial Services"],"senders_ar":["إدارة موردي التقنية","الخدمات التجارية لتقنية المعلومات"],"signatures":["Technology Vendor Management","IT Commercial Services"],"signatures_ar":["إدارة موردي التقنية","الخدمات التجارية"]},
     {"id":"continuity","area":"IT Service Continuity","area_ar":"استمرارية خدمات تقنية المعلومات","event":"a resilience item requiring technical review","event_ar":"بند مرونة يتطلب مراجعة تقنية","objects":["disaster recovery exercise","business continuity dependency","recovery time validation","failover test","critical service inventory"],"objects_ar":["تمرين التعافي من الكوارث","اعتمادية استمرارية الأعمال","تحقق زمن الاستعادة","اختبار التبديل التلقائي","جرد الخدمات الحرجة"],"actions":["review the continuity item","open the resilience record","acknowledge the test"],"actions_ar":["مراجعة بند الاستمرارية","فتح سجل المرونة","إقرار الاختبار"],"senders":["IT Service Continuity","Technology Resilience Office"],"senders_ar":["استمرارية خدمات تقنية المعلومات","مكتب مرونة التقنية"],"signatures":["IT Service Continuity","Technology Resilience"],"signatures_ar":["استمرارية الخدمات","مرونة التقنية"]},
 ])
-V30_GENERIC_GREETINGS = {"English":["Dear Staff Member","Hello Clinical Team","Dear Healthcare Employee","Attention Clinical Staff","Dear Colleague"], "Arabic":["عزيزي الموظف","فريق العمل السريري","عزيزي الممارس الصحي","إلى الزملاء السريريين","عزيزي الزميل"]}
+V30_GENERIC_GREETINGS = {"English":["Dear Staff Member","Hello Team","Dear Healthcare Employee","Attention Staff","Dear Colleague"], "Arabic":["عزيزي الموظف","فريق العمل العزيز","عزيزي الممارس الصحي","إلى الزملاء الأعزاء","عزيزي الزميل"]}
 V30_DEPARTMENT_GREETINGS = {"English":["Dear {area} Team","Hello {area} Colleague","To the {area} Team"], "Arabic":["فريق {area} العزيز","الزميل في {area}","إلى فريق {area}"]}
 V30_FIRST_NAMES = ["Sarah Almutairi","Ahmed Alotaibi","Noura Alshamri","Fahad Aldosari","Mona Alharbi","Khalid Alanazi","Lama Alqahtani","Faisal Alzahrani"]
 
@@ -7086,11 +7086,11 @@ V33_SUBJECT_PATTERNS_AR = {
 
 V33_GENERIC_GREETINGS_EN = [
     "Dear Staff Member", "Dear Healthcare Employee", "Dear Colleague",
-    "Hello Clinical Team", "Attention Clinical Staff", "Dear Clinical Team",
+    "Hello Team", "Attention Staff", "Dear Team Member",
 ]
 V33_GENERIC_GREETINGS_AR = [
-    "عزيزي الموظف", "عزيزي الزميل", "فريق العمل السريري",
-    "الزملاء الأعزاء", "إلى أعضاء الفريق السريري", "عزيزي عضو الفريق",
+    "عزيزي الموظف", "عزيزي الزميل", "فريق العمل العزيز",
+    "الزملاء الأعزاء", "إلى أعضاء الفريق", "عزيزي عضو الفريق",
 ]
 
 V33_FAKE_DOMAINS = [
