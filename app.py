@@ -2312,6 +2312,37 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
         other_role = ""
         if sel==opts[-1]: other_role=st.text_input(t("Please specify your role","يرجى كتابة دورك الوظيفي"),placeholder=t("Type your role here","اكتب دورك الوظيفي هنا"))
 
+        if is_arabic:
+            # CSS alone doesn't reliably reach this dropdown's rendered option rows
+            # (BaseWeb renders them as a body-level portal), so force it directly.
+            import streamlit.components.v1 as components
+            components.html("""
+            <script>
+            function fixRoleDropdownRTL() {
+                const doc = window.parent.document;
+                const opts = doc.querySelectorAll('div[data-baseweb="popover"] li, div[data-baseweb="popover"] [role="option"], div[data-baseweb="menu"] li, ul[role="listbox"] li');
+                opts.forEach(function(el) {
+                    el.style.setProperty('direction', 'rtl', 'important');
+                    el.style.setProperty('text-align', 'right', 'important');
+                    el.style.setProperty('justify-content', 'flex-end', 'important');
+                    el.style.setProperty('unicode-bidi', 'plaintext', 'important');
+                    const inner = el.querySelector('div, span');
+                    if (inner) {
+                        inner.style.setProperty('direction', 'rtl', 'important');
+                        inner.style.setProperty('text-align', 'right', 'important');
+                        inner.style.setProperty('width', '100%', 'important');
+                    }
+                });
+                const listboxes = doc.querySelectorAll('ul[role="listbox"], div[role="listbox"]');
+                listboxes.forEach(function(el) { el.style.setProperty('direction', 'rtl', 'important'); });
+            }
+            fixRoleDropdownRTL();
+            const roleObserver = new MutationObserver(fixRoleDropdownRTL);
+            roleObserver.observe(window.parent.document.body, {childList:true, subtree:true});
+            setInterval(fixRoleDropdownRTL, 300);
+            </script>
+            """, height=0, width=0)
+
         st.markdown(step_label("3", t("Select difficulty level","اختر مستوى الصعوبة")), unsafe_allow_html=True)
 
     with panel_col:
