@@ -6539,11 +6539,20 @@ def _v30_compose_phishing(plan, role, index):
                 "السياق واللغة طبيعيان جدًا، لكن هناك اختلافًا دقيقًا في هوية النطاق وقناة خارجية غير متوقعة. هذه مؤشرات متقدمة تتطلب التحقق من التفاصيل.",
                 "الرسالة مكتوبة بأسلوب داخلي مقنع تمامًا، إلا أن دقة النطاق والقناة المستخدمة لا تطابقان الإجراءات المعتمدة — وهذا نمط تصيد متقدم يصعب رصده بالنظر السريع.",
                 "لا يوجد استعجال أو لغة تهديد هنا، وهذا بالضبط ما يجعل هذا النوع خطيرًا: الاعتماد فقط على واقعية السياق دون التحقق من النطاق والقناة قد يؤدي لخطأ.",
+                "أسلوب الرسالة وسياقها الوظيفي يجعلانها تبدو صادرة من زميل حقيقي، لكن الفارق الدقيق بنطاق المرسل هو المؤشر الوحيد الفعلي هنا — ولهذا يصعب اكتشافه بدون تدقيق متأنٍ.",
+                "غياب أي ضغط زمني أو صياغة تهديدية لا يعني أن الرسالة آمنة؛ التصيد المتقدم يعتمد على الثقة والسياق الواقعي بدل الاستعجال.",
+                "المعلومات المذكورة بالرسالة (الاسم، القسم، طبيعة المهمة) دقيقة وواقعية جدًا، وهذا تحديدًا ما يجعل المستلم يقل حذره تجاه تفاصيل النطاق والقناة المستخدمة.",
+                "كل شي بالرسالة يوحي بأنها من داخل المستشفى، لكن القناة المستخدمة (سواء رابط أو مرفق أو رمز) لا تتبع المسار الرسمي المعتاد لهذا النوع من الطلبات.",
+                "هذا النمط من الرسائل مصمم خصيصًا ليتجاوز الفحص السريع؛ يحتاج المستلم فحصًا دقيقًا للنطاق والقناة، لا الاعتماد على انطباعه العام عن الرسالة.",
             ])
             tip=_V30_RNG.choice([
                 "في الرسائل الواقعية، ركّز على النطاق الفعلي ومسار العمل، وليس على جودة اللغة أو معرفة المرسل بالسياق.",
                 "لا تحكم على الرسالة من طبيعتها أو معرفتها بتفاصيل عملك — تحقق دائمًا من النطاق الدقيق للمرسل قبل أي إجراء.",
                 "اجعل عادتك التحقق من مسار العمل نفسه: هل هذا القناة اللي تُستخدم فعليًا لهذا النوع من الطلبات، أم قناة جديدة غير معتادة؟",
+                "قارن نطاق المرسل حرفًا بحرف مع النطاق الرسمي المعروف — الفروقات الدقيقة (حرف مشابه، امتداد إضافي) هي المؤشر الأهم بهذا المستوى.",
+                "لو الرسالة تطلب فتح رابط أو مرفق أو مسح رمز خارج النظام المعتاد، تحقق أولًا مباشرة مع الجهة المعنية قبل أي إجراء، حتى لو بدت الرسالة مألوفة.",
+                "الثقة بالسياق وحدها غير كافية — اسأل نفسك دائمًا: هل هذه بالضبط القناة الرسمية اللي يفترض تصل منها هذا النوع من الطلبات؟",
+                "خصص لحظة للتحقق من عنوان المرسل الكامل قبل أي تفاعل، خصوصًا إذا كانت الرسالة تبدو مألوفة أو من زميل تعرفه.",
             ])
         else:
             intro = _V30_RNG.choice([
@@ -6604,11 +6613,20 @@ def _v30_compose_phishing(plan, role, index):
                 "The message is natural and context-aware, but a subtle domain discrepancy and an unexpected external channel indicate a sophisticated phishing attempt.",
                 "The email reads like a genuinely internal message, yet the exact domain and the delivery channel don't match approved practice — an advanced pattern that's easy to miss at a glance.",
                 "There is no urgency or threatening language here, which is exactly what makes this dangerous: relying on how realistic the context feels, without checking the domain and channel, can lead to a costly mistake.",
+                "The tone and workplace context make this feel like it's from a real colleague, but the one genuine tell is the subtle sender-domain mismatch — easy to miss without a careful check.",
+                "The absence of urgency or threatening wording doesn't mean this is safe; advanced phishing relies on trust and plausible context rather than pressure.",
+                "The specific details in the message (name, department, task) are accurate and realistic, which is exactly what lowers a reader's guard toward the domain and delivery channel.",
+                "Everything about this message suggests it came from inside the hospital, but the channel used — whether a link, attachment, or code — doesn't follow the normal approved path for this kind of request.",
+                "This pattern is deliberately built to slide past a quick glance; it takes a careful look at the domain and channel, not a general impression of the message, to catch it.",
             ])
             tip=_V30_RNG.choice([
                 "For realistic emails, inspect the exact domain and verify the workflow independently; polished language is not proof of legitimacy.",
                 "Don't judge a message by how natural it sounds or how well it knows your work — always verify the sender's exact domain before acting.",
                 "Make it a habit to check the workflow itself: is this really the channel normally used for this type of request, or an unfamiliar one?",
+                "Compare the sender's domain character by character against the known official one — subtle differences (a lookalike letter, an extra word) are the key signal at this level.",
+                "If a message asks you to open a link or attachment, or scan a code, outside the normal system, verify directly with the sender first — even if the message feels familiar.",
+                "Trusting the context alone isn't enough — always ask: is this really the official channel this type of request is supposed to come through?",
+                "Take a moment to check the full sender address before engaging, especially when the message feels familiar or appears to come from someone you know.",
             ])
 
     return {"from":sender,"to":recipient,"subject":subject,"body":body,"attachment":attachment,
