@@ -1837,7 +1837,7 @@ def render_email_window(email, is_arabic, show_badges=False):
 
     # Keep the suspicious URL exactly once and always before the signature.
     # Provider output may include it inline and again as a trailing standalone line.
-    if suspicious_link and not has_link_button and not (_difficulty == "medium" and _medium_channel in {"none", "button"}):
+    if suspicious_link and not has_link_button and not has_qr and not (_difficulty == "medium" and _medium_channel in {"none", "button"}):
         _url_re = re.compile(re.escape(suspicious_link), re.I)
         _seen = [0]
         def _keep_first_url(m):
