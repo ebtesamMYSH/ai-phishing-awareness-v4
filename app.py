@@ -8452,19 +8452,19 @@ def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phra
                 _V40_RNG.choice([f"المرفق {attachment} يخص {obj} ولم يُطلب عبر مسار {area} المعتاد.",
                                  f"يرسل هذا المرفق ملخص {obj} كملف PDF بدل مراجعته داخل النظام."]), attachment, "attachment"))
             out.append(("workflow","طلب مراجعة خارج المسار المعتاد",
-                _V40_RNG.choice([f"تُحوّل الرسالة بند {event} إلى مرفق بريدي بدل نظام {area} الداخلي.",
+                _V40_RNG.choice([f"تُحوّل الرسالة بند {obj} إلى مرفق بريدي بدل نظام {area} الداخلي.",
                                  f"مراجعة {obj} تتم عادة داخل النظام، لا عبر مرفق بريد وارد."]), evidence_phrase, "body"))
         else:
             out.append(("attachment","Unexpected PDF attachment",
                 _V40_RNG.choice([f"The attachment {attachment} concerns {obj} but was not requested through the usual {area} workflow.",
                                  f"A summary of {obj} is sent as a PDF instead of being reviewed inside the system."]), attachment, "attachment"))
             out.append(("workflow","Unexpected document workflow",
-                _V40_RNG.choice([f"The message moves the {event} item into an emailed attachment instead of the normal {area} system.",
+                _V40_RNG.choice([f"The message moves the {obj} item into an emailed attachment instead of the normal {area} system.",
                                   f"{obj.capitalize()} items are normally reviewed inside the system, not via an emailed attachment."]), evidence_phrase, "body"))
     elif action == "reply_request":
         if ar:
             out.append(("reply_request","طلب معلومات عبر الرد",
-                _V40_RNG.choice([f"تطلب الرسالة بيانات الموظف عبر الرد بخصوص {event} بدل النظام الرسمي.",
+                _V40_RNG.choice([f"تطلب الرسالة بيانات الموظف عبر الرد بخصوص {obj} بدل النظام الرسمي.",
                                   f"يُطلب تأكيد الهوية بالرد على رسالة تخص {obj}، بدل القناة المعتمدة."]),
                 evidence_phrase, "body"))
             out.append(("workflow","مسار تحقق غير قياسي",
@@ -8473,7 +8473,7 @@ def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phra
                 workflow_note, "body"))
         else:
             out.append(("reply_request","Reply-based information request",
-                _V40_RNG.choice([f"The email asks for employee details by reply regarding {event}, instead of the official system.",
+                _V40_RNG.choice([f"The email asks for employee details by reply regarding {obj}, instead of the official system.",
                                   f"Identity confirmation for {obj} is requested by reply rather than the approved channel."]),
                 evidence_phrase, "body"))
             out.append(("workflow","Non-standard verification workflow",
@@ -8484,45 +8484,45 @@ def _v41_action_indicators(action, plan, domain, link, attachment, evidence_phra
         if ar:
             out.append(("sharepoint","إشعار مشاركة غير متوقع",
                 _V40_RNG.choice([f"تدّعي الرسالة مشاركة مستند يخص {obj} دون سياق مؤكد من داخل {area}.",
-                                  f"لا يوجد إشعار مسبق داخل النظام عن مشاركة مستند {event}."]), button_label, "body"))
+                                  f"لا يوجد إشعار مسبق داخل النظام عن مشاركة مستند هذا البند."]), workflow_note or button_label, "body"))
             out.append(("link","وجهة مشاركة خارجية",
                 f"الزر يقود إلى {domain} وليس Microsoft أو نطاق المستشفى.", link, "link"))
         else:
             out.append(("sharepoint","Unexpected shared-document notice",
                 _V40_RNG.choice([f"The message claims a shared document about {obj} without confirmed context from {area}.",
-                                  f"There is no prior in-system notice about sharing a {event} document."]), button_label, "body"))
+                                  f"There is no prior in-system notice about sharing this document."]), workflow_note or button_label, "body"))
             out.append(("link","Unapproved sharing destination",
                 f"The shared-document button resolves to {domain}, not an approved Microsoft or hospital domain.", link, "link"))
     elif action == "internal_workspace":
         if ar:
             out.append(("workflow","مساحة عمل غير معروفة",
                 _V40_RNG.choice([f"تشير الرسالة إلى مساحة عمل عامة بخصوص {obj} بدل نظام {area} المحفوظ.",
-                                  f"لا يوجد اسم نظام معروف يربط {event} بهذه المساحة."]), button_label, "body"))
+                                  f"لا يوجد اسم نظام معروف يربط هذا البند بهذه المساحة."]), workflow_note or button_label, "body"))
             out.append(("link","زر إلى نطاق خارجي", f"وجهة مساحة العمل هي {domain}.", link, "link"))
         else:
             out.append(("workflow","Unrecognized internal workspace",
                 _V40_RNG.choice([f"The email references a generic workspace for {obj} rather than a known {area} system.",
-                                  f"No bookmarked hospital system is named for this {event} task."]), button_label, "body"))
+                                  f"No bookmarked hospital system is named for this task."]), workflow_note or button_label, "body"))
             out.append(("link","Workspace button leads externally", f"The workspace button resolves to the external domain {domain}.", link, "link"))
     elif action == "visible_link":
         if ar:
             out.append(("deadline","ضغط زمني معقول ظاهريًا",
-                f"المهلة ({deadline}) بخصوص {event} تبدو مهنية لكنها تشجع على التصرف قبل التحقق المستقل.", deadline, "body"))
+                f"المهلة ({deadline}) بخصوص {obj} تبدو مهنية لكنها تشجع على التصرف قبل التحقق المستقل.", deadline, "body"))
             out.append(("link","رابط خارجي ظاهر", f"الرابط الظاهر لمتابعة {obj} يستخدم النطاق غير المعتمد {domain}.", link, "link"))
         else:
             out.append(("deadline","Plausible time pressure",
-                f"The deadline ({deadline}) tied to {event} sounds routine but encourages action before independent verification.", deadline, "body"))
+                f"The deadline ({deadline}) tied to {obj} sounds routine but encourages action before independent verification.", deadline, "body"))
             out.append(("link","Visible external link", f"The visible URL for the {obj} follow-up uses the unapproved domain {domain}.", link, "link"))
     else:  # button
         if ar:
             out.append(("workflow","إجراء عبر زر غير متوقع",
                 _V40_RNG.choice([f"يحول الطلب إجراء {area} الداخلي بخصوص {obj} إلى زر داخل رسالة غير متوقعة.",
-                                  f"عادة لا يُنجز بند {event} عبر زر داخل بريد وارد."]), button_label, "body"))
+                                  f"عادة لا يُنجز هذا البند عبر زر داخل بريد وارد."]), workflow_note or button_label, "body"))
             out.append(("link","وجهة زر غير معتمدة", f"الزر يقود إلى {domain} بدل نظام {area} الرسمي.", link, "link"))
         else:
             out.append(("workflow","Unexpected button-based workflow",
                 _V40_RNG.choice([f"The message turns an internal {area} process about {obj} into an unexpected emailed button.",
-                                  f"The {event} task is not normally completed through an emailed button."]), button_label, "body"))
+                                  f"This task is not normally completed through an emailed button."]), workflow_note or button_label, "body"))
             out.append(("link","Button leads to an unapproved domain", f"The button resolves to {domain}, not the official {area} system.", link, "link"))
     return out
 
@@ -8551,29 +8551,29 @@ def _v41_optional_fourth_indicator(action, plan, domain, link, sender_name, dead
 
 
 def _v41_build_analysis(plan, inds, domain, ar):
-    area = plan["family"]["area"]; event = plan["event_disp"]; obj = plan["object_disp"]
+    area = plan["family"]["area"]; obj = plan["object_disp"]
     goal_label = _v40_goal_label(plan["goal"], plan["language"])
     if ar:
         area_ar = V40_AR_TERMS.get(area, area)
         why_options = [
             f"ترتبط الرسالة بسياق {area_ar} واقعي حول {obj}، لكن الأدلة أعلاه — خصوصًا نطاق المرسل وطريقة طلب {goal_label} — لا تتوافق مع مسار العمل الرسمي، لذلك يجب التحقق منها عبر قناة مستقلة.",
-            f"رغم أن الرسالة تبدو منطقية ضمن سيناريو {area_ar} المتعلق بـ {event}، فإن الأدلة المحددة أعلاه (وخصوصًا {domain}) لا تطابق الطريقة المعتمدة للتعامل مع هذا النوع من الطلبات.",
+            f"رغم أن الرسالة تبدو منطقية ضمن سيناريو {area_ar} المتعلق بـ {obj}، فإن الأدلة المحددة أعلاه (وخصوصًا {domain}) لا تطابق الطريقة المعتمدة للتعامل مع هذا النوع من الطلبات.",
             f"سياق {obj} يبدو واقعيًا، لكن المؤشرات المحددة أعلاه تُظهر أن الرسالة لم تصدر عن قناة معتمدة داخل المستشفى، لذلك يلزم التحقق المستقل قبل أي إجراء.",
         ]
         tip_options = [
             f"قبل {goal_label} أي بند يخص {obj}، افتح نظام {area_ar} الرسمي من اختصار محفوظ، أو تأكد عبر الدليل الداخلي — وليس عبر الرابط أو المرفق داخل الرسالة.",
-            f"عند وصول رسالة غير متوقعة بخصوص {event}، تحقق من المرسل والطلب عبر قناة {area_ar} الداخلية بدل الضغط أو الرد مباشرة.",
+            f"عند وصول رسالة غير متوقعة بخصوص {obj}، تحقق من المرسل والطلب عبر قناة {area_ar} الداخلية بدل الضغط أو الرد مباشرة.",
             f"تعامل بحذر مع أي طلب يخص {obj} يصل عبر البريد: راجع نظام المستشفى الداخلي أو اتصل بفريق {area_ar} مباشرة بدل استخدام رابط أو مرفق الرسالة.",
         ]
     else:
         why_options = [
             f"The email fits a realistic {area} scenario around {obj}, but the evidence above — especially the sender domain and how it asks you to {plan['goal']} — does not match the hospital's approved workflow, so it should be verified independently.",
-            f"Although the message reads as a plausible {area} update about {event}, the specific evidence above (particularly {domain}) does not align with how the hospital normally handles this kind of request.",
+            f"Although the message reads as a plausible {area} update about {obj}, the specific evidence above (particularly {domain}) does not align with how the hospital normally handles this kind of request.",
             f"The context around {obj} feels realistic, but the indicators above show this did not originate from an approved hospital channel, so independent verification is required before acting.",
         ]
         tip_options = [
             f"Before you {plan['goal']} anything related to {obj}, open the official {area} system from a saved bookmark, or confirm through the internal directory — never through the link or attachment in the email itself.",
-            f"When an unexpected message about {event} arrives, verify the sender and the request through the internal {area} channel instead of clicking or replying directly.",
+            f"When an unexpected message about {obj} arrives, verify the sender and the request through the internal {area} channel instead of clicking or replying directly.",
             f"Treat any request about {obj} that arrives by email with caution: check the hospital's internal system or contact the {area} team directly instead of using the email's link or attachment.",
         ]
     return _V40_RNG.choice(why_options), _V40_RNG.choice(tip_options)
