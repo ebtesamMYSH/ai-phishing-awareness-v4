@@ -630,6 +630,99 @@ def _save_json_list(path, data):
         pass
 
 # =============================================================
+# EXPERT SESSION SAMPLE LOG (Think-Aloud sessions)
+# -------------------------------------------------------------
+# Priority #4 from the cleanup plan: every email the tool GENERATES
+# LIVE and shows to a domain expert during a Think-Aloud session must
+# be saved verbatim, tied to that expert/session and to whatever they
+# say about it, so later Braun & Clarke qualitative coding (same
+# method as Study 2) can be matched back to the EXACT content the
+# expert was reacting to — not a re-generated approximation of it.
+# This matters because generation is NOT deterministic: the same
+# (role, index, difficulty) can produce different content on different
+# calls (session-scoped RNG + on-disk scenario-history files), so
+# "regenerate it later to check what they saw" does not work.
+#
+# Design:
+#   - Only active when st.session_state["expert_session_id"] is set
+#     (via Researcher Mode on the home page — see page_home). Regular
+#     participant runs (the 259-person Study 3 sample) are NOT logged
+#     here, so this file stays small and purely about expert review.
+#   - One JSON line per shown sample, append-only, human-readable.
+#   - Nothing is ever overwritten or deleted automatically — an
+#     admin-only "clear" action exists for housekeeping, requiring
+#     explicit confirmation (see page_admin, Expert Samples tab).
+# =============================================================
+_EXPERT_SAMPLES_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "expert_samples.jsonl")
+
+
+def is_expert_session_active():
+    return bool(st.session_state.get("expert_session_id", "").strip())
+
+
+def start_expert_session(expert_label):
+    """Called from Researcher Mode on the home page. expert_label is
+    whatever free-text identifier the researcher typed (name, initials,
+    'Expert1' — her choice, not enforced), combined with a timestamp so
+    two sessions from the same person never collide."""
+    ts = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+    label = (expert_label or "expert").strip().replace(" ", "_") or "expert"
+    st.session_state["expert_session_id"] = f"{label}__{ts}"
+
+
+def end_expert_session():
+    st.session_state.pop("expert_session_id", None)
+
+
+def save_expert_sample(email, role, difficulty, language, phase, index):
+    """Append one shown sample to the expert-session log. Silently
+    no-ops when no expert session is active (i.e. normal participant
+    runs), and never raises — a logging failure must never break the
+    training flow for a real participant or expert."""
+    if not is_expert_session_active() or not isinstance(email, dict):
+        return
+    try:
+        rec = {
+            "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+            "expert_session_id": st.session_state["expert_session_id"],
+            "provider": st.session_state.get("ai_provider", ""),
+            "role": role,
+            "role_type": _v30_role_type(role) if "_v30_role_type" in globals() else "",
+            "language": language,
+            "difficulty": difficulty,
+            "phase": phase,          # "learn" or "assess"
+            "index": index,          # which of the 6/10 slots this was
+            "email": email,          # the FULL generated object, verbatim
+        }
+        with open(_EXPERT_SAMPLES_FILE_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:
+        try:
+            _store_debug("expert_sample_save", str(e))
+        except Exception:
+            pass
+
+
+def load_expert_samples():
+    """Read all logged expert samples back as a list of dicts (JSONL,
+    one record per line — tolerant of a trailing partial/corrupt line
+    so one bad write can't hide every earlier session)."""
+    rows = []
+    try:
+        with open(_EXPERT_SAMPLES_FILE_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except Exception:
+                    continue
+    except FileNotFoundError:
+        pass
+    return rows
+
+# =============================================================
 # FULL EXCEL EXPORT — one workbook, several sheets:
 #   - Summary: one row per (provider, language) with all 9 metrics
 #   - One sheet PER PROVIDER (Groq/Claude/OpenAI/Gemini) with its own
@@ -1497,6 +1590,10 @@ def parse_json_response(raw):
     raw = raw.strip()
     raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
     raw = fix_json_newlines(raw)
+    # Trailing commas before a closing } or ] are a common AI-output quirk
+    # (e.g. `{"a": 1, "b": 2,}`) that json.loads rejects outright — strip
+    # them defensively before every parse attempt below.
+    raw = re.sub(r',\s*([}\]])', r'\1', raw)
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -1505,6 +1602,7 @@ def parse_json_response(raw):
     if match:
         candidate = match.group(0)
         candidate = re.sub(r"(?<=\w)'(?=\w)", "\u2019", candidate)
+        candidate = re.sub(r',\s*([}\]])', r'\1', candidate)
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
@@ -2295,6 +2393,22 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
                         st.rerun()
             st.markdown(f'<div style="font-size:.72rem;color:#64748B;margin-top:.3rem;direction:{dir_attr};">Active: <b style="color:#F59E0B;">{provider_options.get(cur_provider,"")}</b></div>', unsafe_allow_html=True)
 
+            st.markdown('<div style="height:.9rem"></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:.75rem;font-weight:800;color:#F59E0B;letter-spacing:.06em;margin-bottom:.5rem;direction:{dir_attr};">🎙️ EXPERT THINK-ALOUD SESSION</div>', unsafe_allow_html=True)
+            if is_expert_session_active():
+                st.markdown(f'<div style="font-size:.78rem;color:#6EE7B7;direction:{dir_attr};">🔴 Recording — every sample shown from here on is saved verbatim under: <b>{st.session_state["expert_session_id"]}</b></div>', unsafe_allow_html=True)
+                if st.button(t("⏹ End expert session","⏹ إنهاء جلسة الخبير"), key="end_expert_sess", use_container_width=True):
+                    end_expert_session()
+                    st.rerun()
+            else:
+                exp_label = st.text_input(t("Expert / session label","معرّف الخبير / الجلسة"),
+                                           key="expert_label_input",
+                                           placeholder=t("e.g. Dr.Fahad_ClinicalReview","مثال: د.فهد_مراجعة_سريرية"))
+                if st.button(t("▶ Start expert session","▶ ابدأ جلسة الخبير"), key="start_expert_sess", use_container_width=True):
+                    start_expert_session(exp_label)
+                    st.rerun()
+                st.markdown(f'<div style="font-size:.7rem;color:#64748B;margin-top:.25rem;direction:{dir_attr};">{t("Only samples shown while a session is active get saved — normal participant runs are never logged here.","تُحفظ فقط العيّنات اللي تظهر أثناء جلسة نشطة — دورات المشاركين العاديين ما تُسجَّل هنا إطلاقاً.")}</div>', unsafe_allow_html=True)
+
         st.markdown('<div class="start-btn" style="margin-top:.8rem;">',unsafe_allow_html=True)
         if st.button(t("Start Personalised Training","ابدأ التدريب المخصص"),key="start_training", use_container_width=True, type="primary"):
             fr = other_role.strip() if sel==opts[-1] else sel
@@ -2384,6 +2498,7 @@ def page_learning():
     if idx not in st.session_state["emails"]:
         with st.spinner(t("🤖 Generating phishing example...","🤖 جارٍ توليد مثال التصيد...")):
             st.session_state["emails"][idx] = generate_email(st.session_state["role"], idx, st.session_state["language"], st.session_state.get("difficulty", "medium"))
+            save_expert_sample(st.session_state["emails"][idx], st.session_state["role"], st.session_state.get("difficulty", "medium"), st.session_state["language"], "learn", idx)
             st.rerun()
 
     email = st.session_state["emails"].get(idx,{})
@@ -2501,6 +2616,7 @@ def page_assessment():
     if idx not in st.session_state["assess_emails"]:
         with st.spinner(ta("🤖 Generating scenario...","🤖 جارٍ توليد السيناريو...")):
             st.session_state["assess_emails"][idx]=generate_assess_email(st.session_state["role"], idx, pattern[idx], st.session_state["language"], st.session_state.get("difficulty", "medium"))
+            save_expert_sample(st.session_state["assess_emails"][idx], st.session_state["role"], st.session_state.get("difficulty", "medium"), st.session_state["language"], "assess", idx)
             st.rerun()
 
     email=st.session_state["assess_emails"].get(idx,{})
@@ -2991,7 +3107,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
   <div style="font-size:.8rem;color:#4ADE80;">{T('authenticated')}</div>
 </div>""", unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4 = st.tabs([T('tab_provider'), T('tab_score'), T('tab_manual'), "🐞 Debug Log"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([T('tab_provider'), T('tab_score'), T('tab_manual'), "🐞 Debug Log", "🎙️ Expert Samples"])
 
     _persist_pk = st.session_state.get("ai_provider", load_persistent_provider("openai"))
     _persist_labels = {
@@ -3591,6 +3707,105 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             for i, entry in enumerate(debug_log):
                 with st.expander(f"#{len(debug_log)-i} — {entry.get('stage','?')}"):
                     st.json(entry.get("error"))
+
+    with tab5:
+        st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">'
+            f'{"كل عيّنة عُرضت على خبير أثناء جلسة Think-Aloud نشطة، محفوظة كما ظهرت له بالضبط — تُستخدم لربط تعليقاته بالمحتوى الدقيق وقت التحليل الكيفي." if _is_ar else "Every sample shown to an expert during an active Think-Aloud session, saved exactly as they saw it — used to tie their comments back to the precise content during qualitative analysis."}'
+            f'</div>', unsafe_allow_html=True)
+
+        if is_expert_session_active():
+            st.markdown(
+                f'<div style="padding:.5rem 1rem;border:1px solid rgba(16,185,129,.5);border-radius:10px;'
+                f'background:rgba(4,30,16,.5);margin-bottom:1rem;color:#6EE7B7;font-size:.85rem;">'
+                f'🔴 {"جلسة نشطة الآن" if _is_ar else "Session currently active"}: <b>{st.session_state["expert_session_id"]}</b>'
+                f'</div>', unsafe_allow_html=True)
+
+        samples = load_expert_samples()
+        if not samples:
+            st.info("لا توجد عيّنات محفوظة حتى الآن — تُحفظ فقط أثناء جلسة خبير نشطة." if _is_ar
+                     else "No samples saved yet — these are only captured while an expert session is active.")
+        else:
+            sessions = {}
+            for s in samples:
+                sessions.setdefault(s.get("expert_session_id", "?"), []).append(s)
+
+            st.markdown(
+                f'<div style="color:#9CA3AF;font-size:.82rem;margin-bottom:.6rem;">'
+                f'{"إجمالي" if _is_ar else "Total"}: {len(samples)} {"عيّنة عبر" if _is_ar else "samples across"} {len(sessions)} {"جلسة" if _is_ar else "session(s)"}'
+                f'</div>', unsafe_allow_html=True)
+
+            # ---- Export everything to Excel (same in-memory pattern as build_excel_export) ----
+            try:
+                from openpyxl import Workbook
+                from openpyxl.styles import Font, PatternFill, Alignment
+                from openpyxl.utils import get_column_letter
+                import io as _io
+
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Expert_Samples"
+                headers = ["Session", "Timestamp", "Provider", "Role", "Role_Type", "Language",
+                           "Difficulty", "Phase", "Index", "Subject", "From", "Body",
+                           "Is_Phishing", "Indicators_Count", "Full_JSON"]
+                ws.append(headers)
+                for c in ws[1]:
+                    c.font = Font(bold=True, color="FFFFFF")
+                    c.fill = PatternFill("solid", fgColor="2F5496")
+                for s in samples:
+                    email = s.get("email", {}) or {}
+                    ws.append([
+                        s.get("expert_session_id", ""), s.get("timestamp", ""), s.get("provider", ""),
+                        s.get("role", ""), s.get("role_type", ""), s.get("language", ""),
+                        s.get("difficulty", ""), s.get("phase", ""), s.get("index", ""),
+                        email.get("subject", ""), email.get("from", ""), email.get("body", ""),
+                        email.get("is_phishing", ""), len(email.get("indicators", []) or []),
+                        json.dumps(email, ensure_ascii=False),
+                    ])
+                for i, _h in enumerate(headers, 1):
+                    ws.column_dimensions[get_column_letter(i)].width = 22
+                buf = _io.BytesIO()
+                wb.save(buf)
+                st.download_button(
+                    "⬇️ " + ("تصدير كل العيّنات (Excel)" if _is_ar else "Export all samples (Excel)"),
+                    data=buf.getvalue(),
+                    file_name="expert_samples.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.warning(("تعذّر إنشاء ملف Excel: " if _is_ar else "Could not build Excel export: ") + str(e))
+
+            st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
+
+            for sess_id, rows in sorted(sessions.items(), key=lambda kv: kv[1][0].get("timestamp", ""), reverse=True):
+                with st.expander(f"🎙️ {sess_id}  —  {len(rows)} " + ("عيّنة" if _is_ar else "samples")):
+                    for r in rows:
+                        email = r.get("email", {}) or {}
+                        st.markdown(
+                            f'<div style="border:1px solid rgba(148,163,184,.25);border-radius:10px;'
+                            f'padding:.6rem .9rem;margin-bottom:.5rem;background:rgba(15,23,42,.4);">'
+                            f'<div style="font-size:.78rem;color:#94A3B8;">{r.get("timestamp","")} · {r.get("role","")} · '
+                            f'{r.get("difficulty","")} · {r.get("language","")} · {r.get("phase","")} #{r.get("index","")} · {r.get("provider","")}</div>'
+                            f'<div style="font-weight:700;color:#F1F5F9;margin-top:.2rem;">{html_lib.escape(str(email.get("subject","")))}</div>'
+                            f'</div>', unsafe_allow_html=True)
+                        st.json(email, expanded=False)
+
+            st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
+            with st.expander("🗑️ " + ("تفريغ كل عيّنات الخبراء" if _is_ar else "Clear all expert samples")):
+                st.warning("هذا الإجراء نهائي وما ينرجع — يحذف كل العيّنات المحفوظة من كل الجلسات." if _is_ar
+                            else "This is permanent and cannot be undone — it deletes all saved samples from every session.")
+                confirm = st.checkbox("أؤكد إني أبي أحذف كل شي" if _is_ar else "I confirm I want to delete everything",
+                                       key="confirm_clear_expert_samples")
+                if st.button("🗑️ " + ("حذف نهائي" if _is_ar else "Permanently delete"), key="clear_expert_samples",
+                             disabled=not confirm):
+                    try:
+                        open(_EXPERT_SAMPLES_FILE_PATH, "w", encoding="utf-8").close()
+                        st.success("تم الحذف." if _is_ar else "Cleared.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
 
 
 
