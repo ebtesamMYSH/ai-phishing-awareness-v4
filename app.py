@@ -3433,6 +3433,44 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 st.success(T('metrics_reset'))
                 st.rerun()
 
+        # ── نسبة الاعتماد الفعلي على API مقابل القالب المحلي (مستوى متوسط) ──
+        # معزول بالكامل داخل try/except حتى لا يؤثر أي خطأ هنا على بقية اللوحة.
+        try:
+            st.markdown("---")
+            st.markdown(
+                ("**📡 نسبة استخدام الذكاء الاصطناعي فعليًا (مستوى متوسط)**" if _is_ar
+                 else "**📡 Actual AI usage rate (medium difficulty)**")
+            )
+            _src = st.session_state.get("v40_source_stats", {"api": 0, "local": 0})
+            _total_src = _src.get("api", 0) + _src.get("local", 0)
+            if _total_src == 0:
+                st.caption("لا توجد بيانات بعد لهذي الجلسة — ولّدي بعض رسائل المستوى المتوسط أولاً." if _is_ar
+                           else "No data yet for this session — generate some medium-difficulty emails first.")
+            else:
+                _api_pct = round(100 * _src.get("api", 0) / _total_src, 1)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("✅ AI-generated" if not _is_ar else "✅ من الذكاء الاصطناعي", _src.get("api", 0))
+                c2.metric("📋 Local fallback" if not _is_ar else "📋 من القالب المحلي", _src.get("local", 0))
+                c3.metric("AI usage %" if not _is_ar else "نسبة الاعتماد على AI", f"{_api_pct}%")
+
+            st.markdown(
+                ("**📡 نسبة استخدام الذكاء الاصطناعي فعليًا (مستوى سهل)**" if _is_ar
+                 else "**📡 Actual AI usage rate (easy difficulty)**")
+            )
+            _src_e = st.session_state.get("v33_easy_source_stats", {"api": 0, "local": 0})
+            _total_e = _src_e.get("api", 0) + _src_e.get("local", 0)
+            if _total_e == 0:
+                st.caption("لا توجد بيانات بعد لهذي الجلسة — ولّدي بعض رسائل المستوى السهل أولاً." if _is_ar
+                           else "No data yet for this session — generate some easy-difficulty emails first.")
+            else:
+                _api_pct_e = round(100 * _src_e.get("api", 0) / _total_e, 1)
+                e1, e2, e3 = st.columns(3)
+                e1.metric("✅ AI-generated" if not _is_ar else "✅ من الذكاء الاصطناعي", _src_e.get("api", 0))
+                e2.metric("📋 Local fallback" if not _is_ar else "📋 من القالب المحلي", _src_e.get("local", 0))
+                e3.metric("AI usage %" if not _is_ar else "نسبة الاعتماد على AI", f"{_api_pct_e}%")
+        except Exception:
+            pass
+
     # ──────────────────────────────────────────────────────────
     # TAB 3 — Manual Ratings (👍 اليدوية)
     # ──────────────────────────────────────────────────────────
@@ -5582,7 +5620,7 @@ def _v33_bucket(role_type, language, difficulty):
     return st.session_state.setdefault(key, {
         "semantic": [], "families": [], "objects": [], "actions": [], "senders": [],
         "archetypes": [], "tones": [], "openings": [], "subjects": [], "credentials": [],
-        "deadlines": [], "domains": [], "legit_archetypes": [],
+        "deadlines": [], "domains": [], "legit_archetypes": [], "why": [], "tip": [],
     })
 
 
@@ -5702,6 +5740,59 @@ def _v33_context_sentence(plan, ar=False):
     return bank[mode]
 
 
+def _v33_easy_api_copy(plan, greeting, credential, deadline, link, ar):
+    """Optional API-assisted rewrite of the 'easy' phishing body.
+    Safe by construction: the caller ALWAYS has a guaranteed local body
+    ready before this is tried, and this function's output is used only
+    if it strictly contains every literal element the indicator-evidence
+    matching in _v33_validate() requires (greeting as first line,
+    credential phrase, deadline phrase, link exactly once). Any failure
+    or exception falls back to the local body — nothing here can crash
+    generation or produce an email whose indicators don't match its text.
+    """
+    if not V40_USE_API_TEXT:
+        return None
+    area = plan.get("area_disp", plan.get("area", ""))
+    obj = plan.get("object_disp", plan.get("object", ""))
+    instruction = f"""Write ONE realistic {'Arabic' if ar else 'English'} beginner-level phishing-awareness training email for a Saudi hospital employee. This is obvious, easy-to-spot phishing content used for training — not a real attack.
+Return JSON only with key body (a single string).
+Context: {area} — {obj}.
+MANDATORY: body must start with this EXACT line by itself: "{greeting}"
+MANDATORY: body must literally contain this exact phrase once: "{credential}"
+MANDATORY: body must literally contain this exact phrase once: "{deadline}"
+MANDATORY: body must contain this exact link once, as plain text: {link}
+Rules: 40-90 words; urgent and mildly pressuring tone typical of obvious beginner-level phishing; do not add any other URL; plain text only, no markdown; do not mention that this is training or phishing; vary the wording and structure from typical generic phrasing."""
+    try:
+        data = call_ai(instruction, max_tokens=500)
+        if not isinstance(data, dict) or "error" in data:
+            return None
+        text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "")
+        if not text:
+            return None
+        obj_json = parse_json_response(text)
+        if not isinstance(obj_json, dict):
+            return None
+        body = str(obj_json.get("body", "")).strip()
+        if not body:
+            return None
+        lines = [l.strip() for l in body.strip().splitlines() if l.strip()]
+        if not lines or lines[0].rstrip(",،") != greeting.rstrip(",،"):
+            return None
+        if credential.lower() not in body.lower():
+            return None
+        if deadline.lower() not in body.lower():
+            return None
+        if body.count(link) != 1:
+            return None
+        if len(body.split()) < 25:
+            return None
+        return body
+    except Exception as e:
+        try: _store_debug("v33_easy_api_copy", str(e))
+        except Exception: pass
+    return None
+
+
 def _v33_easy_phishing(plan, role, index):
     """Stable easy writer: one link field, evidence-grounded indicators, richer scenario wording."""
     ar = plan["language"] == "Arabic"
@@ -5766,6 +5857,18 @@ def _v33_easy_phishing(plan, role, index):
         }
         body = f"{greeting},\n\n{connectors[archetype]} {action_sentence}\n\n{cta}: {link}\n\n{consequence}\n\n{plan['signature_disp']}"
 
+    # Optional API-assisted rewrite — local `body` above is the guaranteed
+    # fallback and is kept untouched unless the API version passes every
+    # literal-containment check inside _v33_easy_api_copy().
+    _easy_api_body = _v33_easy_api_copy(plan, greeting, credential, deadline, link, ar)
+    if _easy_api_body:
+        body = _easy_api_body
+    try:
+        _easy_src = st.session_state.setdefault("v33_easy_source_stats", {"api": 0, "local": 0})
+        _easy_src["api" if _easy_api_body else "local"] += 1
+    except Exception:
+        pass
+
     first_line = next(x.strip() for x in body.splitlines() if x.strip()).rstrip(",،")
     indicators = [
         _v30_indicator(1, "domain", "Non-official sender domain" if not ar else "نطاق مرسل غير رسمي",
@@ -5779,13 +5882,45 @@ def _v33_easy_phishing(plan, role, index):
         _v30_indicator(5, "greeting", "Generic greeting" if not ar else "تحية عامة",
                        ("The message does not address the recipient by name, which may indicate bulk targeting." if not ar else "لا تخاطب الرسالة المستلم باسمه، وقد يدل ذلك على إرسال جماعي."), first_line, "greeting"),
     ]
-    why = ("The message combines a non-official sender domain, a direct credential request, a visible external link, and strong pressure—clear beginner-level phishing indicators."
-           if not ar else "تجمع الرسالة بين نطاق غير رسمي وطلب مباشر لبيانات الدخول ورابط خارجي وضغط واضح، وهي مؤشرات تصيد مناسبة للمستوى المبتدئ.")
-    tip = ("Never enter a password, staff PIN, or verification code through an unexpected email link. Open the official system directly or verify the request through a trusted channel."
-           if not ar else "لا تُدخل كلمة مرور أو رقمًا سريًا أو رمز تحقق عبر رابط بريد غير متوقع. افتح النظام الرسمي مباشرة أو تحقق من الطلب عبر قناة موثوقة.")
+    _WHY_EASY_AR = [
+        "تجمع الرسالة بين نطاق غير رسمي وطلب مباشر لبيانات الدخول ورابط خارجي وضغط واضح، وهي مؤشرات تصيد مناسبة للمستوى المبتدئ.",
+        "وجود نطاق مرسل غير رسمي مع طلب صريح لكلمة المرور أو الرمز السري يكفي وحده لاعتبار الرسالة تصيدًا واضحًا، خصوصًا مع الرابط الخارجي والمهلة الزمنية القصيرة.",
+        "أسلوب الرسالة يعتمد على الاستعجال والتهديد بتعليق الوصول لدفعك للتصرف بسرعة دون تدقيق — وهذا نمط تصيد كلاسيكي وسهل الرصد.",
+        "التحية العامة (بدون اسمك) مع طلب مباشر لبيانات دخول عبر رابط خارجي هي علامة نموذجية على رسالة تصيد جماعية غير مستهدفة.",
+        "لا توجد رسالة رسمية من المستشفى تطلب كلمة المرور أو الرمز السري عبر البريد — وحدها هذي النقطة كافية لاعتبار الرسالة مشبوهة.",
+        "مزيج النطاق غير الرسمي والرابط الخارجي والمهلة الزمنية الضاغطة يشكّل نمطًا واضحًا لمحاولة تصيد بمستوى مبتدئ يسهل تمييزه بالتدقيق البسيط.",
+    ]
+    _WHY_EASY_EN = [
+        "The message combines a non-official sender domain, a direct credential request, a visible external link, and strong pressure—clear beginner-level phishing indicators.",
+        "A non-official sender domain paired with an explicit request for a password or PIN is enough on its own to flag this as phishing, especially alongside the external link and short deadline.",
+        "The message leans on urgency and the threat of suspended access to push quick action without verification—a textbook beginner-level phishing pattern.",
+        "A generic greeting (no personal name) combined with a direct credential request through an external link is a typical sign of a mass, untargeted phishing attempt.",
+        "No official hospital communication asks for a password or staff PIN by email — that alone is enough to treat this message as suspicious.",
+        "The mix of a non-official domain, an external link, and time pressure forms a clear beginner-level phishing pattern that is easy to spot with basic scrutiny.",
+    ]
+    _TIP_EASY_AR = [
+        "لا تُدخل كلمة مرور أو رقمًا سريًا أو رمز تحقق عبر رابط بريد غير متوقع. افتح النظام الرسمي مباشرة أو تحقق من الطلب عبر قناة موثوقة.",
+        "أي طلب لكلمة المرور أو رمز التحقق عبر البريد يستحق الشك تلقائيًا — تحقق من الطلب مباشرة مع القسم المعني بدل الضغط على أي رابط.",
+        "قاعدة بسيطة: الأنظمة الرسمية لا تطلب كلمة المرور عبر رابط بريد. افتح النظام من المفضلة أو الاختصار الرسمي دائمًا.",
+        "قبل الاستجابة لأي ضغط زمني بالرسالة، تحقق من هوية المرسل الكاملة ونطاق الرابط — التسرع هو بالضبط ما يعتمد عليه هذا النوع من التصيد.",
+        "لو الرسالة تطلب منك إجراء فوري لتفادي تعليق حسابك، هذا بالذات مؤشر تحذيري. تواصل مع الدعم الفني عبر القناة الرسمية للتأكد.",
+        "احفظي عادة تفقّد نطاق المرسل قبل أي تفاعل — الفرق بين نطاق رسمي ونطاق مزيّف غالبًا واضح لو دقّقتي فيه.",
+    ]
+    _TIP_EASY_EN = [
+        "Never enter a password, staff PIN, or verification code through an unexpected email link. Open the official system directly or verify the request through a trusted channel.",
+        "Any request for a password or verification code by email deserves automatic suspicion — verify directly with the relevant department instead of clicking the link.",
+        "Simple rule: official systems never ask for your password through an emailed link. Always open the system from a saved bookmark or the official shortcut.",
+        "Before reacting to any time pressure in a message, check the sender's full address and the link's real domain — urgency is exactly what this kind of phishing relies on.",
+        "If a message asks for immediate action to avoid account suspension, that alone is a red flag. Contact IT support through the official channel to confirm.",
+        "Make it a habit to check the sender's domain before interacting with any message — the difference between an official and a fake domain is usually visible if you look closely.",
+    ]
+    why = _v33_pick(_WHY_EASY_AR if ar else _WHY_EASY_EN, mem["why"][-3:])
+    tip = _v33_pick(_TIP_EASY_AR if ar else _TIP_EASY_EN, mem["tip"][-3:])
 
     mem["credentials"].append(credential); mem["deadlines"].append(deadline); mem["domains"].append(domain)
+    mem["why"].append(why); mem["tip"].append(tip)
     mem["credentials"] = mem["credentials"][-20:]; mem["deadlines"] = mem["deadlines"][-20:]; mem["domains"] = mem["domains"][-20:]
+    mem["why"] = mem["why"][-20:]; mem["tip"] = mem["tip"][-20:]
 
     return {
         "from": sender, "to": recipient, "subject": subject, "body": body,
@@ -6855,10 +6990,21 @@ def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase, 
     return subject,body,sender,deadline
 
 
+def _v40_recent_openings(role_type, language, phase):
+    key = f"v40_recent_openings_{role_type}_{language}_{phase}"
+    return st.session_state.setdefault(key, [])
+
+
 def _v40_api_copy(plan, recipient, domain, link, attachment, evidence_phrase, workflow_note=None):
     if not V40_USE_API_TEXT: return None
     ar=plan["language"]=="Arabic"; fam=plan["family"]
     second_fragment_rule = f"\nSECOND MANDATORY sentence to include verbatim, as its own separate paragraph (not next to the first fragment): {workflow_note}" if workflow_note else ""
+    recent_list = _v40_recent_openings(plan["role_type"], plan["language"], plan["phase"])
+    avoid_rule = ""
+    if recent_list:
+        sample = recent_list[-6:]
+        quoted = "; ".join(f"\"{s}\"" for s in sample)
+        avoid_rule = f"\nDIVERSITY RULE: Do NOT reuse the opening sentence, phrasing, or structure of any of these recently generated emails: {quoted}. Write a genuinely different opening idea and sentence structure this time."
     instruction = f"""Write ONE realistic {'Arabic' if ar else 'English'} workplace email for a Saudi hospital employee.
 Return JSON only with keys subject and body.
 Scenario area: {fam['area']}
@@ -6870,7 +7016,7 @@ Action type: {plan['action']}
 Recipient: {recipient}
 MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}{second_fragment_rule}
 Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action.
-GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT NAME or JOB TITLE only (e.g. "Dear {fam['area']} Team", "Hello Clinical Team") — never by the recipient's personal name and never with a fully generic greeting like "Dear Colleague" with no department reference."""
+GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT NAME or JOB TITLE only (e.g. "Dear {fam['area']} Team", "Hello Clinical Team") — never by the recipient's personal name and never with a fully generic greeting like "Dear Colleague" with no department reference.{avoid_rule}"""
     try:
         data = call_ai(instruction, max_tokens=900)
         if not isinstance(data, dict) or "error" in data:
@@ -6900,6 +7046,7 @@ GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT N
                     generic_only = not any(w in opening for w in ["Team", "Colleagues", fam["area"]])
                     if generic_only:
                         return None
+                recent_list.append(opening[:140]); recent_list[:] = recent_list[-10:]
                 return subject,body
     except Exception as e:
         try: _store_debug("v40_api_copy",str(e))
@@ -7093,7 +7240,23 @@ def _v40_build(role,index,language,phase):
     elif action=="pdf_attachment":
         attachment=f"{plan['family']['id']}_{_V40_RNG.randrange(100,999)}.pdf"; evidence_phrase=(f"The supporting summary is attached as {attachment}." if not ar else f"الملخص الداعم مرفق باسم {attachment}.")
     else:
-        evidence_phrase=("Reply to this email with your employee number and department." if not ar else "يرجى الرد على هذه الرسالة برقم الموظف والقسم.")
+        _v40_mem_ev = _v40_memory(plan["role_type"], plan["language"], plan["phase"])
+        _reply_pool_ar = [
+            "يرجى الرد على هذه الرسالة برقم الموظف والقسم.",
+            "الرجاء الرد على هذا البريد بذكر رقمك الوظيفي واسم القسم.",
+            "أعد الرد على هذه الرسالة مرفقًا رقم الموظف والقسم التابع له.",
+            "يُطلب الرد على هذا البريد وتضمين رقم الموظف والقسم للتأكيد.",
+            "للمتابعة، الرجاء الرد بالرقم الوظيفي واسم القسم ضمن نفس الرسالة.",
+        ]
+        _reply_pool_en = [
+            "Reply to this email with your employee number and department.",
+            "Please respond to this message with your staff number and department name.",
+            "Reply to this email including your employee ID and department for confirmation.",
+            "Kindly reply with your staff number and department to proceed.",
+            "To continue, please reply to this message with your employee ID and department.",
+        ]
+        evidence_phrase = _v40_choose_fresh(_reply_pool_ar if ar else _reply_pool_en, _v40_mem_ev.setdefault("reply_evidence", []), 4)
+        _v40_mem_ev["reply_evidence"].append(evidence_phrase); _v40_mem_ev["reply_evidence"] = _v40_mem_ev["reply_evidence"][-30:]
 
     # A second, fully separate sentence (its own paragraph) for the "workflow anomaly"
     # indicator on actions whose first evidence renders as one UI element (a button) —
@@ -7102,17 +7265,51 @@ def _v40_build(role,index,language,phase):
     # independently highlightable, and it is required verbatim from both the local and
     # the API writer so it is present no matter which one produced the final body.
     _raw_area0 = plan["family"]["area"]; _area_disp0 = V40_AR_TERMS.get(_raw_area0,_raw_area0) if ar else _raw_area0
+    _v40_mem_wf = _v40_memory(plan["role_type"], plan["language"], plan["phase"])
     workflow_note = None
     if action in ("button","sharepoint","internal_workspace"):
-        workflow_note = (f"لم يصل هذا الطلب عبر نظام {_area_disp0} المعتمد." if ar
-                          else f"This request did not come through the standard {_area_disp0} system.")
+        _wf_pool_ar = [
+            f"لم يصل هذا الطلب عبر نظام {_area_disp0} المعتمد.",
+            f"هذا الطلب لم يُرسل من خلال نظام {_area_disp0} الرسمي.",
+            f"لا يصدر هذا النوع من الطلبات عادةً إلا عبر نظام {_area_disp0} المعتمد داخليًا.",
+            f"يُرجى ملاحظة أن هذا الطلب خارج مسار نظام {_area_disp0} المعتمد لدينا.",
+            f"نظام {_area_disp0} الرسمي هو القناة الوحيدة المعتمدة لهذا النوع من الطلبات، وهذا الطلب لم يصلك عبره.",
+        ]
+        _wf_pool_en = [
+            f"This request did not come through the standard {_area_disp0} system.",
+            f"This message was not sent through the official {_area_disp0} system.",
+            f"Requests of this kind are normally only issued through the approved {_area_disp0} system.",
+            f"Please note this request falls outside our approved {_area_disp0} system workflow.",
+            f"The official {_area_disp0} system is the only approved channel for this type of request, and this one did not arrive through it.",
+        ]
+        workflow_note = _v40_choose_fresh(_wf_pool_ar if ar else _wf_pool_en, _v40_mem_wf.setdefault("workflow_a", []), 4)
+        _v40_mem_wf["workflow_a"].append(workflow_note); _v40_mem_wf["workflow_a"] = _v40_mem_wf["workflow_a"][-30:]
     elif action == "reply_request":
-        workflow_note = ("لا يتحقق فريقنا من هوية الموظفين عبر الرد على البريد." if ar
-                          else "Our team never verifies staff identity by email reply.")
+        _wf_pool_ar = [
+            "لا يتحقق فريقنا من هوية الموظفين عبر الرد على البريد.",
+            "فريقنا لا يعتمد الرد على البريد الإلكتروني كوسيلة للتحقق من هوية الموظفين.",
+            "التحقق من هوية الموظف لا يتم عبر الرد على رسائل البريد الإلكتروني.",
+            "لا نطلب تأكيد الهوية عبر الرد على البريد في أي من إجراءاتنا المعتمدة.",
+            "الرد على البريد الإلكتروني ليست قناة معتمدة للتحقق من هوية الموظفين لدينا.",
+        ]
+        _wf_pool_en = [
+            "Our team never verifies staff identity by email reply.",
+            "We do not use email replies as a method to verify staff identity.",
+            "Staff identity verification is never carried out by replying to an email.",
+            "None of our approved procedures request identity confirmation through an email reply.",
+            "Replying to an email is not an approved channel for verifying staff identity.",
+        ]
+        workflow_note = _v40_choose_fresh(_wf_pool_ar if ar else _wf_pool_en, _v40_mem_wf.setdefault("workflow_b", []), 4)
+        _v40_mem_wf["workflow_b"].append(workflow_note); _v40_mem_wf["workflow_b"] = _v40_mem_wf["workflow_b"][-30:]
 
     local_subject,local_body,sender_name,deadline=_v40_local_copy(plan,recipient,domain,link,attachment,evidence_phrase,workflow_note)
     api=_v40_api_copy(plan,recipient,domain,link,attachment,evidence_phrase,workflow_note)
     subject,body=api if api else (local_subject,local_body)
+    try:
+        _src_stats = st.session_state.setdefault("v40_source_stats", {"api": 0, "local": 0})
+        _src_stats["api" if api else "local"] += 1
+    except Exception:
+        pass
     mailbox=_V40_RNG.choice(["coordination","workflow","quality","operations","records","updates"])
     sender=f"{sender_name} <{mailbox}@{domain}>"
 
