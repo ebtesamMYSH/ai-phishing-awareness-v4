@@ -4968,6 +4968,12 @@ def _v30_compose_phishing(plan, role, index):
             qr_marker = f"[QR: {qr_label}]"
         elif channel == "m365":
             domain = "hospital365.org" if "365" not in domain else domain
+            # BUGFIX: `sender` (the "from" field) was already built above using
+            # the OLD domain before this reassignment. Without resyncing it here,
+            # the "from" address and the m365/domain indicator evidence point to
+            # two different domains, which breaks indicator highlighting and is
+            # exactly the kind of "garbled email" mismatch this must never do.
+            sender = f'{plan["sender"]} <{mailbox}@{domain}>'
         if ar:
             area_ar_disp = disp_area
             intro = _V30_RNG.choice([
@@ -5295,7 +5301,16 @@ def _v31_validate(result, plan):
         if not sender.lower().endswith("@hospital.org>"): return False
         if re.search(r"password|staff pin|login credentials|verification code",body,re.I): return False
         if result.get("suspicious_link") or result.get("indicators"): return False
-    if plan["signature"].lower() not in body.lower(): return False
+    # BUGFIX: for Arabic, the body correctly uses the localized
+    # signature_disp (e.g. "التطوير المهني") while `plan["signature"]`
+    # only ever holds the English base name (e.g. "Professional
+    # Development"). Comparing only against the English form made this
+    # check fail on every single Arabic "hard" email, silently wasting
+    # every retry attempt and returning an UNVALIDATED result each time.
+    # Accept either the English base signature or its Arabic display form.
+    _sig_candidates = {str(plan.get("signature", "")).lower(), str(plan.get("signature_disp", "")).lower()}
+    if not any(sig and sig in body.lower() for sig in _sig_candidates):
+        return False
     return True
 
 
@@ -7380,6 +7395,286 @@ def generate_assess_email(role,index,is_phishing,language,difficulty="medium"):
 
 # =============================================================
 # END MEDIUM GENERATION ENGINE v40
+# =============================================================
+
+# =============================================================
+# AI FULL-CONTENT OVERLAY — v42
+# -------------------------------------------------------------
+# Goal: let the AI author ALL human-visible wording (subject, body
+# prose, why_risky, learning_tip, and every indicator's title +
+# description) for EVERY difficulty level (easy/medium/hard) and
+# for legitimate comparison emails — instead of only medium's
+# subject/body as before.
+#
+# Safety design (unchanged philosophy from the medium-only version):
+#   1. A fully valid, already-tested LOCAL result is always built
+#      FIRST using the existing, proven engines (v33 easy writer,
+#      v40/v41 medium engine, v30/v31 hard writer, v33 legitimate
+#      writer) — completely untouched by this layer.
+#   2. The AI is asked to REWRITE the wording only, and is required
+#      to reproduce every structural/technical marker already
+#      present in that local body VERBATIM: the opening line
+#      (greeting — this alone enforces the difficulty-appropriate
+#      greeting rule, since the local generator already picked the
+#      correct style), the closing/signature line, any markdown
+#      link/QR marker/attachment filename exactly as it already
+#      renders correctly, and any other body-anchored indicator
+#      evidence. This is exactly what prevents the earlier
+#      "garbled email" bug: the AI can never invent or move a
+#      link/QR/attachment marker — it can only keep the existing,
+#      already-correctly-placed one and rewrite the sentences
+#      around it.
+#   3. The AI's candidate is then re-validated with the SAME
+#      validator the local engine itself uses (_v33_validate /
+#      _v40_validate / _v31_validate) before being accepted.
+#   4. Any missing fragment, parse failure, network error, or
+#      validator rejection silently falls back to the local result
+#      — nothing here can ever produce a broken or ungrounded email.
+# =============================================================
+
+def _track_ai_source(bucket, used_api):
+    try:
+        stats = st.session_state.setdefault("ai_full_source_stats", {})
+        d = stats.setdefault(bucket, {"api": 0, "local": 0})
+        d["api" if used_api else "local"] += 1
+    except Exception:
+        pass
+
+
+def _extract_structural_fragments(local_result):
+    """Pull every exact fragment the AI rewrite MUST preserve verbatim,
+    directly from the already-correct local body — no per-difficulty or
+    per-channel special-casing needed, so this works unchanged for easy,
+    medium, and hard, and for any future channel type."""
+    body = str(local_result.get("body", ""))
+    frags = []
+    lines = [l.strip() for l in body.strip().splitlines() if l.strip()]
+    if lines:
+        frags.append(lines[0])
+        if len(lines) > 1:
+            frags.append(lines[-1])
+    qr_m = re.search(r'\[\s*QR(?:\s*Code)?\s*:?\s*[^\]]*\]', body, re.I)
+    if qr_m:
+        frags.append(qr_m.group(0))
+    link_m = re.search(r'\[[^\]]{1,80}\]\(https?://[^\)\s]+\)', body)
+    if link_m:
+        frags.append(link_m.group(0))
+    att = str(local_result.get("attachment") or "")
+    if att and att in body:
+        frags.append(att)
+    plain_link = str(local_result.get("suspicious_link") or "")
+    if plain_link and plain_link in body and not (link_m and plain_link in link_m.group(0)):
+        frags.append(plain_link)
+    for ind in local_result.get("indicators", []) or []:
+        if ind.get("target") == "body" or ind.get("location") == "body":
+            ev = str(ind.get("evidence", "")).strip()
+            if ev and ev not in frags:
+                frags.append(ev)
+    seen = set(); out = []
+    for f in frags:
+        if f and f not in seen:
+            seen.add(f); out.append(f)
+    return out
+
+
+def _ai_overlay_content(local_result, ar, is_phishing=True):
+    """Attempt an AI-authored rewrite of local_result's wording.
+    Returns a new result dict on success, or None on any failure —
+    callers always keep local_result unchanged when this returns None."""
+    if not V40_USE_API_TEXT:
+        return None
+    body0 = str(local_result.get("body", ""))
+    frags = _extract_structural_fragments(local_result)
+    if not frags:
+        return None
+    indicators0 = local_result.get("indicators", []) if is_phishing else []
+    ind_keys = []
+    for ind in indicators0:
+        k = str(ind.get("key") or ind.get("number") or "")
+        if k and k not in ind_keys:
+            ind_keys.append(k)
+    frag_lines = "\n".join(f'- "{f}"' for f in frags)
+    lang_name = "Arabic" if ar else "English"
+    shape_extra = ""
+    rules_extra = ""
+    if is_phishing:
+        shape_extra = ', "why_risky": "...", "learning_tip": "..."'
+        rules_extra = (' "why_risky": one or two sentences explaining why this specific email is risky; '
+                        '"learning_tip": one practical sentence of advice for staff.')
+    ind_shape = ""
+    ind_rules = ""
+    if ind_keys:
+        ind_shape = ', "indicators": {' + ", ".join(f'"{k}": {{"title": "...", "description": "..."}}' for k in ind_keys) + '}'
+        ind_rules = (" For \"indicators\", return one entry per key listed, each with a short (3-6 word) "
+                      "title and a one-sentence description explaining that specific red flag naturally in context.")
+    instruction = f"""Rewrite the wording of a {'phishing-awareness training' if is_phishing else 'legitimate internal'} hospital email in {lang_name}, for a Saudi hospital staff member. Keep the same context and meaning as the reference below, but use genuinely fresh phrasing throughout — do not reuse generic templated sentences.
+Reference email (for context only; do not copy its wording beyond the mandatory fragments listed below):
+---
+{body0}
+---
+Return JSON only with this exact shape: {{"subject": "...", "body": "..."{shape_extra}{ind_shape}}}
+MANDATORY: the "body" you write must contain each of the following exact fragments verbatim and unchanged, somewhere in the text (reorder and rewrite everything else around them freely):
+{frag_lines}
+Rules: body length within roughly 20% of the reference's word count; do not add any link, QR marker, or attachment reference other than the ones already listed above; do not mention "phishing" or "training" inside subject/body.{rules_extra}{ind_rules}"""
+    try:
+        data = call_ai(instruction, max_tokens=1300)
+        if not isinstance(data, dict) or "error" in data:
+            return None
+        text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "")
+        if not text:
+            return None
+        obj = parse_json_response(text)
+        if not isinstance(obj, dict):
+            return None
+        subject = str(obj.get("subject", "")).strip()
+        body = str(obj.get("body", "")).strip()
+        if not subject or not body:
+            return None
+        for f in frags:
+            if f not in body:
+                return None
+        ref_words = max(1, len(body0.split()))
+        if not (0.5 * ref_words <= len(body.split()) <= 1.8 * ref_words):
+            return None
+        new_result = dict(local_result)
+        new_result["subject"] = subject
+        new_result["body"] = body
+        if is_phishing:
+            why = str(obj.get("why_risky", "")).strip()
+            tip = str(obj.get("learning_tip", "")).strip()
+            if not why or not tip:
+                return None
+            new_result["why_risky"] = why
+            new_result["learning_tip"] = tip
+            if ind_keys:
+                ai_inds = obj.get("indicators")
+                if not isinstance(ai_inds, dict):
+                    return None
+                new_indicators = []
+                for ind in indicators0:
+                    k = str(ind.get("key") or ind.get("number") or "")
+                    entry = ai_inds.get(k)
+                    if not isinstance(entry, dict):
+                        return None
+                    title = str(entry.get("title", "")).strip()
+                    desc = str(entry.get("description", "")).strip()
+                    if not title or not desc:
+                        return None
+                    new_ind = dict(ind)
+                    new_ind["title"] = title
+                    new_ind["description"] = desc
+                    new_indicators.append(new_ind)
+                new_result["indicators"] = new_indicators
+        return new_result
+    except Exception as e:
+        try: _store_debug("ai_overlay_content", str(e))
+        except Exception: pass
+        return None
+
+
+def _ai_full_easy(role, index, language, phase):
+    ar = language == "Arabic"
+    plan = _v33_plan(role, index, language, "easy", phase, True)
+    local = _v33_easy_phishing(plan, role, index)
+    overlay = _ai_overlay_content(local, ar, True)
+    if overlay:
+        try:
+            if _v33_validate(overlay, plan):
+                _track_ai_source("easy", True)
+                return overlay
+        except Exception:
+            pass
+    _track_ai_source("easy", False)
+    return local
+
+
+def _ai_full_medium(role, index, language, phase):
+    ar = language == "Arabic"
+    local = _v40_generate(role, index, language, "medium", True, phase == "assess")
+    overlay = _ai_overlay_content(local, ar, True)
+    if overlay:
+        try:
+            if _v40_validate(overlay):
+                _track_ai_source("medium", True)
+                return overlay
+        except Exception:
+            pass
+    _track_ai_source("medium", False)
+    return local
+
+
+def _ai_full_hard(role, index, language, phase):
+    ar = language == "Arabic"
+    local = _v33_generate(role, index, language, "hard", True, phase == "assess")
+    plan = local.get("scenario_meta") if isinstance(local.get("scenario_meta"), dict) else None
+    if plan is not None:
+        overlay = _ai_overlay_content(local, ar, True)
+        if overlay:
+            try:
+                if _v31_validate(overlay, plan):
+                    _track_ai_source("hard", True)
+                    return overlay
+            except Exception:
+                pass
+    _track_ai_source("hard", False)
+    return local
+
+
+def _ai_full_legitimate(role, index, language, difficulty, phase):
+    ar = language == "Arabic"
+    diff = str(difficulty or "medium").lower()
+    plan = _v33_plan(role, index, language, diff, phase, False)
+    local = _v33_legitimate(plan, role, index)
+    overlay = _ai_overlay_content(local, ar, False)
+    if overlay:
+        try:
+            if _v33_validate(overlay, plan):
+                _track_ai_source("legitimate", True)
+                return overlay
+        except Exception:
+            pass
+    _track_ai_source("legitimate", False)
+    return local
+
+
+def generate_email_v42(role, index, language, difficulty="medium"):
+    diff = str(difficulty or "medium").lower()
+    try:
+        if diff == "easy":
+            return _ai_full_easy(role, index, language, "learn")
+        if diff == "hard":
+            return _ai_full_hard(role, index, language, "learn")
+        return _ai_full_medium(role, index, language, "learn")
+    except Exception as e:
+        try: _store_debug("generate_email_v42", str(e))
+        except Exception: pass
+        return _v40_generate(role, index, language, difficulty, True, False)
+
+
+def generate_assess_email_v42(role, index, is_phishing, language, difficulty="medium"):
+    diff = str(difficulty or "medium").lower()
+    try:
+        if not is_phishing:
+            return _ai_full_legitimate(role, index, language, diff, "assess")
+        if diff == "easy":
+            return _ai_full_easy(role, index, language, "assess")
+        if diff == "hard":
+            return _ai_full_hard(role, index, language, "assess")
+        return _ai_full_medium(role, index, language, "assess")
+    except Exception as e:
+        try: _store_debug("generate_assess_email_v42", str(e))
+        except Exception: pass
+        return _v40_generate(role, index, language, difficulty, bool(is_phishing), True)
+
+
+# generate_email / generate_assess_email above (v40) remain fully intact
+# and are used internally as the guaranteed local base + the ultimate
+# fallback. The app's call sites now route through the v42 wrappers.
+generate_email = generate_email_v42
+generate_assess_email = generate_assess_email_v42
+
+# =============================================================
+# END AI FULL-CONTENT OVERLAY — v42
 # =============================================================
 
 # ══════════════════════════════════════════════════════════════
