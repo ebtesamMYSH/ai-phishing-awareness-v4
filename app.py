@@ -2623,7 +2623,7 @@ def page_assessment():
     answered_count = len(st.session_state.get("assess_answers", {}))
     pct=int((answered_count/TOTAL)*100)
     st.markdown(f"""
-<div style="margin-bottom:1.5rem;direction:{da};">
+<div style="margin-bottom:1.5rem;direction:{da};text-align:{'right' if is_arabic else 'left'};">
   <div style="font-size:2rem;font-weight:900;color:#F8FAFC;margin-bottom:.4rem;">{ta("AI-Generated Assessment","مرحلة الاختبار")}</div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin:.8rem 0 .3rem;">
     <div style="color:#7DD3FC;font-size:.95rem;font-weight:600;">{ta(f"Question {idx+1} of {TOTAL}",f"السؤال {idx+1} من {TOTAL}")}</div>
@@ -5772,8 +5772,9 @@ def _v33_easy_api_copy(plan, greeting, credential, deadline, link, ar):
     instruction = f"""Write ONE realistic {'Arabic' if ar else 'English'} beginner-level phishing-awareness training email for a Saudi hospital employee. This is obvious, easy-to-spot phishing content used for training — not a real attack.
 Return JSON only with key body (a single string).
 Context: {area} — {obj}.
-MANDATORY: body must start with this EXACT line by itself: "{greeting}"
-MANDATORY: body must literally contain this exact phrase once: "{credential}"
+STRUCTURE: format the body as separate paragraphs divided by a BLANK LINE between each one, like a real email — never as one run-on block of text.
+MANDATORY: the body's VERY FIRST paragraph must be exactly this line and nothing else: "{greeting}"
+MANDATORY: body must literally contain this exact phrase once (in one of the message-content paragraphs): "{credential}"
 MANDATORY: body must literally contain this exact phrase once: "{deadline}"
 MANDATORY: body must contain this exact link once, as plain text: {link}
 Rules: 40-90 words; urgent and mildly pressuring tone typical of obvious beginner-level phishing; do not add any other URL; plain text only, no markdown; do not mention that this is training or phishing; vary the wording and structure from typical generic phrasing."""
@@ -5790,8 +5791,8 @@ Rules: 40-90 words; urgent and mildly pressuring tone typical of obvious beginne
         body = str(obj_json.get("body", "")).strip()
         if not body:
             return None
-        lines = [l.strip() for l in body.strip().splitlines() if l.strip()]
-        if not lines or lines[0].rstrip(",،") != greeting.rstrip(",،"):
+        paragraphs = [p.strip() for p in re.split(r'\n\s*\n', body.strip()) if p.strip()]
+        if len(paragraphs) < 2 or paragraphs[0].rstrip(",،") != greeting.rstrip(",،"):
             return None
         if credential.lower() not in body.lower():
             return None
@@ -7030,6 +7031,7 @@ Writing style: {plan['style']}
 Action type: {plan['action']}
 Recipient: {recipient}
 MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}{second_fragment_rule}
+STRUCTURE: format the body as separate paragraphs divided by a BLANK LINE between each one (greeting on its own line, then one or more message paragraphs, then a closing/sign-off on its own line) — never as one run-on block of text.
 Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action.
 GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT NAME or JOB TITLE only (e.g. "Dear {fam['area']} Team", "Hello Clinical Team") — never by the recipient's personal name and never with a fully generic greeting like "Dear Colleague" with no department reference.{avoid_rule}"""
     try:
@@ -7045,7 +7047,8 @@ GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT N
         obj=parse_json_response(raw)
         if isinstance(obj,dict):
             subject=str(obj.get("subject","")).strip(); body=str(obj.get("body","")).strip()
-            if subject and body and evidence_phrase in body and len(body.split())>=35:
+            paragraphs = [p.strip() for p in re.split(r'\n\s*\n', body.strip()) if p.strip()]
+            if subject and body and evidence_phrase in body and len(body.split())>=35 and len(paragraphs)>=3:
                 if workflow_note and workflow_note not in body:
                     return None
                 # Enforce the medium-difficulty greeting rule even if the model ignored the
@@ -7445,14 +7448,17 @@ def _extract_structural_fragments(local_result):
     """Pull every exact fragment the AI rewrite MUST preserve verbatim,
     directly from the already-correct local body — no per-difficulty or
     per-channel special-casing needed, so this works unchanged for easy,
-    medium, and hard, and for any future channel type."""
+    medium, and hard, and for any future channel type.
+
+    Returns (greeting_line, closing_line, other_fragments) — greeting and
+    closing are tracked separately (not merged into the generic list)
+    because they must each land in their OWN isolated paragraph in the
+    rewritten body, not just appear anywhere in the text."""
     body = str(local_result.get("body", ""))
-    frags = []
     lines = [l.strip() for l in body.strip().splitlines() if l.strip()]
-    if lines:
-        frags.append(lines[0])
-        if len(lines) > 1:
-            frags.append(lines[-1])
+    greeting_line = lines[0] if lines else ""
+    closing_line = lines[-1] if len(lines) > 1 else ""
+    frags = []
     qr_m = re.search(r'\[\s*QR(?:\s*Code)?\s*:?\s*[^\]]*\]', body, re.I)
     if qr_m:
         frags.append(qr_m.group(0))
@@ -7468,24 +7474,43 @@ def _extract_structural_fragments(local_result):
     for ind in local_result.get("indicators", []) or []:
         if ind.get("target") == "body" or ind.get("location") == "body":
             ev = str(ind.get("evidence", "")).strip()
-            if ev and ev not in frags:
+            if ev and ev not in frags and ev != greeting_line and ev != closing_line:
                 frags.append(ev)
     seen = set(); out = []
     for f in frags:
         if f and f not in seen:
             seen.add(f); out.append(f)
-    return out
+    return greeting_line, closing_line, out
+
+
+def _body_has_clean_paragraph_structure(body, greeting_line, closing_line):
+    """Strict structural check: the greeting must sit ALONE as the first
+    paragraph, the closing/signature must sit ALONE as the last paragraph,
+    and there must be at least one blank-line-separated paragraph of real
+    content in between. This is exactly what a real email looks like —
+    greeting, blank line, message, blank line, thanks + sender name — and
+    is what rejects the "everything squished into one block" output some
+    AI responses produced."""
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', body.strip()) if p.strip()]
+    if len(paragraphs) < 3:
+        return False
+    if greeting_line and paragraphs[0] != greeting_line:
+        return False
+    if closing_line and paragraphs[-1] != closing_line:
+        return False
+    return True
 
 
 def _ai_overlay_content(local_result, ar, is_phishing=True):
+
     """Attempt an AI-authored rewrite of local_result's wording.
     Returns a new result dict on success, or None on any failure —
     callers always keep local_result unchanged when this returns None."""
     if not V40_USE_API_TEXT:
         return None
     body0 = str(local_result.get("body", ""))
-    frags = _extract_structural_fragments(local_result)
-    if not frags:
+    greeting_line, closing_line, frags = _extract_structural_fragments(local_result)
+    if not greeting_line:
         return None
     indicators0 = local_result.get("indicators", []) if is_phishing else []
     ind_keys = []
@@ -7493,7 +7518,7 @@ def _ai_overlay_content(local_result, ar, is_phishing=True):
         k = str(ind.get("key") or ind.get("number") or "")
         if k and k not in ind_keys:
             ind_keys.append(k)
-    frag_lines = "\n".join(f'- "{f}"' for f in frags)
+    frag_lines = "\n".join(f'- "{f}"' for f in frags) if frags else "(none)"
     lang_name = "Arabic" if ar else "English"
     shape_extra = ""
     rules_extra = ""
@@ -7507,13 +7532,18 @@ def _ai_overlay_content(local_result, ar, is_phishing=True):
         ind_shape = ', "indicators": {' + ", ".join(f'"{k}": {{"title": "...", "description": "..."}}' for k in ind_keys) + '}'
         ind_rules = (" For \"indicators\", return one entry per key listed, each with a short (3-6 word) "
                       "title and a one-sentence description explaining that specific red flag naturally in context.")
+    closing_rule = (f'\n- The VERY LAST paragraph must be exactly this line and nothing else: "{closing_line}"'
+                     if closing_line else "")
     instruction = f"""Rewrite the wording of a {'phishing-awareness training' if is_phishing else 'legitimate internal'} hospital email in {lang_name}, for a Saudi hospital staff member. Keep the same context and meaning as the reference below, but use genuinely fresh phrasing throughout — do not reuse generic templated sentences.
 Reference email (for context only; do not copy its wording beyond the mandatory fragments listed below):
 ---
 {body0}
 ---
 Return JSON only with this exact shape: {{"subject": "...", "body": "..."{shape_extra}{ind_shape}}}
-MANDATORY: the "body" you write must contain each of the following exact fragments verbatim and unchanged, somewhere in the text (reorder and rewrite everything else around them freely):
+STRUCTURE — the "body" must be formatted as separate paragraphs divided by a BLANK LINE (\\n\\n) between each one, exactly like a real email, never as one run-on block of text:
+- The VERY FIRST paragraph must be exactly this line and nothing else: "{greeting_line}"
+- Then one or more paragraphs of message content, each separated by a blank line.{closing_rule}
+CONTENT: the message-content paragraphs must contain each of the following exact fragments verbatim and unchanged, somewhere in the text (reorder and rewrite everything else around them freely):
 {frag_lines}
 Rules: body length within roughly 20% of the reference's word count; do not add any link, QR marker, or attachment reference other than the ones already listed above; do not mention "phishing" or "training" inside subject/body.{rules_extra}{ind_rules}"""
     try:
@@ -7529,6 +7559,8 @@ Rules: body length within roughly 20% of the reference's word count; do not add 
         subject = str(obj.get("subject", "")).strip()
         body = str(obj.get("body", "")).strip()
         if not subject or not body:
+            return None
+        if not _body_has_clean_paragraph_structure(body, greeting_line, closing_line):
             return None
         for f in frags:
             if f not in body:
