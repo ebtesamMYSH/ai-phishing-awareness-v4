@@ -5761,19 +5761,23 @@ def _v33_easy_api_copy(plan, greeting, credential, deadline, link, ar):
     ready before this is tried, and this function's output is used only
     if it strictly contains every literal element the indicator-evidence
     matching in _v33_validate() requires (greeting as first line,
-    credential phrase, deadline phrase, link exactly once). Any failure
-    or exception falls back to the local body — nothing here can crash
-    generation or produce an email whose indicators don't match its text.
+    credential phrase, deadline phrase, link exactly once), AND ends with
+    a proper isolated closing/signature paragraph — never squished into
+    the message content or dropped entirely. Any failure or exception
+    falls back to the local body — nothing here can crash generation or
+    produce an email whose structure or indicators don't match its text.
     """
     if not V40_USE_API_TEXT:
         return None
     area = plan.get("area_disp", plan.get("area", ""))
     obj = plan.get("object_disp", plan.get("object", ""))
+    signature = str(plan.get("signature_disp", plan.get("signature", ""))).strip()
     instruction = f"""Write ONE realistic {'Arabic' if ar else 'English'} beginner-level phishing-awareness training email for a Saudi hospital employee. This is obvious, easy-to-spot phishing content used for training — not a real attack.
 Return JSON only with key body (a single string).
 Context: {area} — {obj}.
 STRUCTURE: format the body as separate paragraphs divided by a BLANK LINE between each one, like a real email — never as one run-on block of text.
 MANDATORY: the body's VERY FIRST paragraph must be exactly this line and nothing else: "{greeting}"
+MANDATORY: the body's VERY LAST paragraph must be exactly this line and nothing else, as the closing sender/department name — it must never be merged into the message content: "{signature}"
 MANDATORY: body must literally contain this exact phrase once (in one of the message-content paragraphs): "{credential}"
 MANDATORY: body must literally contain this exact phrase once: "{deadline}"
 MANDATORY: body must contain this exact link once, as plain text: {link}
@@ -5792,7 +5796,11 @@ Rules: 40-90 words; urgent and mildly pressuring tone typical of obvious beginne
         if not body:
             return None
         paragraphs = [p.strip() for p in re.split(r'\n\s*\n', body.strip()) if p.strip()]
-        if len(paragraphs) < 2 or paragraphs[0].rstrip(",،") != greeting.rstrip(",،"):
+        if len(paragraphs) < 3:
+            return None
+        if paragraphs[0].rstrip(",،") != greeting.rstrip(",،"):
+            return None
+        if not signature or paragraphs[-1] != signature:
             return None
         if credential.lower() not in body.lower():
             return None
@@ -7011,10 +7019,12 @@ def _v40_recent_openings(role_type, language, phase):
     return st.session_state.setdefault(key, [])
 
 
-def _v40_api_copy(plan, recipient, domain, link, attachment, evidence_phrase, workflow_note=None):
+def _v40_api_copy(plan, recipient, domain, link, attachment, evidence_phrase, workflow_note=None, closing_block=None):
     if not V40_USE_API_TEXT: return None
     ar=plan["language"]=="Arabic"; fam=plan["family"]
     second_fragment_rule = f"\nSECOND MANDATORY sentence to include verbatim, as its own separate paragraph (not next to the first fragment): {workflow_note}" if workflow_note else ""
+    closing_rule = (f'\nMANDATORY: the VERY LAST paragraph must be exactly this closing/sign-off block and nothing else, on its own — never merged into the message content: "{closing_block}"'
+                     if closing_block else "")
     recent_list = _v40_recent_openings(plan["role_type"], plan["language"], plan["phase"])
     avoid_rule = ""
     if recent_list:
@@ -7030,8 +7040,8 @@ Goal: {plan['goal']}
 Writing style: {plan['style']}
 Action type: {plan['action']}
 Recipient: {recipient}
-MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}{second_fragment_rule}
-STRUCTURE: format the body as separate paragraphs divided by a BLANK LINE between each one (greeting on its own line, then one or more message paragraphs, then a closing/sign-off on its own line) — never as one run-on block of text.
+MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}{second_fragment_rule}{closing_rule}
+STRUCTURE: format the body as separate paragraphs divided by a BLANK LINE between each one (greeting on its own line, then one or more message paragraphs, then the closing/sign-off block on its own line as the very last paragraph) — never as one run-on block of text, and never drop the closing.
 Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action.
 GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT NAME or JOB TITLE only (e.g. "Dear {fam['area']} Team", "Hello Clinical Team") — never by the recipient's personal name and never with a fully generic greeting like "Dear Colleague" with no department reference.{avoid_rule}"""
     try:
@@ -7048,6 +7058,8 @@ GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT N
         if isinstance(obj,dict):
             subject=str(obj.get("subject","")).strip(); body=str(obj.get("body","")).strip()
             paragraphs = [p.strip() for p in re.split(r'\n\s*\n', body.strip()) if p.strip()]
+            if closing_block and (not paragraphs or paragraphs[-1] != closing_block):
+                return None
             if subject and body and evidence_phrase in body and len(body.split())>=35 and len(paragraphs)>=3:
                 if workflow_note and workflow_note not in body:
                     return None
@@ -7321,7 +7333,8 @@ def _v40_build(role,index,language,phase):
         _v40_mem_wf["workflow_b"].append(workflow_note); _v40_mem_wf["workflow_b"] = _v40_mem_wf["workflow_b"][-30:]
 
     local_subject,local_body,sender_name,deadline=_v40_local_copy(plan,recipient,domain,link,attachment,evidence_phrase,workflow_note)
-    api=_v40_api_copy(plan,recipient,domain,link,attachment,evidence_phrase,workflow_note)
+    _local_closing_block = local_body.strip().split("\n\n")[-1].strip() if local_body.strip() else ""
+    api=_v40_api_copy(plan,recipient,domain,link,attachment,evidence_phrase,workflow_note,_local_closing_block)
     subject,body=api if api else (local_subject,local_body)
     try:
         _src_stats = st.session_state.setdefault("v40_source_stats", {"api": 0, "local": 0})
@@ -7346,7 +7359,7 @@ def _v40_build(role,index,language,phase):
 
     why, tip = _v41_build_analysis(plan, inds, domain, ar)
 
-    return {"from":sender,"to":recipient,"subject":subject,"body":_v35_compact(body),"attachment":attachment,"suspicious_link":suspicious_link,"suspicious_text":next((i.get("evidence","") for i in inds if i.get("target")=="body"),""),"indicators":inds,"why_risky":why,"learning_tip":tip,"is_phishing":True,"email_type":"Phishing","attack_type":{"button":"Look-alike workflow button","visible_link":"External review link","pdf_attachment":"Unexpected PDF lure","sharepoint":"Fake shared document","internal_workspace":"Fake internal workspace","reply_request":"Reply-based information harvesting"}[action],"risk_level":"medium","scenario_id":"v40:"+plan["combo"],"scenario_meta":{"engine":"v41","medium_channel_type":{"button":"button","visible_link":"visible_link","pdf_attachment":"pdf_attachment","sharepoint":"sharepoint_button","internal_workspace":"button","reply_request":"internal_reply"}[action],"action_type":action,"goal":plan["goal"],"style":plan["style"],"family_id":plan["family"]["id"],"event":plan["event"],"object":plan["object"]},"medium_channel":medium_channel,"display_time":_V40_RNG.choice(["Monday, 9:18 AM","Tuesday, 1:26 PM","Wednesday, 11:04 AM","Thursday, 8:47 AM","Friday, 2:12 PM","Yesterday, 3:39 PM"])}
+    return {"from":sender,"to":recipient,"subject":subject,"body":_v35_compact(body),"attachment":attachment,"suspicious_link":suspicious_link,"suspicious_text":next((i.get("evidence","") for i in inds if i.get("target")=="body"),""),"indicators":inds,"why_risky":why,"learning_tip":tip,"is_phishing":True,"email_type":"Phishing","attack_type":{"button":"Look-alike workflow button","visible_link":"External review link","pdf_attachment":"Unexpected PDF lure","sharepoint":"Fake shared document","internal_workspace":"Fake internal workspace","reply_request":"Reply-based information harvesting"}[action],"risk_level":"medium","scenario_id":"v40:"+plan["combo"],"scenario_meta":{"engine":"v41","role_type":plan["role_type"],"medium_channel_type":{"button":"button","visible_link":"visible_link","pdf_attachment":"pdf_attachment","sharepoint":"sharepoint_button","internal_workspace":"button","reply_request":"internal_reply"}[action],"action_type":action,"goal":plan["goal"],"style":plan["style"],"family_id":plan["family"]["id"],"event":plan["event"],"object":plan["object"]},"medium_channel":medium_channel,"display_time":_V40_RNG.choice(["Monday, 9:18 AM","Tuesday, 1:26 PM","Wednesday, 11:04 AM","Thursday, 8:47 AM","Friday, 2:12 PM","Yesterday, 3:39 PM"])}
 
 
 def _v40_validate(result):
@@ -7457,7 +7470,8 @@ def _extract_structural_fragments(local_result):
     body = str(local_result.get("body", ""))
     lines = [l.strip() for l in body.strip().splitlines() if l.strip()]
     greeting_line = lines[0] if lines else ""
-    closing_line = lines[-1] if len(lines) > 1 else ""
+    paragraphs_for_closing = [p.strip() for p in re.split(r'\n\s*\n', body.strip()) if p.strip()]
+    closing_line = paragraphs_for_closing[-1] if len(paragraphs_for_closing) > 1 else ""
     frags = []
     qr_m = re.search(r'\[\s*QR(?:\s*Code)?\s*:?\s*[^\]]*\]', body, re.I)
     if qr_m:
@@ -7532,7 +7546,7 @@ def _ai_overlay_content(local_result, ar, is_phishing=True):
         ind_shape = ', "indicators": {' + ", ".join(f'"{k}": {{"title": "...", "description": "..."}}' for k in ind_keys) + '}'
         ind_rules = (" For \"indicators\", return one entry per key listed, each with a short (3-6 word) "
                       "title and a one-sentence description explaining that specific red flag naturally in context.")
-    closing_rule = (f'\n- The VERY LAST paragraph must be exactly this line and nothing else: "{closing_line}"'
+    closing_rule = (f'\n- The VERY LAST paragraph must be exactly this text block and nothing else (it may itself span two lines, e.g. a "regards" line plus a name — keep it exactly as given): "{closing_line}"'
                      if closing_line else "")
     instruction = f"""Rewrite the wording of a {'phishing-awareness training' if is_phishing else 'legitimate internal'} hospital email in {lang_name}, for a Saudi hospital staff member. Keep the same context and meaning as the reference below, but use genuinely fresh phrasing throughout — do not reuse generic templated sentences.
 Reference email (for context only; do not copy its wording beyond the mandatory fragments listed below):
