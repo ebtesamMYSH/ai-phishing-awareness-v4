@@ -1229,6 +1229,22 @@ RECIPIENT_POOLS = {
     ],
 }
 
+# BUGFIX: RECIPIENT_POOLS already stores the correct, fully-titled display
+# name per recipient (e.g. "Nurse Fatima Alharbi" / "الممرضة فاطمة الحربي",
+# "Pharmacist Lama Alqahtani" / "الصيدلانية لمى القحطاني") — but greetings
+# were being rebuilt from the bare email address instead, and the only
+# title that email-parsing ever recovered was "Dr." (via _v30_title_for,
+# defined further below). Nurses, pharmacists, lab technicians, and
+# radiology technicians — more than half of the clinical recipient pool —
+# silently lost their professional title and appeared with a plain
+# first+last name, making clinical greetings indistinguishable from
+# admin/IT ones. This lookup lets greeting code use the pool's own correct
+# display string directly. Populated once RECIPIENT_POOLS above is defined.
+_V30_RECIPIENT_DISPLAY = {
+    entry["email"]: {"en": entry["en"], "ar": entry["ar"]}
+    for _pool in RECIPIENT_POOLS.values() for entry in _pool
+}
+
 # =============================================================
 # EN: OPEN-ENDED SCENARIO GENERATION (replaces the fixed scenario
 # pool for clinical/admin/it — "other" keeps its existing
@@ -4863,6 +4879,19 @@ def _v30_title_for(email, language):
     return ""
 
 
+def _v30_full_name(recipient, language):
+    """Correct, role-appropriate display name for a recipient email —
+    e.g. 'Nurse Fatima Alharbi' or 'Dr. Ahmed Alotaibi' for clinical staff,
+    a plain name for admin/IT staff. Falls back to the old title-detection
+    + email-parsed name for any recipient not found in RECIPIENT_POOLS
+    (e.g. the 'Other' role's static pool), so nothing can ever break."""
+    entry = _V30_RECIPIENT_DISPLAY.get(recipient)
+    if entry:
+        return entry["ar"] if language == "Arabic" else entry["en"]
+    title = _v30_title_for(recipient, language)
+    return f"{title}{_v30_display_name(recipient)}"
+
+
 def _v30_domain(difficulty):
     return _V30_RNG.choice({"easy":V30_OBVIOUS_DOMAINS,"medium":V30_SIMILAR_DOMAINS,"hard":V30_NEAR_DOMAINS}[difficulty])
 
@@ -4951,8 +4980,8 @@ def _v30_compose_phishing(plan, role, index):
             ]; why="The message is professionally written and job-relevant, but the look-alike domain and external sign-in workflow are inconsistent with approved hospital practice."; tip="Navigate to the official system independently. Do not use an emailed sign-in button unless the destination has been verified."
         attachment=""
     else:
-        title = _v30_title_for(recipient, lang)
-        greeting = (f"Dear {title}{person}" if not ar else f"عزيزي {title}{person}")
+        full_name = _v30_full_name(recipient, lang)
+        greeting = (f"Dear {full_name}" if not ar else f"عزيزي {full_name}")
         # hard uses subtle channel/identity issue; no direct credentials or artificial deadline
         channel=plan["channel"]
         attachment=""; qr_marker=""
@@ -5384,7 +5413,7 @@ def _v32_session_bucket(role_type, language, difficulty):
 def _v32_legitimate(plan, role, index):
     ar = plan["language"] == "Arabic"
     recipient = _v30_recipient(role, index, plan["language"], plan["phase"])
-    person = _v30_display_name(recipient)
+    person = _v30_full_name(recipient, plan["language"])
     sender_name = plan.get("sender_disp", plan["sender"]) if ar else plan["sender"]
     sender = f'{sender_name} <{_v32_choice(["notifications", "coordination", "quality", "clinical.ops", "records"])}@hospital.org>'
     disp_signature = plan.get("signature_disp", plan["signature"]) if ar else plan["signature"]
