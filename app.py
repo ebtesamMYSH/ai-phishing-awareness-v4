@@ -72,6 +72,7 @@ import json
 import requests
 import os
 import re
+import time
 import html as html_lib
 import random
 import urllib.parse
@@ -175,6 +176,35 @@ def delete_all_runs():
             json.dump([], f)
     except Exception:
         pass
+
+# =============================================================
+# AUTO-COMPARISON PERSISTENCE — full 4-provider automated runs
+# (separate from the manual per-cycle "runs.json" above). Same
+# local-JSON-file pattern: survives page refreshes and reruns within
+# the same deployment; only wiped if the hosting environment resets
+# the filesystem (e.g. a Streamlit Cloud redeploy) — exactly the same
+# durability trade-off already accepted for runs.json/metrics.json.
+# =============================================================
+_AUTO_COMPARISON_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_comparisons.json")
+
+def load_auto_comparisons():
+    try:
+        with open(_AUTO_COMPARISON_FILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def save_auto_comparison(record):
+    """Append one full 4-provider automated comparison run and persist to disk."""
+    runs = load_auto_comparisons()
+    runs.append(record)
+    try:
+        with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(runs, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return runs
 
 def load_metrics_file():
     try:
@@ -447,6 +477,24 @@ ROTATION_PLAN = [
     {"cycle": 10, "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "easy",   "language": "Arabic"},
 ]
 
+# BUGFIX-AWARE MAPPING: ROTATION_PLAN's role_en/role_ar values are short
+# labels ("Admin","IT"...) that do NOT exactly match the real ROLE_MAP keys
+# ("Admin / Management","IT / Informatics"...). Passing the short label
+# straight into generate_email()/generate_assess_email() would silently
+# fall back to "Clinical" every time (the exact bug found earlier in this
+# project). This table is the single correct translation, keyed by
+# (role_en, language), used anywhere ROTATION_PLAN drives real generation.
+_ROTATION_ROLE_KEY = {
+    ("Clinical", "English"): "Clinical",
+    ("Admin", "English"):    "Admin / Management",
+    ("IT", "English"):       "IT / Informatics",
+    ("Other", "English"):    "Other",
+    ("Clinical", "Arabic"):  "سريري",
+    ("Admin", "Arabic"):     "إداري / إدارة",
+    ("IT", "Arabic"):        "تقنية المعلومات / المعلوماتية",
+    ("Other", "Arabic"):     "أخرى",
+}
+
 # =============================================================
 # AUTOMATIC EVALUATION — difficulty conformance, Arabic quality,
 # general quality, medical relevance. All computed from the
@@ -596,6 +644,152 @@ def check_medical_relevance(result):
     return 100
 
 # =============================================================
+# AUTOMATED 4-PROVIDER COMPARISON
+# -------------------------------------------------------------
+# Runs every provider through the SAME 10-cycle ROTATION_PLAN (5
+# English + 5 Arabic, mixing all 4 roles and all 3 difficulty
+# levels) and averages the 8 automatic metrics per provider —
+# no human rating involved, so it can run unattended behind one
+# button. Safe by construction: generate_email()/generate_assess_email()
+# already guarantee a valid result even when a provider's API is down
+# (they fall back to the local engine), so a bad/offline provider just
+# shows up with a low json_rate / high error_rate / more local fallback
+# — the run itself can never crash or stall on one bad provider.
+# =============================================================
+_COMPARISON_PROVIDERS = ["groq", "anthropic", "openai", "gemini"]
+_COMPARISON_WEIGHTS = {
+    "difficulty_score": 0.25,
+    "quality_arabic_avg": 0.20,   # average of quality_score and arabic_score
+    "manual_placeholder": 0.0,     # no manual rating in the automated run — redistributed below
+    "medical_score": 0.10,
+    "reliability_avg": 0.15,       # average of json_rate and (100 - error_rate)
+    "practical_avg": 0.10,         # average of a speed score and diversity ratio
+}
+# The automated run has no human "Overall Impression" score, so its 20%
+# weight is redistributed proportionally across the remaining dimensions
+# rather than silently dropped — keeps the 0-100 scale meaningful.
+_COMPARISON_WEIGHTS_NORM = {k: v for k, v in _COMPARISON_WEIGHTS.items() if k != "manual_placeholder"}
+_w_sum = sum(_COMPARISON_WEIGHTS_NORM.values())
+_COMPARISON_WEIGHTS_NORM = {k: v / _w_sum for k, v in _COMPARISON_WEIGHTS_NORM.items()}
+
+
+def run_full_auto_comparison(progress_callback=None):
+    """Runs all 4 providers through the 10-cycle ROTATION_PLAN and returns
+    {provider: {metric: value}}. `progress_callback(provider, cycle_no,
+    step, total_steps)` is called before each cycle if provided, so the
+    caller can show live progress. Never raises: any per-email failure is
+    caught and counted toward that provider's error_rate instead of
+    stopping the run."""
+    results = {}
+    original_provider = st.session_state.get("ai_provider")
+    total_steps = len(_COMPARISON_PROVIDERS) * len(ROTATION_PLAN)
+    step = 0
+    for prov in _COMPARISON_PROVIDERS:
+        st.session_state["ai_provider"] = prov
+        scores = {"difficulty_score": [], "arabic_score": [], "quality_score": [], "medical_score": []}
+        speeds = []; json_ok = 0; json_fail = 0; errors = 0; calls = 0; hashes = set()
+        for plan in ROTATION_PLAN:
+            role_key = _ROTATION_ROLE_KEY.get((plan["role_en"], plan["language"]), "Clinical")
+            diff = plan["difficulty"]; lang = plan["language"]
+            step += 1
+            if progress_callback:
+                try:
+                    progress_callback(prov, plan["cycle"], step, total_steps)
+                except Exception:
+                    pass
+            # One learning-phase phishing email + one assessment-phase
+            # phishing email per cycle — enough real samples per
+            # role/difficulty/language cell to average meaningfully,
+            # without needing the full 16-email manual-cycle volume.
+            for kind in ("learn", "assess"):
+                calls += 1
+                t0 = time.time()
+                try:
+                    if kind == "learn":
+                        r = generate_email(role_key, 0, lang, diff)
+                    else:
+                        r = generate_assess_email(role_key, 0, True, lang, diff)
+                    dt = time.time() - t0
+                    if isinstance(r, dict) and str(r.get("body", "")).strip() and "error" not in r:
+                        speeds.append(dt)
+                        json_ok += 1
+                        hashes.add(hash(str(r.get("body", ""))[:250]))
+                        scores["difficulty_score"].append(check_difficulty_conformance(r, diff, True))
+                        scores["arabic_score"].append(check_arabic_quality(r, lang == "Arabic"))
+                        scores["quality_score"].append(check_general_quality(r))
+                        scores["medical_score"].append(check_medical_relevance(r))
+                    else:
+                        json_fail += 1
+                except Exception:
+                    errors += 1
+
+        def _avg(key):
+            vals = [v for v in scores[key] if v is not None]
+            return round(sum(vals) / len(vals), 1) if vals else None
+
+        avg_speed = round(sum(speeds) / len(speeds), 2) if speeds else None
+        json_rate = round(json_ok / (json_ok + json_fail) * 100) if (json_ok + json_fail) > 0 else None
+        error_rate = round(errors / calls * 100) if calls else None
+        diversity_n = len(hashes)
+
+        results[prov] = {
+            "difficulty_score": _avg("difficulty_score"),
+            "arabic_score": _avg("arabic_score"),
+            "quality_score": _avg("quality_score"),
+            "medical_score": _avg("medical_score"),
+            "avg_speed": avg_speed,
+            "json_rate": json_rate,
+            "error_rate": error_rate,
+            "diversity": f"{diversity_n}/{calls}",
+            "diversity_ratio": round(diversity_n / calls * 100) if calls else None,
+            "n_calls": calls,
+        }
+
+    st.session_state["ai_provider"] = original_provider
+    return results
+
+
+def compute_comparison_weighted_score(prov_result):
+    """Combines one provider's automated-run metrics into a single 0-100
+    score using _COMPARISON_WEIGHTS_NORM, so providers can be ranked.
+    Missing pieces (e.g. no Arabic samples happened to succeed) are
+    excluded and the remaining weights re-normalized, rather than
+    silently counted as zero."""
+    if not isinstance(prov_result, dict):
+        return None
+    quality_arabic_vals = [v for v in [prov_result.get("quality_score"), prov_result.get("arabic_score")] if v is not None]
+    quality_arabic_avg = sum(quality_arabic_vals) / len(quality_arabic_vals) if quality_arabic_vals else None
+
+    err = prov_result.get("error_rate")
+    jr = prov_result.get("json_rate")
+    reliability_vals = [v for v in [jr, (100 - err) if err is not None else None] if v is not None]
+    reliability_avg = sum(reliability_vals) / len(reliability_vals) if reliability_vals else None
+
+    speed = prov_result.get("avg_speed")
+    # Faster = better; treat 1s as ~100 and 10s+ as ~0 for a rough 0-100 speed score.
+    speed_score = max(0, min(100, round(100 - (speed - 1) * 11.1))) if speed is not None else None
+    diversity_ratio = prov_result.get("diversity_ratio")
+    practical_vals = [v for v in [speed_score, diversity_ratio] if v is not None]
+    practical_avg = sum(practical_vals) / len(practical_vals) if practical_vals else None
+
+    components = {
+        "difficulty_score": prov_result.get("difficulty_score"),
+        "quality_arabic_avg": quality_arabic_avg,
+        "medical_score": prov_result.get("medical_score"),
+        "reliability_avg": reliability_avg,
+        "practical_avg": practical_avg,
+    }
+    weighted_sum = 0.0; weight_used = 0.0
+    for key, val in components.items():
+        if val is None:
+            continue
+        w = _COMPARISON_WEIGHTS_NORM.get(key, 0)
+        weighted_sum += val * w
+        weight_used += w
+    if weight_used == 0:
+        return None
+    return round(weighted_sum / weight_used, 1)
+
 # PERSISTENT AUTO-EVAL LOG + PENDING-CYCLE BUCKET
 # -------------------------------------------------------------
 # auto_eval.json   : permanent raw log, one row per generated email,
@@ -3486,6 +3680,140 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 e3.metric("AI usage %" if not _is_ar else "نسبة الاعتماد على AI", f"{_api_pct_e}%")
         except Exception:
             pass
+
+        # ── المقارنة التلقائية الشاملة للمزودين الأربعة ──
+        # معزولة بالكامل داخل try/except، ولا تلمس أي حالة أخرى باللوحة.
+        try:
+            st.markdown("---")
+            st.markdown(
+                ("### 🔬 المقارنة التلقائية الشاملة للمزودين الأربعة" if _is_ar
+                 else "### 🔬 Automated 4-Provider Comparison")
+            )
+            st.caption(
+                "يشغّل كل مزوّد تلقائيًا عبر نفس الـ10 دورات (5 إنجليزي + 5 عربي، بمزيج من الأدوار الأربعة والمستويات الثلاثة)، "
+                "ويحسب 8 مقاييس آلية لكل واحد، ثم يرتّبهم بدرجة نهائية موزونة. يستغرق عدة دقائق ويستهلك استدعاءات API فعلية "
+                "لكل مزوّد — شغّليها وقت ما تكون النتائج مهمة فعليًا، مو لتجربة سريعة."
+                if _is_ar else
+                "Automatically runs every provider through the same 10-cycle plan (5 English + 5 Arabic, mixing all "
+                "4 roles and all 3 difficulty levels), computes 8 automatic metrics for each, then ranks them by a "
+                "weighted final score. Takes several minutes and makes real API calls per provider — run it when the "
+                "results actually matter, not for a quick test."
+            )
+
+            _comp_running_key = "auto_comparison_running"
+            _comp_col1, _comp_col2 = st.columns([3, 1])
+            with _comp_col1:
+                _start_comparison = st.button(
+                    ("▶️ ابدأ المقارنة التلقائية (٤ مزودين × ١٠ دورات)" if _is_ar
+                     else "▶️ Start Automated Comparison (4 providers × 10 cycles)"),
+                    use_container_width=True, type="primary", key="start_auto_comparison_btn",
+                )
+            with _comp_col2:
+                _hist_all = load_auto_comparisons()
+                st.metric(("مقارنات سابقة" if _is_ar else "Past runs"), len(_hist_all))
+
+            if _start_comparison:
+                _progress_bar = st.progress(0.0)
+                _status_box = st.empty()
+                _prov_labels_map = {
+                    "groq": "🟠 Groq", "anthropic": "🟣 Claude",
+                    "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini",
+                }
+
+                def _on_progress(prov, cycle_no, step, total_steps):
+                    _progress_bar.progress(min(step / total_steps, 1.0))
+                    _status_box.markdown(
+                        (f"⏳ {_prov_labels_map.get(prov, prov)} — الدورة {cycle_no} من 10 "
+                         f"({step}/{total_steps})") if _is_ar else
+                        (f"⏳ {_prov_labels_map.get(prov, prov)} — cycle {cycle_no} of 10 "
+                         f"({step}/{total_steps})")
+                    )
+
+                _t_start = time.time()
+                _comparison_results = run_full_auto_comparison(progress_callback=_on_progress)
+                _elapsed_min = round((time.time() - _t_start) / 60, 1)
+                _progress_bar.progress(1.0)
+                _status_box.empty()
+
+                _record = {
+                    "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                    "elapsed_minutes": _elapsed_min,
+                    "results": _comparison_results,
+                }
+                save_auto_comparison(_record)
+                st.session_state["_last_auto_comparison"] = _record
+                st.success(
+                    (f"✅ خلصت المقارنة ({_elapsed_min} دقيقة) — النتائج محفوظة دائمًا." if _is_ar
+                     else f"✅ Comparison finished ({_elapsed_min} min) — results saved permanently.")
+                )
+
+            _last = st.session_state.get("_last_auto_comparison")
+            if not _last and load_auto_comparisons():
+                _last = load_auto_comparisons()[-1]
+
+            def _render_comparison_table(record, is_ar_local):
+                res = record.get("results", {})
+                scored = {p: compute_comparison_weighted_score(res.get(p, {})) for p in _COMPARISON_PROVIDERS}
+                valid_scores = {p: s for p, s in scored.items() if s is not None}
+                winner = max(valid_scores, key=valid_scores.get) if valid_scores else None
+                prov_labels = {"groq": "🟠 Groq", "anthropic": "🟣 Claude", "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini"}
+                if winner:
+                    st.markdown(
+                        (f"#### 🏆 الأفضل حسب هذي الدورة: {prov_labels[winner]} — {valid_scores[winner]}/100"
+                         if is_ar_local else
+                         f"#### 🏆 Best in this run: {prov_labels[winner]} — {valid_scores[winner]}/100")
+                    )
+                rows_meta = [
+                    ("difficulty_score", "مطابقة الصعوبة %" if is_ar_local else "Difficulty match %"),
+                    ("arabic_score", "جودة العربي %" if is_ar_local else "Arabic quality %"),
+                    ("quality_score", "الجودة العامة %" if is_ar_local else "General quality %"),
+                    ("medical_score", "الصلة الطبية %" if is_ar_local else "Medical relevance %"),
+                    ("avg_speed", "متوسط السرعة (ث)" if is_ar_local else "Avg speed (s)"),
+                    ("json_rate", "نجاح JSON %" if is_ar_local else "JSON success %"),
+                    ("error_rate", "نسبة الأخطاء %" if is_ar_local else "Error rate %"),
+                    ("diversity", "التنوع" if is_ar_local else "Diversity"),
+                ]
+                header_cells = "".join(
+                    f'<th style="padding:.5rem;border:1px solid rgba(255,255,255,.15);color:#F8FAFC;">{prov_labels[p]}</th>'
+                    for p in _COMPARISON_PROVIDERS
+                )
+                body_rows = ""
+                for key, label in rows_meta:
+                    cells = ""
+                    for p in _COMPARISON_PROVIDERS:
+                        v = res.get(p, {}).get(key, "—")
+                        cells += f'<td style="padding:.5rem;text-align:center;border:1px solid rgba(255,255,255,.1);color:#E2E8F0;">{v if v is not None else "—"}</td>'
+                    body_rows += f'<tr><td style="padding:.5rem;border:1px solid rgba(255,255,255,.1);color:#93C5FD;font-weight:700;">{label}</td>{cells}</tr>'
+                score_cells = ""
+                for p in _COMPARISON_PROVIDERS:
+                    s = scored.get(p)
+                    is_winner = (p == winner)
+                    bg = "background:rgba(34,197,94,.25);" if is_winner else ""
+                    score_cells += f'<td style="padding:.5rem;text-align:center;border:1px solid rgba(255,255,255,.1);color:#F8FAFC;font-weight:900;{bg}">{s if s is not None else "—"}{" 🏆" if is_winner else ""}</td>'
+                body_rows += f'<tr><td style="padding:.5rem;border:1px solid rgba(255,255,255,.1);color:#FCD34D;font-weight:900;">{"الدرجة النهائية الموزونة" if is_ar_local else "Weighted final score"}</td>{score_cells}</tr>'
+                st.markdown(
+                    f'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:.85rem;">'
+                    f'<tr><th style="padding:.5rem;border:1px solid rgba(255,255,255,.15);"></th>{header_cells}</tr>'
+                    f'{body_rows}</table></div>',
+                    unsafe_allow_html=True,
+                )
+
+            if _last:
+                st.markdown('<div style="height:.6rem"></div>', unsafe_allow_html=True)
+                _render_comparison_table(_last, _is_ar)
+
+            _history = load_auto_comparisons()
+            if len(_history) > 1:
+                with st.expander(("📜 عرض المقارنات السابقة (" + str(len(_history) - 1) + ")") if _is_ar
+                                  else f"📜 View past comparisons ({len(_history)-1})"):
+                    for _rec in reversed(_history[:-1]):
+                        st.markdown(f"**{_rec.get('timestamp','')}** — {_rec.get('elapsed_minutes','?')} "
+                                    + ("دقيقة" if _is_ar else "min"))
+                        _render_comparison_table(_rec, _is_ar)
+                        st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
+        except Exception as _comp_err:
+            try: _store_debug("auto_comparison_ui", str(_comp_err))
+            except Exception: pass
 
     # ──────────────────────────────────────────────────────────
     # TAB 3 — Manual Ratings (👍 اليدوية)
