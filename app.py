@@ -5179,6 +5179,22 @@ def _v30_role_type(role):
     return ROLE_MAP.get(role, ROLE_MAP["Clinical"])[2]
 
 
+def _v30_mixed_pool(knowledge_dict, role_type):
+    """For role_type == 'other': returns a MIX of every role's own scenario
+    pool (clinical + admin + it + other's own), so 'Other' represents a
+    general employee who could plausibly receive any type of hospital
+    email — instead of a separate, narrow pool of its own. Works for both
+    V30_KNOWLEDGE (easy/hard engine) and V40_SCENARIOS (medium engine)
+    since both are keyed the same way by role_type.
+    For any other role_type, returns just that role's own pool, unchanged."""
+    if role_type == "other":
+        combined = []
+        for rt in ("clinical", "admin", "it", "other"):
+            combined.extend(knowledge_dict.get(rt, []))
+        return combined
+    return list(knowledge_dict.get(role_type, []))
+
+
 
 
 
@@ -5644,7 +5660,7 @@ def _v31_validate(result, plan):
     if subject.lower() in body.lower(): return False
     if any(p in body.lower() for p in V31_BANNED_PHRASES): return False
     if plan["role_type"] not in ("clinical","admin","it","other"): return False
-    if plan["family_id"] not in {f["id"] for f in V30_KNOWLEDGE[plan["role_type"]]}: return False
+    if plan["family_id"] not in {f["id"] for f in _v30_mixed_pool(V30_KNOWLEDGE, plan["role_type"])}: return False
     if result.get("is_phishing"):
         count=len(result.get("indicators",[]))
         ranges={"easy":(4,5),"medium":(3,4),"hard":(1,2)}
@@ -6018,7 +6034,7 @@ def _v33_plan(role, index, language, difficulty, phase, is_phishing):
         if row.get("role_type") == role_type and row.get("difficulty") == diff
     }
 
-    families = list(V30_KNOWLEDGE[role_type])
+    families = _v30_mixed_pool(V30_KNOWLEDGE, role_type)
     ar = language == "Arabic"
     for _ in range(240):
         family = _v33_pick(families, [])
@@ -7285,7 +7301,7 @@ def _v40_choose_fresh(options, history, window=8):
 
 def _v40_plan(role, index, language, phase):
     role_type = _v30_role_type(role)
-    bank = V40_SCENARIOS.get(role_type, V40_SCENARIOS["other"])
+    bank = _v30_mixed_pool(V40_SCENARIOS, role_type)
     mem = _v40_memory(role_type, language, phase)
     families = [x for x in bank if x["id"] not in set(mem["family"][-5:])] or bank
     family = _V40_RNG.choice(families)
