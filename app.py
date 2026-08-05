@@ -6,64 +6,96 @@
 #             phishing awareness training and assessment
 #             designed for Saudi healthcare employees.
 # Tech Stack: Python 3.9, Streamlit, Multi-Provider AI (Groq/Claude/OpenAI/Gemini)
-# AI Models : Groq LLaMA 3.3-70b | Claude claude-sonnet-4-6 | GPT-4o | Gemini 1.5 Pro
+# AI Models : Groq LLaMA 3.3-70b | Claude claude-sonnet-4-6 | GPT-4o | Gemini 2.5 Flash
 # Admin     : Hidden Admin Panel at /?admin=true (password protected)
-#             Compare 4 AI providers with 8-metric scoring system.
+#             Compare 4 AI providers with 8-metric scoring system, either
+#             manually (one cycle at a time) or via the one-click
+#             Automated 4-Provider Comparison (run_full_auto_comparison).
 # -------------------------------------------------------------
 # App Flow:
 #   HOME -> LEARNING (6 AI-generated phishing examples)
 #        -> COMPLETE -> ASSESSMENT (10 questions)
 #        -> RESULTS -> PERFORMANCE REPORT
+# Content is generated across 3 progressive difficulty levels
+# (Easy/Medium/Hard, each with its own domain/greeting/urgency/
+# attachment/QR/indicator-count contract) and 4 job roles (Clinical,
+# Admin/Management, IT/Informatics, and "Other" — which deliberately
+# MIXES scenarios from all three other domains rather than having its
+# own separate pool, since it represents a general employee who could
+# plausibly receive any type of hospital email).
 # =============================================================
 #
-# EN — QUICK CODE MAP (where to look for what):
-#   • ROLE_MAP                  → job-role display names → (description, context, role_type)
-#   • PHISHING_SCENARIOS        → legacy/unused list, kept for reference only
-#   • FORCED_SCENARIOS          → the actual scenario pool per role_type
-#                                 (admin/clinical/it have 10 each, "other" has 6
-#                                 tied 1:1 to OTHER_JOB_PROFILES)
-#   • OTHER_JOB_PROFILES        → the 6 sub-job profiles used when role="Other"
-#                                 (now also carries name_en/name_ar for greeting binding)
-#   • RECIPIENT_POOLS           → fixed (name, email) pairs per role_type, used to
-#                                 keep the email greeting and the "to" address consistent
-#   • get_session_random_order  → shared helper: shuffles indices once per session
-#                                 so the same "example slot" doesn't always get the
-#                                 same scenario/recipient across different sessions
-#   • build_prompt               → builds the prompt for the LEARNING phase (6 examples)
-#   • build_assess_prompt        → builds the prompt for the ASSESSMENT phase (10 questions)
-#   • call_ai / call_groq        → sends the prompt to whichever provider is active
+# EN — QUICK CODE MAP (where to look for what — reflects the CURRENT
+# generation engine; earlier versions of this map referenced functions
+# like build_prompt/OTHER_JOB_PROFILES/call_groq that no longer exist
+# in the code and have been removed here to avoid confusion):
+#   • ROLE_MAP                   → job-role display names → (description, context, role_type)
+#   • RECIPIENT_POOLS            → fixed, correctly-titled (name, email) pairs per role_type
+#                                  (Dr./Nurse/Pharmacist/Lab & Radiology Technician for clinical,
+#                                  plain names for admin/IT), used for hard-difficulty and
+#                                  legitimate-email greetings via _v30_full_name()
+#   • V30_KNOWLEDGE               → scenario family pool used by the easy/hard engine
+#   • V40_SCENARIOS               → scenario family pool used by the medium engine
+#   • _v30_mixed_pool             → for role_type == "other", merges clinical+admin+it+other's
+#                                  own pool into one — the actual mechanism behind the
+#                                  "Other mixes all three domains" design above
+#   • generate_email /
+#     generate_assess_email       → the two real entry points the app calls; each first tries
+#                                  a full AI-authored rewrite (_ai_full_easy/_medium/_hard/
+#                                  _legitimate) with a guaranteed local fallback underneath
+#   • _ai_overlay_content         → the AI rewrite layer: keeps every structural element
+#                                  (greeting, closing, link/QR/attachment) verbatim while
+#                                  letting the model rewrite the actual wording
+#   • call_ai                     → sends a prompt to whichever provider is active
 #                                  (groq/anthropic/openai/gemini) and normalizes the reply
-#   • parse_json_response        → robust JSON parsing with repair fallbacks
-#   • page_results                → renders "مراجعة الإجابات" (review answers) — has the
+#   • parse_json_response         → robust JSON parsing with repair fallbacks
+#   • check_difficulty_conformance / check_arabic_quality / check_general_quality /
+#     check_medical_relevance     → the 4 automatic content-quality metrics
+#   • run_full_auto_comparison /
+#     compute_comparison_weighted_score → the one-click 4-provider comparison and its
+#                                  weighted ranking formula
+#   • page_results                 → renders the answer-review page — has the
 #                                  <bdi> bidi-isolation fix for mixed Arabic/English text
 #   • load_persistent_provider /
 #     save_persistent_provider /
-#     set_active_provider        → keeps the admin's chosen AI provider saved to disk
+#     set_active_provider         → keeps the admin's chosen AI provider saved to disk
 #                                  (provider_config.json) so it survives logout/new sessions
 #
-# AR — خريطة سريعة للكود (وين تدورين على كل شي):
-#   • ROLE_MAP                  → أسماء الأدوار الوظيفية ← (الوصف، السياق، نوع الدور)
-#   • PHISHING_SCENARIOS        → قائمة قديمة غير مستخدمة، باقية للمرجعية فقط
-#   • FORCED_SCENARIOS          → مسبح السيناريوهات الفعلي لكل دور
-#                                 (إداري/سريري/تقني فيها 10 لكل واحد، و"Other" فيها 6
-#                                 مرتبطة 1:1 مع OTHER_JOB_PROFILES)
-#   • OTHER_JOB_PROFILES        → الـ6 بروفايلات الفرعية المستخدمة لما الدور = "Other"
-#                                 (الآن فيها كمان name_en/name_ar لربط اسم التحية)
-#   • RECIPIENT_POOLS           → أزواج (اسم، بريد) ثابتة لكل دور، نستخدمها حتى تتطابق
-#                                 التحية بالبريد مع عنوان "to" دايمًا
-#   • get_session_random_order  → دالة مشتركة: تخلط الفهارس مرة واحدة لكل جلسة، حتى
-#                                 "خانة المثال" نفسها ما تطلع لها نفس السيناريو/المستلم
-#                                 بكل الجلسات
-#   • build_prompt               → يبني تعليمات مرحلة التعلم (الـ6 أمثلة)
-#   • build_assess_prompt        → يبني تعليمات مرحلة الاختبار (الـ10 أسئلة)
-#   • call_ai / call_groq        → يرسل التعليمات لأي بيئة نشطة حاليًا
+# AR — خريطة سريعة للكود (وين تدورين على كل شي — تعكس محرك التوليد
+# الحالي؛ نسخ سابقة من هذي الخريطة كانت تشاور على دوال زي
+# build_prompt/OTHER_JOB_PROFILES/call_groq ما عادت موجودة بالكود،
+# وتم حذفها من هنا تفاديًا لأي لبس):
+#   • ROLE_MAP                    → أسماء الأدوار الوظيفية ← (الوصف، السياق، نوع الدور)
+#   • RECIPIENT_POOLS             → أزواج (اسم، بريد) ثابتة بالألقاب الصحيحة لكل دور
+#                                  (د./ممرض(ة)/صيدلاني(ة)/فني مختبر/فني أشعة للسريري،
+#                                  أسماء عادية للإداري/التقني)، تُستخدم لتحية مستوى صعب
+#                                  والرسائل الشرعية عبر _v30_full_name()
+#   • V30_KNOWLEDGE                → مجمّع سيناريوهات محرك سهل/صعب
+#   • V40_SCENARIOS                → مجمّع سيناريوهات محرك متوسط
+#   • _v30_mixed_pool              → لدور "أخرى"، يدمج مجمّعات سريري+إداري+تقني+مجمّعه
+#                                  الخاص بمجمّع واحد — هذي الآلية الفعلية وراء تصميم
+#                                  "أخرى يمزج الثلاث مجالات" أعلاه
+#   • generate_email /
+#     generate_assess_email        → نقطتا الدخول الحقيقيتان اللي يستدعيهم التطبيق؛ كل
+#                                  وحدة تحاول أول شي إعادة صياغة كاملة عبر AI
+#                                  (_ai_full_easy/_medium/_hard/_legitimate) فوق أساس
+#                                  محلي مضمون كخطة بديلة
+#   • _ai_overlay_content          → طبقة إعادة الصياغة عبر AI: تحافظ على كل عنصر هيكلي
+#                                  (التحية، الإغلاق، الرابط/QR/المرفق) كما هو، وتخلي
+#                                  النموذج يعيد صياغة الكلام الفعلي بس
+#   • call_ai                      → يرسل التعليمات لأي بيئة نشطة حاليًا
 #                                  (groq/anthropic/openai/gemini) ويوحّد شكل الرد
-#   • parse_json_response        → تحليل JSON قوي مع محاولات تصحيح تلقائية
-#   • page_results                → يعرض صفحة "مراجعة الإجابات" — فيها إصلاح اتجاه
+#   • parse_json_response          → تحليل JSON قوي مع محاولات تصحيح تلقائية
+#   • check_difficulty_conformance / check_arabic_quality / check_general_quality /
+#     check_medical_relevance      → المقاييس الآلية الأربعة لجودة المحتوى
+#   • run_full_auto_comparison /
+#     compute_comparison_weighted_score → المقارنة التلقائية للمزودين الأربعة بزر واحد
+#                                  ومعادلة الترتيب الموزونة
+#   • page_results                 → يعرض صفحة مراجعة الإجابات — فيها إصلاح اتجاه
 #                                  النص (<bdi>) للنصوص المختلطة عربي/إنجليزي
 #   • load_persistent_provider /
 #     save_persistent_provider /
-#     set_active_provider        → يحفظ اختيار الأدمن لمزوّد الذكاء الاصطناعي على القرص
+#     set_active_provider         → يحفظ اختيار الأدمن لمزوّد الذكاء الاصطناعي على القرص
 #                                  (provider_config.json) حتى يفضل بعد تسجيل خروج/جلسة جديدة
 # =============================================================
 
@@ -188,20 +220,33 @@ def delete_all_runs():
 _AUTO_COMPARISON_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_comparisons.json")
 
 def load_auto_comparisons():
+    local = []
     try:
         with open(_AUTO_COMPARISON_FILE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, list) else []
+        if isinstance(data, list):
+            local = data
     except Exception:
-        return []
+        local = []
+    try:
+        return merge_local_and_gsheet_auto_comparisons(local)
+    except Exception:
+        return local
 
 def save_auto_comparison(record):
-    """Append one full 4-provider automated comparison run and persist to disk."""
+    """Append one full 4-provider automated comparison run and persist to
+    disk, then best-effort push it to the durable Google Sheets copy too
+    (same pattern as save_run/push_run_to_gsheet) so it survives a
+    container restart/redeploy that would otherwise wipe the local file."""
     runs = load_auto_comparisons()
     runs.append(record)
     try:
         with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
             json.dump(runs, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    try:
+        push_auto_comparison_to_gsheet(record)
     except Exception:
         pass
     return runs
@@ -453,6 +498,104 @@ def merge_local_and_gsheet_runs(local_runs):
         if key not in seen:
             seen.add(key)
             merged.append(r)
+    return merged
+
+# =============================================================
+# GOOGLE SHEETS PERSISTENCE — AUTOMATED 4-PROVIDER COMPARISON
+# -------------------------------------------------------------
+# Same durability pattern as runs.json above (push_run_to_gsheet /
+# pull_runs_from_gsheet / merge_local_and_gsheet_runs): the local
+# auto_comparisons.json file is a fast cache, but Google Sheets is
+# the durable source of truth that survives a container
+# restart/redeploy. One row per PROVIDER per run (the record's
+# nested {provider: {8 metrics}} shape is flattened for the sheet,
+# then reconstructed on read). Fully best-effort — if gspread isn't
+# configured, every function below silently no-ops and local-only
+# storage keeps working exactly as before.
+# =============================================================
+def push_auto_comparison_to_gsheet(record):
+    """Append one row per provider from a single automated-comparison
+    run to the 'Auto Comparison' tab."""
+    client = _get_gsheet_client()
+    sheet_id = _get_gsheet_id()
+    if not client or not sheet_id:
+        return
+    try:
+        sheet = client.open_by_key(sheet_id)
+        headers = ["timestamp", "elapsed_minutes", "provider",
+                   "difficulty_score", "arabic_score", "quality_score", "medical_score",
+                   "avg_speed", "json_rate", "error_rate", "diversity", "diversity_ratio", "n_calls"]
+        ws = _get_or_create_worksheet(sheet, "Auto Comparison", headers)
+        ts = record.get("timestamp", "")
+        elapsed = record.get("elapsed_minutes", "")
+        for prov, m in (record.get("results") or {}).items():
+            m = m or {}
+            ws.append_row([ts, elapsed, prov] + [m.get(h, "") for h in headers[3:]],
+                          value_input_option="USER_ENTERED")
+    except Exception:
+        pass
+
+
+def pull_auto_comparisons_from_gsheet():
+    """Read every row back from 'Auto Comparison' and regroup by
+    timestamp into the same {timestamp, elapsed_minutes, results:
+    {provider: {...}}} shape save_auto_comparison() produces locally.
+    Cached for 60s per session, same as pull_runs_from_gsheet()."""
+    cache = st.session_state.get("_gsheet_auto_comp_cache")
+    now = __import__("time").time()
+    if cache and (now - cache.get("ts", 0) < 60):
+        return cache["rows"]
+    client = _get_gsheet_client()
+    sheet_id = _get_gsheet_id()
+    if not client or not sheet_id:
+        return []
+    grouped = {}
+    numeric_fields = ["difficulty_score", "arabic_score", "quality_score", "medical_score",
+                       "avg_speed", "json_rate", "error_rate", "diversity_ratio", "n_calls"]
+    try:
+        sheet = client.open_by_key(sheet_id)
+        ws = sheet.worksheet("Auto Comparison")
+        for rec in ws.get_all_records():
+            ts = rec.get("timestamp", "")
+            if not ts:
+                continue
+            entry = grouped.setdefault(ts, {"timestamp": ts, "elapsed_minutes": rec.get("elapsed_minutes", ""), "results": {}})
+            prov = rec.get("provider")
+            if not prov:
+                continue
+            m = {}
+            for f in numeric_fields:
+                v = rec.get(f)
+                if v in ("", None):
+                    m[f] = None
+                else:
+                    try:
+                        m[f] = float(v) if f in ("avg_speed",) else int(float(v))
+                    except (ValueError, TypeError):
+                        m[f] = None
+            m["diversity"] = rec.get("diversity", "")
+            entry["results"][prov] = m
+    except Exception:
+        grouped = {}
+    rows = list(grouped.values())
+    st.session_state["_gsheet_auto_comp_cache"] = {"ts": now, "rows": rows}
+    return rows
+
+
+def merge_local_and_gsheet_auto_comparisons(local_runs):
+    """Combine local auto_comparisons.json entries with the durable
+    Google Sheet copy, deduplicating by timestamp — mirrors
+    merge_local_and_gsheet_runs() for the manual-cycle system."""
+    sheet_runs = pull_auto_comparisons_from_gsheet()
+    if not sheet_runs:
+        return local_runs
+    seen = {r.get("timestamp") for r in local_runs}
+    merged = list(local_runs)
+    for r in sheet_runs:
+        if r.get("timestamp") not in seen:
+            seen.add(r.get("timestamp"))
+            merged.append(r)
+    merged.sort(key=lambda r: r.get("timestamp", ""))
     return merged
 
 # =============================================================
@@ -1441,9 +1584,9 @@ _V30_RECIPIENT_DISPLAY = {
 
 # =============================================================
 # EN: OPEN-ENDED SCENARIO GENERATION (replaces the fixed scenario
-# pool for clinical/admin/it — "other" keeps its existing
-# profile-paired scenarios since changing those risks breaking the
-# 1:1 link with OTHER_JOB_PROFILES).
+# pool for clinical/admin/it — "other" now MIXES scenarios from all
+# three of those pools instead of having its own separate list; see
+# _v30_mixed_pool()).
 # ---------------------------------------------------------------
 # Instead of picking one of N pre-written scenarios, we now give
 # the model a broad CATEGORY (e.g. "VPN / remote network access")
@@ -1454,8 +1597,8 @@ _V30_RECIPIENT_DISPLAY = {
 # category + role context still keeps it realistic and on-topic.
 #
 # AR: توليد سيناريوهات مفتوح (بدل القائمة الثابتة لسريري/إداري/تقني
-# — دور "Other" يبقى على سيناريوهاته المرتبطة بالبروفايلات لأن
-# تغييرها يهدد الربط 1:1 مع OTHER_JOB_PROFILES).
+# — دور "Other" الآن يمزج سيناريوهات من الثلاث مجمّعات بدل ما يكون
+# له قائمة منفصلة خاصة به؛ راجعي _v30_mixed_pool()).
 # ---------------------------------------------------------------
 # بدل اختيار سيناريو جاهز من قائمة محدودة، الآن نعطي الموديل فئة
 # عامة (مثل "VPN / وصول شبكة عن بُعد") ونطلب منه صراحة يخترع
@@ -2780,13 +2923,18 @@ def page_learning():
 </div>""", unsafe_allow_html=True)
 
     st.markdown('<div style="height:1.5rem"></div>',unsafe_allow_html=True)
-    bc,_ = st.columns([1,3])
-    with bc:
+    col_a, col_b = st.columns([1,1])
+    back_col, next_col = (col_b, col_a) if is_arabic else (col_a, col_b)
+    with back_col:
+        if idx > 0:
+            if st.button(t("← Back","→ السابق"), key="back_btn", use_container_width=True):
+                st.session_state["example_index"] -= 1; st.rerun()
+    with next_col:
         if idx<TOTAL-1:
-            if st.button(t("Next Example →","← المثال التالي"),key="next_btn"):
+            if st.button(t("Next Example →","← المثال التالي"),key="next_btn", use_container_width=True):
                 st.session_state["example_index"]+=1; st.rerun()
         else:
-            if st.button(t("Complete Learning Phase →","← إتمام مرحلة التعلم"),key="complete_btn"):
+            if st.button(t("Complete Learning Phase →","← إتمام مرحلة التعلم"),key="complete_btn", use_container_width=True):
                 st.session_state["page"]="complete"; st.rerun()
 
 
@@ -3711,6 +3859,17 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             with _comp_col2:
                 _hist_all = load_auto_comparisons()
                 st.metric(("مقارنات سابقة" if _is_ar else "Past runs"), len(_hist_all))
+                if _hist_all:
+                    st.download_button(
+                        ("⬇️ نسخة احتياطية (JSON)" if _is_ar else "⬇️ Backup copy (JSON)"),
+                        data=json.dumps(_hist_all, ensure_ascii=False, indent=2),
+                        file_name="auto_comparisons_backup.json",
+                        mime="application/json",
+                        use_container_width=True,
+                        key="download_auto_comparisons_backup",
+                        help=("نزّليها كل ما تشغّلين مقارنة جديدة — نسخة يدوية إضافية ما تعتمد على أي إعداد خارجي" if _is_ar
+                              else "Download after every new run — a manual extra copy that needs no external setup"),
+                    )
 
             if _start_comparison:
                 _progress_bar = st.progress(0.0)
