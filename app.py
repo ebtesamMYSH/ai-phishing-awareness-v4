@@ -3271,40 +3271,73 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
         except Exception:
             pass
 
-        # ── نسبة الاعتماد الفعلي على API مقابل القالب المحلي (مستوى متوسط) ──
+        # ── نسبة الاعتماد الفعلي على API مقابل القالب المحلي (الأربعة مستويات) ──
+        # يستخدم ai_full_source_stats — المتتبّع الموحّد الشامل الذي يقيس
+        # القرار النهائي الفعلي (بعد طبقة v42 الكاملة)، بدل نظامين قديمين
         # معزول بالكامل داخل try/except حتى لا يؤثر أي خطأ هنا على بقية اللوحة.
         try:
             st.markdown(
-                ("**📡 نسبة استخدام الذكاء الاصطناعي فعليًا (مستوى متوسط)**" if _is_ar
-                 else "**📡 Actual AI usage rate (medium difficulty)**")
+                f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1rem;margin-bottom:.4rem;">'
+                + ("📡 اعتماد رسائل التصيّد على الذكاء الاصطناعي — حسب مستوى الصعوبة" if _is_ar
+                   else "📡 Phishing email AI reliance — by difficulty level")
+                + '</div>', unsafe_allow_html=True
             )
-            _src = st.session_state.get("v40_source_stats", {"api": 0, "local": 0})
-            _total_src = _src.get("api", 0) + _src.get("local", 0)
-            if _total_src == 0:
-                st.caption("لا توجد بيانات بعد لهذي الجلسة — ولّدي بعض رسائل المستوى المتوسط أولاً." if _is_ar
-                           else "No data yet for this session — generate some medium-difficulty emails first.")
-            else:
-                _api_pct = round(100 * _src.get("api", 0) / _total_src, 1)
-                c1, c2, c3 = st.columns(3)
-                c1.metric("✅ AI-generated" if not _is_ar else "✅ من الذكاء الاصطناعي", _src.get("api", 0))
-                c2.metric("📋 Local fallback" if not _is_ar else "📋 من القالب المحلي", _src.get("local", 0))
-                c3.metric("AI usage %" if not _is_ar else "نسبة الاعتماد على AI", f"{_api_pct}%")
+            _full_src = st.session_state.get("ai_full_source_stats", {})
 
+            def _usage_box(stats, label):
+                _api_n, _local_n = stats.get("api", 0), stats.get("local", 0)
+                _tot = _api_n + _local_n
+                if _tot == 0:
+                    _pct_html = '<div style="font-size:.72rem;color:#6B7280;">' + ("لا بيانات" if _is_ar else "No data") + '</div>'
+                else:
+                    _pct = round(100 * _api_n / _tot)
+                    _pct_html = f'<div style="font-size:1.3rem;font-weight:900;color:#93C5FD;">{_pct}%</div>'
+                return (
+                    f'<div dir="{_dir}" style="border:1px solid rgba(255,255,255,.12);border-radius:12px;'
+                    f'padding:.7rem .6rem;text-align:center;">'
+                    f'<div style="font-weight:800;font-size:.85rem;color:#E2E8F0;margin-bottom:.3rem;">{label}</div>'
+                    f'{_pct_html}'
+                    f'<div style="font-size:.78rem;color:#6EE7B7;margin-top:.35rem;">✅ {_api_n} '
+                    + ("AI" if not _is_ar else "من AI") + '</div>'
+                    f'<div style="font-size:.78rem;color:#FCA5A5;">📋 {_local_n} '
+                    + ("local" if not _is_ar else "محلي") + '</div>'
+                    f'</div>'
+                )
+
+            _diff_cols = st.columns(3)
+            for _ci, (bk, lbl) in enumerate([
+                ("easy", "سهل" if _is_ar else "Easy"),
+                ("medium", "متوسط" if _is_ar else "Medium"),
+                ("hard", "صعب" if _is_ar else "Hard"),
+            ]):
+                with _diff_cols[_ci]:
+                    st.markdown(_usage_box(_full_src.get(bk, {"api": 0, "local": 0}), lbl), unsafe_allow_html=True)
+
+            st.markdown('<div style="height:.7rem"></div>', unsafe_allow_html=True)
             st.markdown(
-                ("**📡 نسبة استخدام الذكاء الاصطناعي فعليًا (مستوى سهل)**" if _is_ar
-                 else "**📡 Actual AI usage rate (easy difficulty)**")
+                f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1rem;margin-bottom:.4rem;">'
+                + ("📡 اعتماد الرسائل الشرعية مقابل التصيّدية على الذكاء الاصطناعي" if _is_ar
+                   else "📡 Legitimate vs. phishing email AI reliance")
+                + '</div>', unsafe_allow_html=True
             )
-            _src_e = st.session_state.get("v33_easy_source_stats", {"api": 0, "local": 0})
-            _total_e = _src_e.get("api", 0) + _src_e.get("local", 0)
-            if _total_e == 0:
-                st.caption("لا توجد بيانات بعد لهذي الجلسة — ولّدي بعض رسائل المستوى السهل أولاً." if _is_ar
-                           else "No data yet for this session — generate some easy-difficulty emails first.")
-            else:
-                _api_pct_e = round(100 * _src_e.get("api", 0) / _total_e, 1)
-                e1, e2, e3 = st.columns(3)
-                e1.metric("✅ AI-generated" if not _is_ar else "✅ من الذكاء الاصطناعي", _src_e.get("api", 0))
-                e2.metric("📋 Local fallback" if not _is_ar else "📋 من القالب المحلي", _src_e.get("local", 0))
-                e3.metric("AI usage %" if not _is_ar else "نسبة الاعتماد على AI", f"{_api_pct_e}%")
+            st.markdown(
+                f'<div dir="{_dir}" style="text-align:{_align};color:#6B7280;font-size:.78rem;margin-bottom:.4rem;">'
+                + ("محور مختلف عن الصعوبة — نوع المحتوى (رسالة حقيقية أم تصيّدية)، بغض النظر عن مستوى الصعوبة المختار. "
+                   "\"تصيّدي\" هنا مجموع الثلاث مستويات (سهل + متوسط + صعب) مجتمعة." if _is_ar else
+                   "A separate axis from difficulty — content type (genuine vs. phishing), regardless of the selected "
+                   "difficulty. \"Phishing\" here combines all three difficulty levels (easy + medium + hard).")
+                + '</div>', unsafe_allow_html=True
+            )
+            _legit_stats = _full_src.get("legitimate", {"api": 0, "local": 0})
+            _phish_stats = {
+                "api": sum(_full_src.get(bk, {}).get("api", 0) for bk in ("easy", "medium", "hard")),
+                "local": sum(_full_src.get(bk, {}).get("local", 0) for bk in ("easy", "medium", "hard")),
+            }
+            _type_col1, _type_col2, _, _ = st.columns(4)
+            with _type_col1:
+                st.markdown(_usage_box(_legit_stats, "✅ شرعي" if _is_ar else "✅ Legitimate"), unsafe_allow_html=True)
+            with _type_col2:
+                st.markdown(_usage_box(_phish_stats, "🎣 تصيّدي" if _is_ar else "🎣 Phishing"), unsafe_allow_html=True)
         except Exception:
             pass
 
@@ -3313,18 +3346,22 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
         try:
             st.markdown("---")
             st.markdown(
-                ("### 🔬 المقارنة التلقائية الشاملة للمزودين الأربعة" if _is_ar
-                 else "### 🔬 Automated 4-Provider Comparison")
+                f'<div dir="{_dir}" style="font-size:1.4rem;font-weight:800;text-align:{_align};margin-bottom:.3rem;">'
+                + ("🔬 المقارنة التلقائية الشاملة للمزودين الأربعة" if _is_ar
+                   else "🔬 Automated 4-Provider Comparison")
+                + '</div>', unsafe_allow_html=True
             )
-            st.caption(
-                "يشغّل كل مزوّد تلقائيًا عبر نفس الـ50 دورة (25 إنجليزي + 25 عربي، بمزيج من الأدوار الأربعة والمستويات الثلاثة)، "
-                "ويحسب 8 مقاييس آلية لكل واحد، ثم يرتّبهم بدرجة نهائية موزونة. يستغرق وقتًا أطول ويستهلك استدعاءات API فعلية "
-                "لكل مزوّد — شغّليها وقت ما تكون النتائج مهمة فعليًا، مو لتجربة سريعة."
-                if _is_ar else
-                "Automatically runs every provider through the same 50-cycle plan (25 English + 25 Arabic, mixing all "
-                "4 roles and all 3 difficulty levels), computes 8 automatic metrics for each, then ranks them by a "
-                "weighted final score. Takes longer and makes real API calls per provider — run it when the "
-                "results actually matter, not for a quick test."
+            st.markdown(
+                f'<div dir="{_dir}" style="text-align:{_align};color:#9CA3AF;font-size:.85rem;margin-bottom:.8rem;line-height:1.6;">'
+                + ("يشغّل كل مزوّد تلقائيًا عبر نفس الـ50 دورة (25 إنجليزي + 25 عربي، بمزيج من الأدوار الأربعة والمستويات الثلاثة)، "
+                   "ويحسب 8 مقاييس آلية لكل واحد، ثم يرتّبهم بدرجة نهائية موزونة. يستغرق وقتًا أطول ويستهلك استدعاءات API فعلية "
+                   "لكل مزوّد — شغّليها وقت ما تكون النتائج مهمة فعليًا، مو لتجربة سريعة."
+                   if _is_ar else
+                   "Automatically runs every provider through the same 50-cycle plan (25 English + 25 Arabic, mixing all "
+                   "4 roles and all 3 difficulty levels), computes 8 automatic metrics for each, then ranks them by a "
+                   "weighted final score. Takes longer and makes real API calls per provider — run it when the "
+                   "results actually matter, not for a quick test.")
+                + '</div>', unsafe_allow_html=True
             )
 
             _comp_running_key = "auto_comparison_running"
@@ -3406,10 +3443,14 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             for _ci, (_ramp, _cat_title, _cat_items) in enumerate(_CAT_LEGEND):
                 _border, _bg = _CAT_COLORS[_ramp]
                 with _leg_cols[_ci]:
-                    _items_html = "".join(f'<div style="font-size:.72rem;color:#CBD5E1;padding:.1rem 0;">{it}</div>' for it in _cat_items)
+                    _items_html = "".join(
+                        f'<div dir="{_dir}" style="font-size:.72rem;color:#CBD5E1;padding:.1rem 0;text-align:{_align};">{it}</div>'
+                        for it in _cat_items
+                    )
                     st.markdown(
-                        f'<div style="border:1px solid {_border}66;background:{_bg};border-radius:12px;padding:.7rem .6rem;height:100%;">'
-                        f'<div style="font-weight:800;color:{_border};font-size:.82rem;margin-bottom:.4rem;">{_cat_title}</div>'
+                        f'<div dir="{_dir}" style="border:1px solid {_border}66;background:{_bg};border-radius:12px;'
+                        f'padding:.7rem .6rem;min-height:9.5rem;display:flex;flex-direction:column;">'
+                        f'<div style="font-weight:800;color:{_border};font-size:.82rem;margin-bottom:.4rem;text-align:{_align};">{_cat_title}</div>'
                         f'{_items_html}</div>', unsafe_allow_html=True)
             st.markdown('<div style="height:.9rem"></div>', unsafe_allow_html=True)
 
