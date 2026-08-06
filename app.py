@@ -3271,17 +3271,13 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
         except Exception:
             pass
 
-        # ── نسبة الاعتماد الفعلي على API مقابل القالب المحلي (الأربعة مستويات) ──
+        # ── نسبة الاعتماد الفعلي على API مقابل القالب المحلي ──
         # يستخدم ai_full_source_stats — المتتبّع الموحّد الشامل الذي يقيس
-        # القرار النهائي الفعلي (بعد طبقة v42 الكاملة)، بدل نظامين قديمين
+        # القرار النهائي الفعلي (بعد طبقة v42 الكاملة). يعرض التصيّدي
+        # والشرعي بشكل متوازٍ ومتماثل، كل واحد منهم عبر مستويات الصعوبة
+        # الثلاثة + إجمالي، لأن الاثنين الآن يُتتبّعان بنفس الدقة.
         # معزول بالكامل داخل try/except حتى لا يؤثر أي خطأ هنا على بقية اللوحة.
         try:
-            st.markdown(
-                f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1rem;margin-bottom:.4rem;">'
-                + ("📡 اعتماد رسائل التصيّد على الذكاء الاصطناعي — حسب مستوى الصعوبة" if _is_ar
-                   else "📡 Phishing email AI reliance — by difficulty level")
-                + '</div>', unsafe_allow_html=True
-            )
             _full_src = st.session_state.get("ai_full_source_stats", {})
 
             def _usage_box(stats, label):
@@ -3304,40 +3300,43 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                     f'</div>'
                 )
 
-            _diff_cols = st.columns(3)
-            for _ci, (bk, lbl) in enumerate([
-                ("easy", "سهل" if _is_ar else "Easy"),
-                ("medium", "متوسط" if _is_ar else "Medium"),
-                ("hard", "صعب" if _is_ar else "Hard"),
-            ]):
-                with _diff_cols[_ci]:
-                    st.markdown(_usage_box(_full_src.get(bk, {"api": 0, "local": 0}), lbl), unsafe_allow_html=True)
+            def _sum_stats(keys):
+                return {
+                    "api": sum(_full_src.get(k, {}).get("api", 0) for k in keys),
+                    "local": sum(_full_src.get(k, {}).get("local", 0) for k in keys),
+                }
 
+            def _render_type_row(title_ar, title_en, prefix, keys):
+                st.markdown(
+                    f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1rem;margin-bottom:.4rem;">'
+                    + (title_ar if _is_ar else title_en) + '</div>', unsafe_allow_html=True
+                )
+                _cols = st.columns(4)
+                _diff_labels = [
+                    ("easy", "سهل" if _is_ar else "Easy"),
+                    ("medium", "متوسط" if _is_ar else "Medium"),
+                    ("hard", "صعب" if _is_ar else "Hard"),
+                ]
+                for _ci, (_dk, _dl) in enumerate(_diff_labels):
+                    with _cols[_ci]:
+                        st.markdown(_usage_box(_full_src.get(keys[_dk], {"api": 0, "local": 0}), _dl), unsafe_allow_html=True)
+                with _cols[3]:
+                    _overall_lbl = ("الإجمالي" if _is_ar else "Overall")
+                    st.markdown(_usage_box(_sum_stats(keys.values()), f"🔷 {_overall_lbl}"), unsafe_allow_html=True)
+
+            _render_type_row(
+                "🎣 اعتماد رسائل التصيّد على الذكاء الاصطناعي",
+                "🎣 Phishing email AI reliance",
+                "phish",
+                {"easy": "easy", "medium": "medium", "hard": "hard"},
+            )
             st.markdown('<div style="height:.7rem"></div>', unsafe_allow_html=True)
-            st.markdown(
-                f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1rem;margin-bottom:.4rem;">'
-                + ("📡 اعتماد الرسائل الشرعية مقابل التصيّدية على الذكاء الاصطناعي" if _is_ar
-                   else "📡 Legitimate vs. phishing email AI reliance")
-                + '</div>', unsafe_allow_html=True
+            _render_type_row(
+                "✅ اعتماد الرسائل الشرعية على الذكاء الاصطناعي",
+                "✅ Legitimate email AI reliance",
+                "legit",
+                {"easy": "legitimate_easy", "medium": "legitimate_medium", "hard": "legitimate_hard"},
             )
-            st.markdown(
-                f'<div dir="{_dir}" style="text-align:{_align};color:#6B7280;font-size:.78rem;margin-bottom:.4rem;">'
-                + ("محور مختلف عن الصعوبة — نوع المحتوى (رسالة حقيقية أم تصيّدية)، بغض النظر عن مستوى الصعوبة المختار. "
-                   "\"تصيّدي\" هنا مجموع الثلاث مستويات (سهل + متوسط + صعب) مجتمعة." if _is_ar else
-                   "A separate axis from difficulty — content type (genuine vs. phishing), regardless of the selected "
-                   "difficulty. \"Phishing\" here combines all three difficulty levels (easy + medium + hard).")
-                + '</div>', unsafe_allow_html=True
-            )
-            _legit_stats = _full_src.get("legitimate", {"api": 0, "local": 0})
-            _phish_stats = {
-                "api": sum(_full_src.get(bk, {}).get("api", 0) for bk in ("easy", "medium", "hard")),
-                "local": sum(_full_src.get(bk, {}).get("local", 0) for bk in ("easy", "medium", "hard")),
-            }
-            _type_col1, _type_col2, _, _ = st.columns(4)
-            with _type_col1:
-                st.markdown(_usage_box(_legit_stats, "✅ شرعي" if _is_ar else "✅ Legitimate"), unsafe_allow_html=True)
-            with _type_col2:
-                st.markdown(_usage_box(_phish_stats, "🎣 تصيّدي" if _is_ar else "🎣 Phishing"), unsafe_allow_html=True)
         except Exception:
             pass
 
@@ -7353,17 +7352,19 @@ def _ai_full_hard(role, index, language, phase):
 def _ai_full_legitimate(role, index, language, difficulty, phase):
     ar = language == "Arabic"
     diff = str(difficulty or "medium").lower()
+    if diff not in ("easy", "medium", "hard"):
+        diff = "medium"
     plan = _v33_plan(role, index, language, diff, phase, False)
     local = _v33_legitimate(plan, role, index)
     overlay = _ai_overlay_content(local, ar, False)
     if overlay:
         try:
             if _v33_validate(overlay, plan):
-                _track_ai_source("legitimate", True)
+                _track_ai_source(f"legitimate_{diff}", True)
                 return overlay
         except Exception:
             pass
-    _track_ai_source("legitimate", False)
+    _track_ai_source(f"legitimate_{diff}", False)
     return local
 
 
