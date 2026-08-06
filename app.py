@@ -1318,19 +1318,9 @@ _V30_RECIPIENT_DISPLAY = {
 # هذي الجلسة. هذا يخلي التنوع فعليًا لا محدود بدل ما يكون مسقوف
 # بحجم قائمة ثابتة، مع بقاء الواقعية بفضل الفئة وسياق الدور.
 # =============================================================
-
-
-
-
-
-
 # FIX 1: build_prompt — upgraded to llama-3.3-70b-versatile
 # and enhanced difficulty rules with more detail
 # =============================================================
-
-
-
-
 
 
 
@@ -1344,8 +1334,6 @@ def _has_generic_greeting(body):
     return any(g in b for g in generic)
 
 
-
-
 # =============================================================
 # STRICT ROLE + DIFFICULTY GUARDRAILS (patched)
 # -------------------------------------------------------------
@@ -1353,14 +1341,6 @@ def _has_generic_greeting(body):
 # job role (clinical/admin/IT) or violate the documented difficulty
 # framework before the email is shown to the trainee.
 # =============================================================
-
-
-
-
-
-
-
-
 
 # =============================================================
 # HEALTHCARE SCENARIO LIBRARY (300 Scenario Cards)
@@ -1372,27 +1352,14 @@ def _has_generic_greeting(body):
 # =============================================================
 
 
-
-
-
-
 # Dynamic content-shape engine. These are NOT fixed email templates.
 # They are writing constraints that make the API generate different forms of email content each time.
-
-
-
-
-
 
 
 # =============================================================
 # UNBOUNDED LEARNING PROMPT
 # No fixed templates. No fixed scenario pool. No example domains.
 # =============================================================
-
-
-
-
 
 # =============================================================
 # UNBOUNDED ASSESSMENT PROMPT
@@ -1678,12 +1645,6 @@ def parse_json_response(raw):
         except json.JSONDecodeError:
             pass
     raise json.JSONDecodeError("Cannot parse JSON", raw, 0)
-
-
-
-
-
-
 
 
 
@@ -3353,13 +3314,13 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             st.markdown(
                 f'<div dir="{_dir}" style="text-align:{_align};color:#9CA3AF;font-size:.85rem;margin-bottom:.8rem;line-height:1.6;">'
                 + ("يشغّل كل مزوّد تلقائيًا عبر نفس الـ50 دورة (25 إنجليزي + 25 عربي، بمزيج من الأدوار الأربعة والمستويات الثلاثة)، "
-                   "ويحسب 8 مقاييس آلية لكل واحد، ثم يرتّبهم بدرجة نهائية موزونة. يستغرق وقتًا أطول ويستهلك استدعاءات API فعلية "
-                   "لكل مزوّد — شغّليها وقت ما تكون النتائج مهمة فعليًا، مو لتجربة سريعة."
+                   "ويقيّمه على 4 أبعاد (جودة النص، التنوّع، واقعية التصيّد، الأداء التشغيلي)، ثم يرتّبهم بدرجة نهائية موزونة. "
+                   "يستغرق وقتًا أطول ويستهلك استدعاءات API فعلية لكل مزوّد — شغّليها وقت ما تكون النتائج مهمة فعليًا، مو لتجربة سريعة."
                    if _is_ar else
                    "Automatically runs every provider through the same 50-cycle plan (25 English + 25 Arabic, mixing all "
-                   "4 roles and all 3 difficulty levels), computes 8 automatic metrics for each, then ranks them by a "
-                   "weighted final score. Takes longer and makes real API calls per provider — run it when the "
-                   "results actually matter, not for a quick test.")
+                   "4 roles and all 3 difficulty levels), scores each across 4 dimensions (text quality, diversity, "
+                   "phishing realism, operational performance), then ranks them by a weighted final score. Takes longer "
+                   "and makes real API calls per provider — run it when the results actually matter, not for a quick test.")
                 + '</div>', unsafe_allow_html=True
             )
 
@@ -3553,11 +3514,6 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                     st.json(entry.get("error"))
 
 
-
-
-
-
-
 # =============================================================
 # FINAL DIVERSITY + DIFFICULTY OVERRIDE — Study 3
 # -------------------------------------------------------------
@@ -3705,11 +3661,6 @@ def get_role_unbounded_context(role_type, is_ar=False):
     }.get(role_type, "Saudi hospital employee.")
 
 
-
-
-
-
-
 # =============================================================
 # STRICT ROLE + DIFFICULTY GUARDRAILS (patched)
 # -------------------------------------------------------------
@@ -3717,11 +3668,6 @@ def get_role_unbounded_context(role_type, is_ar=False):
 # job role (clinical/admin/IT) or violate the documented difficulty
 # framework before the email is shown to the trainee.
 # =============================================================
-
-
-
-
-
 
 
 
@@ -3847,16 +3793,7 @@ def _reposition_trailing_lone_link(body, link):
 
 
 
-
-
-
-
-
-
-
 # Stronger difficulty contract: short, provider-friendly, and visibly different.
-
-
 
 # Override generators to apply the final normalization after each provider response.
 
@@ -3899,14 +3836,6 @@ def _load_debug_log():
     except Exception:
         pass
     return []
-
-
-
-
-
-
-
-
 
 
 
@@ -4008,18 +3937,9 @@ def call_ai(prompt, max_tokens=1600):
 # =============================================================
 
 
-
-
-
-
-
-
-
 # =============================================================
 # END DIFFICULTY ENFORCEMENT PATCH
 # =============================================================
-
-
 
 
 _FIELD_SYNONYMS = {
@@ -4030,12 +3950,6 @@ _FIELD_SYNONYMS = {
     "suspicious_link":  ["suspicious_link", "link", "malicious_link", "phishing_link", "url"],
     "attachment":       ["attachment", "attachment_name", "file_attachment"],
 }
-
-
-
-
-
-
 
 
 
@@ -4182,11 +4096,6 @@ Arabic and English must have equal depth and quality.
 
 
 
-
-
-
-
-
 # =============================================================
 # LIBRARY-DRIVEN DIVERSITY SYSTEM v19
 # -------------------------------------------------------------
@@ -4250,28 +4159,6 @@ Arabic and English must have equal depth and quality.
 # panel across otherwise-different emails. Each difficulty now has its
 # own small pool, picked with the same anti-repeat helper as everything
 # else.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # FIXED: the easy-difficulty greeting pool used to have only 3 fixed
 # strings, AND (see _v18_enforce below) the enforcement step forced the
 # body's first line to be exactly the first of those 3 strings almost every
@@ -4280,37 +4167,6 @@ Arabic and English must have equal depth and quality.
 # and the AI-enforcement path pull from the SAME pool using the SAME
 # session-scoped anti-repeat memory, so they can no longer disagree or
 # collapse onto one value.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -4333,24 +4189,6 @@ def go_to_learning(role):
 # Added without changing the UI, providers, admin panel, exports,
 # scoring, bilingual flow, or existing data structures.
 # =============================================================
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 # Public entry points remain unchanged for the rest of the application.
 
@@ -4503,10 +4341,6 @@ def _v30_mixed_pool(knowledge_dict, role_type):
             combined.extend(knowledge_dict.get(rt, []))
         return combined
     return list(knowledge_dict.get(role_type, []))
-
-
-
-
 
 
 
@@ -4816,13 +4650,6 @@ def _v30_compose_phishing(plan, role, index):
 
 
 
-
-
-
-
-
-
-
 # =============================================================
 # END RULE-GUIDED ENGINE v30
 # =============================================================
@@ -4960,9 +4787,6 @@ def _v31_compose_phishing(plan, role, index):
 
 
 
-
-
-
 def _v31_validate(result, plan):
     if not isinstance(result, dict): return False
     body=str(result.get("body", "")); subject=str(result.get("subject", "")); sender=str(result.get("from", ""))
@@ -4998,10 +4822,6 @@ def _v31_validate(result, plan):
 
 
 
-
-
-
-
 # =============================================================
 # END RULE-GUIDED ENGINE v31
 # =============================================================
@@ -5027,16 +4847,6 @@ V32_PHISH_STRUCTURES = [
 ]
 
 
-
-
-
-
-
-
-
-
-
-
 def _v32_choice(items, used=None):
     items = list(items)
     if used:
@@ -5056,10 +4866,6 @@ def _v32_session_bucket(role_type, language, difficulty):
         "semantic": [], "objects": [], "styles": [], "senders": [],
         "openings": [], "deadlines": [], "credentials": [], "subjects": [],
     })
-
-
-
-
 
 
 
@@ -5154,9 +4960,6 @@ def _v32_validate(result, plan):
     mem["openings"].append(opening); mem["subjects"].append(subj_key)
     mem["openings"] = mem["openings"][-40:]; mem["subjects"] = mem["subjects"][-40:]
     return True
-
-
-
 
 
 
@@ -5705,8 +5508,6 @@ def _v33_generate(role, index, language, difficulty="medium", is_phishing=True, 
 
 
 
-
-
 # =============================================================
 # END SCENARIO ENGINE v33
 # =============================================================
@@ -6146,12 +5947,9 @@ def _v35_generate(role, index, language, difficulty="medium", is_phishing=True, 
     return result
 
 
-
 # =============================================================
 # END MEDIUM GENERATION ENGINE v35
 # =============================================================
-
-
 
 # =============================================================
 # MEDIUM GENERATION ENGINE v36 — PHASE 1
@@ -6407,13 +6205,9 @@ def _v36_generate(role, index, language, difficulty="medium", is_phishing=True, 
     return _V36_BASE_V35_GENERATE(role, index, language, difficulty, is_phishing, assessment)
 
 
-
-
-
 # =============================================================
 # END MEDIUM GENERATION ENGINE v36 — PHASE 1
 # =============================================================
-
 
 # =============================================================
 # MEDIUM GENERATION ENGINE v40 — SINGLE-FILE SAFE REBUILD
@@ -7138,7 +6932,6 @@ def _track_ai_source(bucket, used_api):
         d["api" if used_api else "local"] += 1
     except Exception:
         pass
-
 
 def _extract_structural_fragments(local_result):
     """Pull every exact fragment the AI rewrite MUST preserve verbatim,
