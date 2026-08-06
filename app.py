@@ -759,7 +759,17 @@ def run_full_auto_comparison(progress_callback=None):
                 if status == "ok" and isinstance(r, dict) and str(r.get("body", "")).strip() and "error" not in r:
                     speeds.append(dt)
                     json_ok += 1
-                    hashes.add(hash(str(r.get("body", ""))[:250]))
+                    # Diversity is measured by the underlying scenario/idea
+                    # identifier (topic + family + framing), not by how
+                    # different the opening text happens to look — two
+                    # emails can open almost identically (same greeting
+                    # template) while covering completely different ideas,
+                    # or vice versa. scenario_id captures the actual
+                    # scenario/topic/style combination chosen for this
+                    # email; fall back to a body-text signature only for
+                    # the rare result missing it entirely.
+                    _sid = str(r.get("scenario_id") or "").strip()
+                    hashes.add(_sid if _sid else hash(str(r.get("body", ""))[:250]))
                     scores["difficulty_score"].append(check_difficulty_conformance(r, diff, True))
                     scores["arabic_score"].append(check_arabic_quality(r, lang == "Arabic"))
                     scores["quality_score"].append(check_general_quality(r))
@@ -3430,7 +3440,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                  ["Fluency", "Coherence", "Consistency", "Relevance"] if not _is_ar
                  else ["الطلاقة", "الترابط", "الاتساق", "الملاءمة"]),
                 ("purple", "Diversity" if not _is_ar else "التنوّع",
-                 ["Distinct responses"] if not _is_ar else ["ردود مختلفة"]),
+                 ["Distinct ideas & scenarios"] if not _is_ar else ["تنوّع الأفكار والسيناريوهات"]),
                 ("purple", "Phishing realism" if not _is_ar else "واقعية التصيّد",
                  ["Cue count", "Job-role fit"] if not _is_ar else ["عدد المؤشرات", "ملاءمة الدور الوظيفي"]),
                 ("teal", "Operational" if not _is_ar else "الأداء التشغيلي",
