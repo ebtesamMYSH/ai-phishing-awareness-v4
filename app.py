@@ -105,6 +105,8 @@ import requests
 import os
 import re
 import time
+import threading
+import concurrent.futures as _cf
 import html as html_lib
 import random
 import urllib.parse
@@ -170,44 +172,7 @@ def set_active_provider(pk):
 # host, writes fail silently and behaviour falls back to the old
 # session-only behaviour (no crash either way).
 # =============================================================
-_RUNS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs.json")
 _METRICS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metrics.json")
-
-def load_runs():
-    local = []
-    try:
-        with open(_RUNS_FILE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            local = data
-    except Exception:
-        local = []
-    try:
-        return merge_local_and_gsheet_runs(local)
-    except Exception:
-        return local
-
-def save_run(record):
-    """Append one holistic run-rating record and persist to disk."""
-    runs = load_runs()
-    runs.append(record)
-    try:
-        with open(_RUNS_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(runs, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-    try:
-        push_run_to_gsheet(record)
-    except Exception:
-        pass
-    return runs
-
-def delete_all_runs():
-    try:
-        with open(_RUNS_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump([], f)
-    except Exception:
-        pass
 
 # =============================================================
 # AUTO-COMPARISON PERSISTENCE — full 4-provider automated runs
@@ -361,25 +326,6 @@ def _get_or_create_worksheet(sheet, tab_name, headers):
         pass
     return ws
 
-def push_run_to_gsheet(record):
-    """Append one manually-rated cycle to the 'Cycle Ratings' tab.
-    Best-effort: any failure (offline, not configured, quota, etc.)
-    is swallowed so the researcher's local save never fails because
-    of this extra step."""
-    client = _get_gsheet_client()
-    sheet_id = _get_gsheet_id()
-    if not client or not sheet_id:
-        return
-    try:
-        sheet = client.open_by_key(sheet_id)
-        headers = ["timestamp", "provider", "language", "overall",
-                   "auto_difficulty", "auto_arabic", "auto_quality", "auto_medical",
-                   "n_auto_emails", "avg_speed", "json_rate", "error_rate",
-                   "diversity", "note"]
-        ws = _get_or_create_worksheet(sheet, "Cycle Ratings", headers)
-        ws.append_row([record.get(h, "") for h in headers], value_input_option="USER_ENTERED")
-    except Exception:
-        pass
 
 def push_metrics_snapshot_to_gsheet(provider, m):
     """Append one timestamped snapshot row per provider to the
@@ -411,94 +357,10 @@ def push_metrics_snapshot_to_gsheet(provider, m):
     except Exception:
         pass
 
-def pull_latest_auto_metrics_from_gsheet():
-    """Read the 'Auto Metrics' tab and return the LATEST snapshot row per
-    provider (since each save appends a new timestamped row rather than
-    updating in place). Used as a durable fallback for the Score Card's
-    live performance boxes (Avg Speed / JSON% / Error% / Unique Responses)
-    when the local in-session 'metrics' dict is empty for that provider —
-    e.g. right after the app container restarts and metrics.json is wiped,
-    even though real generation activity already happened and was synced."""
-    cache = st.session_state.get("_gsheet_auto_metrics_cache")
-    now = __import__("time").time()
-    if cache and (now - cache.get("ts", 0) < 60):
-        return cache["latest"]
-    client = _get_gsheet_client()
-    sheet_id = _get_gsheet_id()
-    latest = {}
-    if not client or not sheet_id:
-        return latest
-    try:
-        sheet = client.open_by_key(sheet_id)
-        ws = sheet.worksheet("Auto Metrics")
-        records = ws.get_all_records()
-        for rec in records:
-            p = str(rec.get("provider", "")).strip()
-            if not p:
-                continue
-            latest[p] = rec  # later rows overwrite earlier ones -> last wins
-    except Exception:
         latest = {}
     st.session_state["_gsheet_auto_metrics_cache"] = {"ts": now, "latest": latest}
     return latest
 
-def pull_runs_from_gsheet():
-    """Read every row back from the 'Cycle Ratings' tab and reshape it into
-    the exact same record dicts load_runs()/save_run() use locally. This is
-    what lets the Score Card / Manual Ratings counts / Excel export keep
-    working even after the app's own container restarts and wipes
-    runs.json — Google Sheets is the durable source of truth, the local
-    file is just a fast first-read cache. Cached for 60s per session so
-    we don't re-fetch from the Sheets API on every single rerun."""
-    cache = st.session_state.get("_gsheet_runs_cache")
-    now = __import__("time").time()
-    if cache and (now - cache.get("ts", 0) < 60):
-        return cache["rows"]
-    client = _get_gsheet_client()
-    sheet_id = _get_gsheet_id()
-    if not client or not sheet_id:
-        return []
-    rows = []
-    try:
-        sheet = client.open_by_key(sheet_id)
-        ws = sheet.worksheet("Cycle Ratings")
-        records = ws.get_all_records()
-        numeric_fields = ["overall", "auto_difficulty", "auto_arabic", "auto_quality",
-                           "auto_medical", "n_auto_emails", "avg_speed", "json_rate",
-                           "error_rate"]
-        for rec in records:
-            row = dict(rec)
-            for f in numeric_fields:
-                v = row.get(f)
-                if v in ("", None):
-                    row[f] = None
-                else:
-                    try:
-                        row[f] = float(v) if f in ("avg_speed",) else int(float(v))
-                    except (ValueError, TypeError):
-                        row[f] = None
-            rows.append(row)
-    except Exception:
-        rows = []
-    st.session_state["_gsheet_runs_cache"] = {"ts": now, "rows": rows}
-    return rows
-
-def merge_local_and_gsheet_runs(local_runs):
-    """Combine local runs.json entries with whatever's in the durable
-    Google Sheet copy, deduplicating by (timestamp, provider, language)
-    so the same cycle saved locally AND already synced to the sheet
-    doesn't get double-counted."""
-    sheet_runs = pull_runs_from_gsheet()
-    if not sheet_runs:
-        return local_runs
-    seen = {(r.get("timestamp"), r.get("provider"), r.get("language")) for r in local_runs}
-    merged = list(local_runs)
-    for r in sheet_runs:
-        key = (r.get("timestamp"), r.get("provider"), r.get("language"))
-        if key not in seen:
-            seen.add(key)
-            merged.append(r)
-    return merged
 
 # =============================================================
 # GOOGLE SHEETS PERSISTENCE — AUTOMATED 4-PROVIDER COMPARISON
@@ -540,7 +402,8 @@ def pull_auto_comparisons_from_gsheet():
     """Read every row back from 'Auto Comparison' and regroup by
     timestamp into the same {timestamp, elapsed_minutes, results:
     {provider: {...}}} shape save_auto_comparison() produces locally.
-    Cached for 60s per session, same as pull_runs_from_gsheet()."""
+    Cached for 60s per session (same pattern used across this app's other
+    Google Sheets readers)."""
     cache = st.session_state.get("_gsheet_auto_comp_cache")
     now = __import__("time").time()
     if cache and (now - cache.get("ts", 0) < 60):
@@ -584,8 +447,7 @@ def pull_auto_comparisons_from_gsheet():
 
 def merge_local_and_gsheet_auto_comparisons(local_runs):
     """Combine local auto_comparisons.json entries with the durable
-    Google Sheet copy, deduplicating by timestamp — mirrors
-    merge_local_and_gsheet_runs() for the manual-cycle system."""
+    Google Sheet copy, deduplicating by timestamp."""
     sheet_runs = pull_auto_comparisons_from_gsheet()
     if not sheet_runs:
         return local_runs
@@ -599,26 +461,34 @@ def merge_local_and_gsheet_auto_comparisons(local_runs):
     return merged
 
 # =============================================================
-# SYSTEMATIC ROTATION PLAN — 10 cycles, balanced role x difficulty
+# SYSTEMATIC ROTATION PLAN — 50 cycles, balanced role x difficulty
 # -------------------------------------------------------------
-# Purely informational for the researcher: she runs cycles 1-10
-# manually following this table (role + difficulty to pick on the
-# main app) so that, across 10 cycles, all 4 roles and 3 difficulty
-# levels get reasonably balanced coverage instead of relying on
-# pure chance with a small sample size.
+# Drives the automated 4-provider comparison (run_full_auto_comparison):
+# each provider is run through the SAME 50 cycles below. 50 was chosen
+# following LLM-evaluation literature recommending ~50 repeated trials
+# for high-stakes, adversarial model-selection decisions (as opposed to
+# routine A/B comparisons, where far fewer repetitions suffice).
+# Generated programmatically (not hand-typed) to guarantee balance and
+# avoid transcription errors: roles cycle round-robin (each of the 4
+# appears 12-13 times), difficulty is offset per 10-cycle block so the
+# same role doesn't always land on the same difficulty, and language
+# alternates in blocks of 10 (5 English + 5 Arabic) repeated 5 times,
+# for 25 English + 25 Arabic cycles overall.
 # =============================================================
-ROTATION_PLAN = [
-    {"cycle": 1,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "easy",   "language": "English"},
-    {"cycle": 2,  "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "medium", "language": "English"},
-    {"cycle": 3,  "role_en": "IT",         "role_ar": "تقني",   "difficulty": "hard",   "language": "English"},
-    {"cycle": 4,  "role_en": "Other",      "role_ar": "أخرى",  "difficulty": "easy",   "language": "English"},
-    {"cycle": 5,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "medium", "language": "English"},
-    {"cycle": 6,  "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "hard",   "language": "Arabic"},
-    {"cycle": 7,  "role_en": "IT",         "role_ar": "تقني",   "difficulty": "easy",   "language": "Arabic"},
-    {"cycle": 8,  "role_en": "Other",      "role_ar": "أخرى",  "difficulty": "medium", "language": "Arabic"},
-    {"cycle": 9,  "role_en": "Clinical",   "role_ar": "سريري",  "difficulty": "hard",   "language": "Arabic"},
-    {"cycle": 10, "role_en": "Admin",      "role_ar": "إداري",  "difficulty": "easy",   "language": "Arabic"},
-]
+ROTATION_PLAN = []
+_RP_ROLES = [("Clinical", "سريري"), ("Admin", "إداري"), ("IT", "تقني"), ("Other", "أخرى")]
+_RP_DIFFS = ["easy", "medium", "hard"]
+for _rp_i in range(50):
+    _rp_block = _rp_i // 10
+    _rp_pos = _rp_i % 10
+    _rp_lang = "English" if _rp_pos < 5 else "Arabic"
+    _rp_role_en, _rp_role_ar = _RP_ROLES[_rp_i % 4]
+    _rp_diff = _RP_DIFFS[(_rp_i + _rp_block) % 3]
+    ROTATION_PLAN.append({
+        "cycle": _rp_i + 1, "role_en": _rp_role_en, "role_ar": _rp_role_ar,
+        "difficulty": _rp_diff, "language": _rp_lang,
+    })
+del _rp_i, _rp_block, _rp_pos, _rp_lang, _rp_role_en, _rp_role_ar, _rp_diff
 
 # BUGFIX-AWARE MAPPING: ROTATION_PLAN's role_en/role_ar values are short
 # labels ("Admin","IT"...) that do NOT exactly match the real ROLE_MAP keys
@@ -789,8 +659,8 @@ def check_medical_relevance(result):
 # =============================================================
 # AUTOMATED 4-PROVIDER COMPARISON
 # -------------------------------------------------------------
-# Runs every provider through the SAME 10-cycle ROTATION_PLAN (5
-# English + 5 Arabic, mixing all 4 roles and all 3 difficulty
+# Runs every provider through the SAME 50-cycle ROTATION_PLAN (25
+# English + 25 Arabic, mixing all 4 roles and all 3 difficulty
 # levels) and averages the 8 automatic metrics per provider —
 # no human rating involved, so it can run unattended behind one
 # button. Safe by construction: generate_email()/generate_assess_email()
@@ -798,6 +668,23 @@ def check_medical_relevance(result):
 # (they fall back to the local engine), so a bad/offline provider just
 # shows up with a low json_rate / high error_rate / more local fallback
 # — the run itself can never crash or stall on one bad provider.
+#
+# SCALABILITY NOTE: providers themselves are still processed one after
+# another (not simultaneously) — st.session_state["ai_provider"] is
+# shared, global, mutable state that every call_ai() invocation reads
+# to know which provider to hit, so running two DIFFERENT providers'
+# calls truly concurrently would let one provider's calls race and
+# silently land on the other provider's endpoint. Making that safe
+# would mean threading an explicit `provider` argument through
+# call_ai() and every function that calls it (generate_email,
+# generate_assess_email, and their whole AI-overlay chain) — a large,
+# invasive refactor with real regression risk for a rewrite already
+# tested extensively elsewhere. Instead, the ~100 individual generation
+# calls WITHIN one provider's 50-cycle turn (where ai_provider is
+# constant and never changes mid-flight) run concurrently via a thread
+# pool. This is the same "reduce total runtime through concurrent
+# execution" principle the benchmarking-framework literature describes,
+# applied at the safe granularity for this app's architecture.
 # =============================================================
 _COMPARISON_PROVIDERS = ["groq", "anthropic", "openai", "gemini"]
 _COMPARISON_WEIGHTS = {
@@ -815,55 +702,71 @@ _COMPARISON_WEIGHTS_NORM = {k: v for k, v in _COMPARISON_WEIGHTS.items() if k !=
 _w_sum = sum(_COMPARISON_WEIGHTS_NORM.values())
 _COMPARISON_WEIGHTS_NORM = {k: v / _w_sum for k, v in _COMPARISON_WEIGHTS_NORM.items()}
 
+_COMPARISON_MAX_WORKERS = 6  # concurrent calls within one provider's turn
+
 
 def run_full_auto_comparison(progress_callback=None):
-    """Runs all 4 providers through the 10-cycle ROTATION_PLAN and returns
+    """Runs all 4 providers through the 50-cycle ROTATION_PLAN and returns
     {provider: {metric: value}}. `progress_callback(provider, cycle_no,
-    step, total_steps)` is called before each cycle if provided, so the
-    caller can show live progress. Never raises: any per-email failure is
-    caught and counted toward that provider's error_rate instead of
-    stopping the run."""
+    step, total_steps)` is called as each generation completes if
+    provided, so the caller can show live progress. Never raises: any
+    per-email failure is caught and counted toward that provider's
+    error_rate instead of stopping the run. Within each provider's turn,
+    generations run concurrently (see module note above) for a real
+    speedup; providers themselves stay sequential for correctness."""
     results = {}
     original_provider = st.session_state.get("ai_provider")
-    total_steps = len(_COMPARISON_PROVIDERS) * len(ROTATION_PLAN)
-    step = 0
+    total_steps = len(_COMPARISON_PROVIDERS) * len(ROTATION_PLAN) * 2
+    step_state = {"n": 0}
+    step_lock = threading.Lock()
+
     for prov in _COMPARISON_PROVIDERS:
         st.session_state["ai_provider"] = prov
         scores = {"difficulty_score": [], "arabic_score": [], "quality_score": [], "medical_score": []}
         speeds = []; json_ok = 0; json_fail = 0; errors = 0; calls = 0; hashes = set()
-        for plan in ROTATION_PLAN:
+
+        def _run_one(plan, kind):
             role_key = _ROTATION_ROLE_KEY.get((plan["role_en"], plan["language"]), "Clinical")
             diff = plan["difficulty"]; lang = plan["language"]
-            step += 1
-            if progress_callback:
+            t0 = time.time()
+            try:
+                if kind == "learn":
+                    r = generate_email(role_key, 0, lang, diff)
+                else:
+                    r = generate_assess_email(role_key, 0, True, lang, diff)
+                return ("ok", r, time.time() - t0, diff, lang)
+            except Exception:
+                return ("error", None, 0.0, diff, lang)
+
+        _tasks = [(plan, kind) for plan in ROTATION_PLAN for kind in ("learn", "assess")]
+        with _cf.ThreadPoolExecutor(max_workers=_COMPARISON_MAX_WORKERS) as _executor:
+            _futures = {_executor.submit(_run_one, plan, kind): plan for plan, kind in _tasks}
+            for _future in _cf.as_completed(_futures):
+                _plan = _futures[_future]
+                with step_lock:
+                    step_state["n"] += 1
+                    _cur_step = step_state["n"]
+                if progress_callback:
+                    try:
+                        progress_callback(prov, _plan["cycle"], _cur_step, total_steps)
+                    except Exception:
+                        pass
                 try:
-                    progress_callback(prov, plan["cycle"], step, total_steps)
+                    status, r, dt, diff, lang = _future.result()
                 except Exception:
-                    pass
-            # One learning-phase phishing email + one assessment-phase
-            # phishing email per cycle — enough real samples per
-            # role/difficulty/language cell to average meaningfully,
-            # without needing the full 16-email manual-cycle volume.
-            for kind in ("learn", "assess"):
+                    status, r, dt, diff, lang = "error", None, 0.0, None, None
                 calls += 1
-                t0 = time.time()
-                try:
-                    if kind == "learn":
-                        r = generate_email(role_key, 0, lang, diff)
-                    else:
-                        r = generate_assess_email(role_key, 0, True, lang, diff)
-                    dt = time.time() - t0
-                    if isinstance(r, dict) and str(r.get("body", "")).strip() and "error" not in r:
-                        speeds.append(dt)
-                        json_ok += 1
-                        hashes.add(hash(str(r.get("body", ""))[:250]))
-                        scores["difficulty_score"].append(check_difficulty_conformance(r, diff, True))
-                        scores["arabic_score"].append(check_arabic_quality(r, lang == "Arabic"))
-                        scores["quality_score"].append(check_general_quality(r))
-                        scores["medical_score"].append(check_medical_relevance(r))
-                    else:
-                        json_fail += 1
-                except Exception:
+                if status == "ok" and isinstance(r, dict) and str(r.get("body", "")).strip() and "error" not in r:
+                    speeds.append(dt)
+                    json_ok += 1
+                    hashes.add(hash(str(r.get("body", ""))[:250]))
+                    scores["difficulty_score"].append(check_difficulty_conformance(r, diff, True))
+                    scores["arabic_score"].append(check_arabic_quality(r, lang == "Arabic"))
+                    scores["quality_score"].append(check_general_quality(r))
+                    scores["medical_score"].append(check_medical_relevance(r))
+                elif status == "ok":
+                    json_fail += 1
+                else:
                     errors += 1
 
         def _avg(key):
@@ -966,100 +869,6 @@ def _save_json_list(path, data):
     except Exception:
         pass
 
-# =============================================================
-# EXPERT SESSION SAMPLE LOG (Think-Aloud sessions)
-# -------------------------------------------------------------
-# Priority #4 from the cleanup plan: every email the tool GENERATES
-# LIVE and shows to a domain expert during a Think-Aloud session must
-# be saved verbatim, tied to that expert/session and to whatever they
-# say about it, so later Braun & Clarke qualitative coding (same
-# method as Study 2) can be matched back to the EXACT content the
-# expert was reacting to — not a re-generated approximation of it.
-# This matters because generation is NOT deterministic: the same
-# (role, index, difficulty) can produce different content on different
-# calls (session-scoped RNG + on-disk scenario-history files), so
-# "regenerate it later to check what they saw" does not work.
-#
-# Design:
-#   - Only active when st.session_state["expert_session_id"] is set
-#     (via Researcher Mode on the home page — see page_home). Regular
-#     participant runs (the 259-person Study 3 sample) are NOT logged
-#     here, so this file stays small and purely about expert review.
-#   - One JSON line per shown sample, append-only, human-readable.
-#   - Nothing is ever overwritten or deleted automatically — an
-#     admin-only "clear" action exists for housekeeping, requiring
-#     explicit confirmation (see page_admin, Expert Samples tab).
-# =============================================================
-_EXPERT_SAMPLES_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "expert_samples.jsonl")
-
-
-def is_expert_session_active():
-    return bool(st.session_state.get("expert_session_id", "").strip())
-
-
-def start_expert_session(expert_label):
-    """Called from Researcher Mode on the home page. expert_label is
-    whatever free-text identifier the researcher typed (name, initials,
-    'Expert1' — her choice, not enforced), combined with a timestamp so
-    two sessions from the same person never collide."""
-    ts = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
-    label = (expert_label or "expert").strip().replace(" ", "_") or "expert"
-    st.session_state["expert_session_id"] = f"{label}__{ts}"
-
-
-def end_expert_session():
-    st.session_state.pop("expert_session_id", None)
-
-
-def save_expert_sample(email, role, difficulty, language, phase, index):
-    """Append one shown sample to the expert-session log. Silently
-    no-ops when no expert session is active (i.e. normal participant
-    runs), and never raises — a logging failure must never break the
-    training flow for a real participant or expert."""
-    if not is_expert_session_active() or not isinstance(email, dict):
-        return
-    try:
-        rec = {
-            "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-            "expert_session_id": st.session_state["expert_session_id"],
-            "provider": st.session_state.get("ai_provider", ""),
-            "role": role,
-            "role_type": _v30_role_type(role) if "_v30_role_type" in globals() else "",
-            "language": language,
-            "difficulty": difficulty,
-            "phase": phase,          # "learn" or "assess"
-            "index": index,          # which of the 6/10 slots this was
-            "email": email,          # the FULL generated object, verbatim
-        }
-        with open(_EXPERT_SAMPLES_FILE_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except Exception as e:
-        try:
-            _store_debug("expert_sample_save", str(e))
-        except Exception:
-            pass
-
-
-def load_expert_samples():
-    """Read all logged expert samples back as a list of dicts (JSONL,
-    one record per line — tolerant of a trailing partial/corrupt line
-    so one bad write can't hide every earlier session)."""
-    rows = []
-    try:
-        with open(_EXPERT_SAMPLES_FILE_PATH, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rows.append(json.loads(line))
-                except Exception:
-                    continue
-    except FileNotFoundError:
-        pass
-    return rows
-
-# =============================================================
 # FULL EXCEL EXPORT — one workbook, several sheets:
 #   - Summary: one row per (provider, language) with all 9 metrics
 #   - One sheet PER PROVIDER (Groq/Claude/OpenAI/Gemini) with its own
@@ -1072,103 +881,6 @@ def load_expert_samples():
 # researcher downloads it, the file lives on her own computer — totally
 # independent of the app's server storage from that point on.
 # =============================================================
-def build_excel_export():
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.utils import get_column_letter
-    import io as _io
-
-    runs = load_runs()
-    auto_log = _load_json_list(_AUTO_EVAL_FILE_PATH)
-
-    PROV_ORDER_X = ["groq", "anthropic", "openai", "gemini"]
-    PROV_LABELS_X = {"groq": "Groq", "anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
-
-    HEADER_FILL = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
-    HEADER_FONT = Font(bold=True, color="FFFFFF")
-
-    def style_header(ws, ncols):
-        for c in range(1, ncols + 1):
-            cell = ws.cell(row=1, column=c)
-            cell.fill = HEADER_FILL
-            cell.font = HEADER_FONT
-            cell.alignment = Alignment(horizontal="center")
-        ws.freeze_panes = "A2"
-
-    def autosize(ws, ncols, width=16):
-        for c in range(1, ncols + 1):
-            ws.column_dimensions[get_column_letter(c)].width = width
-
-    wb = Workbook()
-
-    # ---- Sheet 1: Summary across all 4 providers x 2 languages ----
-    ws = wb.active
-    ws.title = "Summary"
-    headers = ["Provider", "Language", "Cycles", "Avg Speed (s)", "JSON %", "Error %",
-               "Difficulty %", "Arabic %", "Quality %", "Medical %", "Overall (avg/5)"]
-    ws.append(headers)
-    for p in PROV_ORDER_X:
-        for lang in ["English", "Arabic"]:
-            p_runs = [r for r in runs if r.get("provider") == p and r.get("language") == lang]
-            def avgf(field):
-                vals = [r.get(field) for r in p_runs if r.get(field) is not None]
-                return round(sum(vals) / len(vals), 2) if vals else None
-            ws.append([
-                PROV_LABELS_X[p], lang, len(p_runs),
-                avgf("avg_speed"), avgf("json_rate"), avgf("error_rate"),
-                avgf("auto_difficulty"), avgf("auto_arabic"), avgf("auto_quality"),
-                avgf("auto_medical"), avgf("overall"),
-            ])
-    style_header(ws, len(headers))
-    autosize(ws, len(headers))
-
-    # ---- One sheet per provider: its own 10-cycle breakdown ----
-    cycle_headers = ["#", "Timestamp", "Language", "Avg Speed (s)", "JSON %", "Error %",
-                      "Diversity", "Difficulty %", "Arabic %", "Quality %", "Medical %",
-                      "Overall /5", "Note"]
-    for p in PROV_ORDER_X:
-        ws_p = wb.create_sheet(PROV_LABELS_X[p])
-        ws_p.append(cycle_headers)
-        p_runs_en = [r for r in runs if r.get("provider") == p and r.get("language") == "English"]
-        p_runs_ar = [r for r in runs if r.get("provider") == p and r.get("language") == "Arabic"]
-        for i, r in enumerate(p_runs_en + p_runs_ar, 1):
-            ws_p.append([
-                i, r.get("timestamp"), r.get("language"), r.get("avg_speed"),
-                r.get("json_rate"), r.get("error_rate"), r.get("diversity"),
-                r.get("auto_difficulty"), r.get("auto_arabic"), r.get("auto_quality"),
-                r.get("auto_medical"), r.get("overall"), r.get("note"),
-            ])
-        style_header(ws_p, len(cycle_headers))
-        autosize(ws_p, len(cycle_headers))
-
-    # ---- Raw per-email auto-evaluation log (all providers together, filterable) ----
-    ws_raw = wb.create_sheet("Raw_Email_Log")
-    raw_headers = ["Timestamp", "Provider", "Language", "Difficulty Level",
-                   "Difficulty Score %", "Arabic Score %", "Quality Score %", "Medical Score %"]
-    ws_raw.append(raw_headers)
-    for rec in auto_log:
-        ws_raw.append([
-            rec.get("timestamp"), PROV_LABELS_X.get(rec.get("provider"), rec.get("provider")),
-            rec.get("language"), rec.get("difficulty"),
-            rec.get("difficulty_score"), rec.get("arabic_score"),
-            rec.get("quality_score"), rec.get("medical_score"),
-        ])
-    style_header(ws_raw, len(raw_headers))
-    autosize(ws_raw, len(raw_headers))
-
-    # ---- Rotation plan reference ----
-    ws_rot = wb.create_sheet("Rotation_Plan")
-    rot_headers = ["Cycle #", "Role", "Difficulty", "Language"]
-    ws_rot.append(rot_headers)
-    for plan in ROTATION_PLAN:
-        ws_rot.append([plan["cycle"], plan["role_en"], plan["difficulty"].capitalize(), plan["language"]])
-    style_header(ws_rot, len(rot_headers))
-    autosize(ws_rot, len(rot_headers), width=14)
-
-    buf = _io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
 def _load_json_dict(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -2732,7 +2444,7 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
                 "groq":      "🟠 Groq  (LLaMA 3.3-70b) — Baseline v3",
                 "openai":    "🟢 ChatGPT  (GPT-4o) — Most used globally",
                 "anthropic": "🟣 Claude  (claude-sonnet-4-6) — Best writing quality",
-                "gemini":    "🔵 Gemini  (1.5 Pro) — Fastest growing",
+                "gemini":    "🔵 Gemini  (2.5 Flash) — Fastest growing",
             }
             cur_provider = st.session_state.get("ai_provider", "openai")
             prov_cols = st.columns(2)
@@ -2745,22 +2457,6 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
                         set_active_provider(pk)
                         st.rerun()
             st.markdown(f'<div style="font-size:.72rem;color:#64748B;margin-top:.3rem;direction:{dir_attr};">Active: <b style="color:#F59E0B;">{provider_options.get(cur_provider,"")}</b></div>', unsafe_allow_html=True)
-
-            st.markdown('<div style="height:.9rem"></div>', unsafe_allow_html=True)
-            st.markdown(f'<div style="font-size:.75rem;font-weight:800;color:#F59E0B;letter-spacing:.06em;margin-bottom:.5rem;direction:{dir_attr};">🎙️ EXPERT THINK-ALOUD SESSION</div>', unsafe_allow_html=True)
-            if is_expert_session_active():
-                st.markdown(f'<div style="font-size:.78rem;color:#6EE7B7;direction:{dir_attr};">🔴 Recording — every sample shown from here on is saved verbatim under: <b>{st.session_state["expert_session_id"]}</b></div>', unsafe_allow_html=True)
-                if st.button(t("⏹ End expert session","⏹ إنهاء جلسة الخبير"), key="end_expert_sess", use_container_width=True):
-                    end_expert_session()
-                    st.rerun()
-            else:
-                exp_label = st.text_input(t("Expert / session label","معرّف الخبير / الجلسة"),
-                                           key="expert_label_input",
-                                           placeholder=t("e.g. Dr.Fahad_ClinicalReview","مثال: د.فهد_مراجعة_سريرية"))
-                if st.button(t("▶ Start expert session","▶ ابدأ جلسة الخبير"), key="start_expert_sess", use_container_width=True):
-                    start_expert_session(exp_label)
-                    st.rerun()
-                st.markdown(f'<div style="font-size:.7rem;color:#64748B;margin-top:.25rem;direction:{dir_attr};">{t("Only samples shown while a session is active get saved — normal participant runs are never logged here.","تُحفظ فقط العيّنات اللي تظهر أثناء جلسة نشطة — دورات المشاركين العاديين ما تُسجَّل هنا إطلاقاً.")}</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="start-btn" style="margin-top:.8rem;">',unsafe_allow_html=True)
         if st.button(t("Start Personalised Training","ابدأ التدريب المخصص"),key="start_training", use_container_width=True, type="primary"):
@@ -2851,7 +2547,6 @@ def page_learning():
     if idx not in st.session_state["emails"]:
         with st.spinner(t("🤖 Generating phishing example...","🤖 جارٍ توليد مثال التصيد...")):
             st.session_state["emails"][idx] = generate_email(st.session_state["role"], idx, st.session_state["language"], st.session_state.get("difficulty", "medium"))
-            save_expert_sample(st.session_state["emails"][idx], st.session_state["role"], st.session_state.get("difficulty", "medium"), st.session_state["language"], "learn", idx)
             st.rerun()
 
     email = st.session_state["emails"].get(idx,{})
@@ -2974,7 +2669,6 @@ def page_assessment():
     if idx not in st.session_state["assess_emails"]:
         with st.spinner(ta("🤖 Generating scenario...","🤖 جارٍ توليد السيناريو...")):
             st.session_state["assess_emails"][idx]=generate_assess_email(st.session_state["role"], idx, pattern[idx], st.session_state["language"], st.session_state.get("difficulty", "medium"))
-            save_expert_sample(st.session_state["assess_emails"][idx], st.session_state["role"], st.session_state.get("difficulty", "medium"), st.session_state["language"], "assess", idx)
             st.rerun()
 
     email=st.session_state["assess_emails"].get(idx,{})
@@ -3256,7 +2950,6 @@ def page_admin():
         "authenticated":    {"en": "● Authenticated",                      "ar": "● تم تسجيل الدخول"},
         "tab_provider":     {"en": "⚙️ Provider Control",                  "ar": "⚙️ التحكم بالمزوّد"},
         "tab_score":        {"en": "📊 Score Card",                       "ar": "📊 بطاقة التقييم"},
-        "tab_manual":       {"en": "👍 Manual Ratings",                   "ar": "👍 التقييم اليدوي"},
         "select_provider":  {"en": "Select Active AI Provider",            "ar": "اختر مزوّد الذكاء الاصطناعي النشط"},
         "active":           {"en": "ACTIVE",                               "ar": "نشط"},
         "activate_btn":     {"en": "Activate",                             "ar": "تفعيل"},
@@ -3271,21 +2964,6 @@ def page_admin():
         "clear_cache":      {"en": "🔄 Clear All Cached Emails (Force Regenerate)", "ar": "🔄 مسح كل الرسائل المخزّنة (توليد من جديد)"},
         "cache_cleared":    {"en": "✅ Cache cleared — next generation will produce fresh content", "ar": "✅ تم مسح الذاكرة المؤقتة — التوليد القادم سينتج محتوى جديد"},
         "logout_btn":       {"en": "🚪 Logout",                            "ar": "🚪 تسجيل خروج"},
-        "score_title":      {"en": "📊 Comparison Score Card",             "ar": "📊 بطاقة المقارنة"},
-        "metric_col":       {"en": "Metric",                               "ar": "المعيار"},
-        "speed_metric":     {"en": "⚡ Avg Speed (s)",                     "ar": "⚡ متوسط السرعة (ث)"},
-        "json_metric":      {"en": "✅ JSON Success Rate",                 "ar": "✅ نسبة نجاح JSON"},
-        "error_metric":     {"en": "🚫 Error Rate",                        "ar": "🚫 نسبة الأخطاء"},
-        "diversity_metric": {"en": "🔄 Unique Responses",                  "ar": "🔄 الردود الفريدة"},
-        "quality_metric":   {"en": "🎯 Quality",                          "ar": "🎯 الجودة"},
-        "difficulty_metric":{"en": "📊 Difficulty Level",                 "ar": "📊 مستوى الصعوبة"},
-        "arabic_metric":    {"en": "🌐 Arabic Quality",                   "ar": "🌐 جودة العربية"},
-        "medical_metric":   {"en": "🏥 Medical Realism",                  "ar": "🏥 الواقعية الطبية"},
-        "auto_manual_note": {"en": "Auto-tracked: Speed, JSON, Errors, Diversity | Manual: Quality, Difficulty, Arabic, Medical",
-                              "ar": "تلقائي: السرعة، JSON، الأخطاء، التنوع | يدوي: الجودة، الصعوبة، العربية، الطبي"},
-        "reset_metrics":    {"en": "🗑️ Reset All Metrics",                "ar": "🗑️ إعادة ضبط كل المعايير"},
-        "metrics_reset":    {"en": "✅ All metrics reset",                 "ar": "✅ تم إعادة ضبط كل المعايير"},
-        "rate_title":       {"en": "Rate the last generated content",      "ar": "قيّم آخر محتوى تم توليده"},
         "active_provider":  {"en": "Active provider",                     "ar": "المزوّد النشط"},
         "saved_permanently": {"en": "saved permanently",                  "ar": "محفوظ بشكل دائم"},
         "quality_label":    {"en": "🎯 Model Quality",                    "ar": "🎯 جودة النموذج"},
@@ -3465,14 +3143,14 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
   <div style="font-size:.8rem;color:#4ADE80;">{T('authenticated')}</div>
 </div>""", unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([T('tab_provider'), T('tab_score'), T('tab_manual'), "🐞 Debug Log", "🎙️ Expert Samples"])
+    tab1, tab2, tab3 = st.tabs([T('tab_provider'), T('tab_score'), "🐞 Debug Log"])
 
     _persist_pk = st.session_state.get("ai_provider", load_persistent_provider("openai"))
     _persist_labels = {
         "groq":      "🟠 Groq (LLaMA 3.3-70b)",
         "anthropic": "🟣 Claude (claude-sonnet-4-6)",
         "openai":    "🟢 OpenAI (GPT-4o)",
-        "gemini":    "🔵 Gemini",
+        "gemini":    "🔵 Gemini (2.5 Flash)",
     }
     st.markdown(f"""
 <div dir="{_dir}" style="display:flex;justify-content:space-between;align-items:center;
@@ -3550,41 +3228,6 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                         st.rerun()
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        _gs_ok, _gs_msg = gsheet_setup_status()
-        _gs_id = _get_gsheet_id()
-        _gs_border = "rgba(34,197,94,.4)" if _gs_ok else "rgba(245,158,11,.4)"
-        _gs_bg = "rgba(4,20,4,.5)" if _gs_ok else "rgba(40,30,4,.5)"
-        _gs_title_color = "#86EFAC" if _gs_ok else "#FCD34D"
-        _gs_title = "📊 " + ("نسخة Google Sheets الدائمة" if _is_ar else "Durable Google Sheets backup")
-        _gs_link_html = ""
-        if _gs_ok and _gs_id:
-            _gs_link_text = "فتح الشيت ↗" if _is_ar else "Open Sheet ↗"
-            _gs_link_html = (
-                '<a href="https://docs.google.com/spreadsheets/d/' + _gs_id + '/edit" '
-                'target="_blank" style="color:#60A5FA;font-weight:700;text-decoration:none;">'
-                + _gs_link_text + '</a>'
-            )
-        _gs_html = (
-            '<div dir="' + _dir + '" style="padding:.8rem 1rem;border-radius:10px;'
-            'border:1px solid ' + _gs_border + ';background:' + _gs_bg + ';'
-            'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;">'
-            '<div>'
-            '<div style="font-weight:800;color:' + _gs_title_color + ';">' + _gs_title + '</div>'
-            '<div style="font-size:.8rem;color:#9CA3AF;">' + _gs_msg + '</div>'
-            '</div>'
-            + _gs_link_html +
-            '</div>'
-        )
-        st.markdown(_gs_html, unsafe_allow_html=True)
-
-        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        if st.button(T('clear_cache'), use_container_width=True):
-            st.session_state["emails"] = {}
-            st.session_state.pop("assess_emails", None)
-            st.session_state["cache_version"] = int(__import__("time").time()) % 99999 + 20
-            st.success(T('cache_cleared'))
-            st.rerun()
-
         if st.button(T('logout_btn'), use_container_width=True):
             st.session_state["admin_authenticated"] = False
             st.query_params.clear()
@@ -3595,206 +3238,42 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
     # ──────────────────────────────────────────────────────────
     with tab2:
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
-        metrics = st.session_state.get("metrics", {})
-        runs = load_runs()
 
-        PROV_ORDER = ["groq", "anthropic", "openai", "gemini"]
-        PROV_META = {
-            "groq":      {"label": "🟠 Groq — LLaMA 3.3-70b",      "color": "#F97316"},
-            "anthropic": {"label": "🟣 Claude — claude-sonnet-4-6", "color": "#A855F7"},
-            "openai":    {"label": "🟢 OpenAI — GPT-4o",            "color": "#22C55E"},
-            "gemini":    {"label": "🔵 Gemini — 2.5 Flash",         "color": "#3B82F6"},
-        }
-        TARGET_PER_LANG = 5
-
-        def avg(lst):
-            return round(sum(lst)/len(lst), 1) if lst else None
-
-        def get_m(p): return metrics.get(p, {})
-
-        # ── Rotation plan reference table (informational only) ──
-        with st.expander("📋 " + ("جدول التدوير المنظّم (10 دورات)" if _is_ar else "Systematic Rotation Plan (10 cycles)")):
-            rcols = st.columns([1,2,2,1.5])
-            for ci, hdr in enumerate([("#" if _is_ar else "#"), ("الوظيفة" if _is_ar else "Role"), ("المستوى" if _is_ar else "Difficulty"), ("اللغة" if _is_ar else "Language")]):
-                with rcols[ci]:
-                    st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.78rem;">{hdr}</div>', unsafe_allow_html=True)
-            for plan in ROTATION_PLAN:
-                rcols = st.columns([1,2,2,1.5])
-                role_show = plan["role_ar"] if _is_ar else plan["role_en"]
-                diff_show = {"easy": ("سهل" if _is_ar else "Easy"), "medium": ("متوسط" if _is_ar else "Medium"), "hard": ("صعب" if _is_ar else "Hard")}[plan["difficulty"]]
-                lang_show = ("🇸🇦 عربي" if plan["language"]=="Arabic" else "🇬🇧 EN") if _is_ar else ("Arabic" if plan["language"]=="Arabic" else "English")
-                for ci, val in enumerate([str(plan["cycle"]), role_show, diff_show, lang_show]):
-                    with rcols[ci]:
-                        st.markdown(f'<div style="color:#E2E8F0;font-size:.82rem;padding:.15rem 0;">{val}</div>', unsafe_allow_html=True)
-
-        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-
-        # ── One independent card per provider ──
-        _gsheet_auto_latest = pull_latest_auto_metrics_from_gsheet()
-        for p in PROV_ORDER:
-            meta = PROV_META[p]
-            m = get_m(p)
-            speeds = m.get("speed", [])
-            total_j = m.get("json_ok",0) + m.get("json_fail",0)
-            json_rate = int(m.get("json_ok",0)/total_j*100) if total_j > 0 else None
-            calls = m.get("calls",0)
-            err_rate = int(m.get("errors",0)/calls*100) if calls > 0 else None
-            hashes = m.get("hashes",[])
-
-            # No local activity recorded for this provider this session
-            # (e.g. right after a container restart) — fall back to the
-            # last snapshot synced to Google Sheets instead of showing
-            # blank boxes for data that genuinely exists.
-            if calls == 0:
-                _snap = _gsheet_auto_latest.get(p)
-                if _snap:
-                    try:
-                        _sp = _snap.get("avg_speed_s")
-                        speeds = [float(_sp)] if _sp not in ("", None) else []
-                    except (ValueError, TypeError):
-                        speeds = []
-                    try:
-                        json_rate = int(float(_snap.get("json_success_rate_pct"))) if _snap.get("json_success_rate_pct") not in ("", None) else None
-                    except (ValueError, TypeError):
-                        json_rate = None
-                    try:
-                        err_rate = int(float(_snap.get("error_rate_pct"))) if _snap.get("error_rate_pct") not in ("", None) else None
-                    except (ValueError, TypeError):
-                        err_rate = None
-                    try:
-                        calls = int(float(_snap.get("calls"))) if _snap.get("calls") not in ("", None) else 0
-                    except (ValueError, TypeError):
-                        calls = 0
-                    try:
-                        _uniq = int(float(_snap.get("unique_responses"))) if _snap.get("unique_responses") not in ("", None) else 0
-                    except (ValueError, TypeError):
-                        _uniq = 0
-                    hashes = list(range(_uniq))  # only its length is used below
-
-            p_runs_en = [r for r in runs if r.get("provider")==p and r.get("language")=="English"]
-            p_runs_ar = [r for r in runs if r.get("provider")==p and r.get("language")=="Arabic"]
-            ordered_runs = p_runs_en + p_runs_ar
-
-            def _avg_field(field):
-                vals = [r.get(field) for r in ordered_runs if r.get(field) is not None]
-                return round(sum(vals)/len(vals), 1) if vals else None
-
-            avg_diff    = _avg_field("auto_difficulty")
-            avg_arabic  = _avg_field("auto_arabic")
-            avg_quality = _avg_field("auto_quality")
-            avg_medical = _avg_field("auto_medical")
-            avg_overall = _avg_field("overall")
-
-            st.markdown(f"""
-<div dir="{_dir}" style="border:1px solid {meta['color']}55;border-radius:14px;padding:1rem 1.2rem;margin-bottom:1.2rem;background:rgba(255,255,255,.02);">
-  <div style="font-weight:900;font-size:1.05rem;color:{meta['color']};margin-bottom:.6rem;">{meta['label']}</div>
-</div>""", unsafe_allow_html=True)
-
-            # 9 uniform boxes — 4 auto-performance + 4 auto-content + 1 manual overall
-            box_items = [
-                (T('speed_metric'),      f"{avg(speeds):.1f}s" if speeds else "—"),
-                (T('json_metric'),       f"{json_rate}%" if json_rate is not None else "—"),
-                (T('error_metric'),      f"{err_rate}%" if err_rate is not None else "—"),
-                (T('diversity_metric'),  f"{len(hashes)}/{calls}" if calls > 0 else "—"),
-                (("صعوبة%" if _is_ar else "Difficulty%"), f"{avg_diff}%" if avg_diff is not None else "—"),
-                (("عربي%" if _is_ar else "Arabic%"),      f"{avg_arabic}%" if avg_arabic is not None else "—"),
-                (("جودة%" if _is_ar else "Quality%"),     f"{avg_quality}%" if avg_quality is not None else "—"),
-                (("طبي%" if _is_ar else "Medical%"),      f"{avg_medical}%" if avg_medical is not None else "—"),
-                (("الانطباع⭐" if _is_ar else "Overall⭐"), f"{avg_overall}/5" if avg_overall is not None else "—"),
-            ]
-            box_rows = [box_items[i:i+3] for i in range(0, 9, 3)]
-            for row in box_rows:
-                bc = st.columns(3)
-                for ci, (lbl, val) in enumerate(row):
-                    with bc[ci]:
-                        st.markdown(f'<div style="text-align:center;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:.5rem;margin-bottom:.5rem;">'
-                                    f'<div style="font-size:.7rem;color:#9CA3AF;">{lbl}</div>'
-                                    f'<div style="font-size:1rem;font-weight:800;color:#E2E8F0;">{val}</div></div>', unsafe_allow_html=True)
-
-            n_en, n_ar = len(p_runs_en), len(p_runs_ar)
-            tag_en = "✅" if n_en >= TARGET_PER_LANG else "🟡"
-            tag_ar = "✅" if n_ar >= TARGET_PER_LANG else "🟡"
-            st.markdown(f'<div style="color:#9CA3AF;font-size:.78rem;margin:.2rem 0 .6rem;">'
-                        f'{tag_en} English: {n_en}/{TARGET_PER_LANG} &nbsp;&nbsp; {tag_ar} Arabic: {n_ar}/{TARGET_PER_LANG}</div>',
-                        unsafe_allow_html=True)
-
-            # Detailed per-cycle table, tucked away in an expander so the
-            # 9 boxes above stay the clean at-a-glance summary.
-            with st.expander("📋 " + ("عرض تفاصيل الـ10 دورات" if _is_ar else "View detailed 10-cycle breakdown")):
-                col_widths = [0.5,0.7,0.8,0.7,0.7,0.8,0.9,0.9,0.9,0.9,0.9]
-                cols_hdr = st.columns(col_widths)
-                headers = [
-                    "#", ("لغة" if _is_ar else "Lang"),
-                    ("سرعة" if _is_ar else "Speed"), ("JSON%"), ("أخطاء%" if _is_ar else "Err%"),
-                    ("تنوع" if _is_ar else "Divers."),
-                    ("صعوبة%" if _is_ar else "Diff%"), ("عربي%" if _is_ar else "Arabic%"),
-                    ("جودة%" if _is_ar else "Quality%"), ("طبي%" if _is_ar else "Medical%"),
-                    ("انطباع" if _is_ar else "Overall"),
-                ]
-                for ci, hdr in enumerate(headers):
-                    with cols_hdr[ci]:
-                        st.markdown(f'<div style="font-weight:800;color:#9CA3AF;font-size:.68rem;border-bottom:1px solid rgba(255,255,255,.1);padding:.2rem 0;">{hdr}</div>', unsafe_allow_html=True)
-
-                if ordered_runs:
-                    for i, r in enumerate(ordered_runs, 1):
-                        rc = st.columns(col_widths)
-                        lang_short = "EN" if r.get("language")=="English" else "AR"
-                        vals = [
-                            str(i),
-                            lang_short,
-                            f"{r.get('avg_speed')}s" if r.get('avg_speed') is not None else "—",
-                            f"{r.get('json_rate')}%" if r.get('json_rate') is not None else "—",
-                            f"{r.get('error_rate')}%" if r.get('error_rate') is not None else "—",
-                            r.get('diversity') or "—",
-                            f"{r.get('auto_difficulty')}%" if r.get('auto_difficulty') is not None else "—",
-                            f"{r.get('auto_arabic')}%" if r.get('auto_arabic') is not None else "—",
-                            f"{r.get('auto_quality')}%" if r.get('auto_quality') is not None else "—",
-                            f"{r.get('auto_medical')}%" if r.get('auto_medical') is not None else "—",
-                            f"{r.get('overall')}/5" if r.get('overall') is not None else "—",
-                        ]
-                        for ci, val in enumerate(vals):
-                            with rc[ci]:
-                                st.markdown(f'<div style="color:#E2E8F0;font-size:.74rem;padding:.3rem .2rem;border-radius:6px;'
-                                            f'background:{"rgba(255,255,255,.03)" if i%2==0 else "transparent"};">{val}</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown(f'<div style="color:#6B7280;font-size:.8rem;padding:.5rem 0;">{("لا توجد دورات محفوظة لهذا المزوّد بعد" if _is_ar else "No cycles saved for this provider yet")}</div>', unsafe_allow_html=True)
-
-            st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
-
-        st.markdown(f'<div dir="{_dir}" style="font-size:.75rem;color:#6B7280;">{T("auto_manual_note")}</div>', unsafe_allow_html=True)
-        st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
-
-        if not runs:
-            st.markdown(f'<div dir="{_dir}" style="text-align:{_align};font-size:.8rem;color:#6B7280;">⚠️ ' + ("احفظي تقييمًا واحدًا على الأقل من تبويب Manual Ratings لتفعيل التصدير." if _is_ar else "Save at least one rating from the Manual Ratings tab to enable export.") + '</div>', unsafe_allow_html=True)
-        col_exp, col_reset = st.columns(2)
-        with col_exp:
-            if runs:
-                st.download_button(
-                    "⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"),
-                    data=build_excel_export(),
-                    file_name="phishing_research_results.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    key="export_excel_scorecard",
+        # ── نسخة Google Sheets الدائمة (منقولة من Provider Control) ──
+        try:
+            _gs_ok, _gs_msg = gsheet_setup_status()
+            _gs_id = _get_gsheet_id()
+            _gs_border = "rgba(34,197,94,.4)" if _gs_ok else "rgba(245,158,11,.4)"
+            _gs_bg = "rgba(4,20,4,.5)" if _gs_ok else "rgba(40,30,4,.5)"
+            _gs_title_color = "#86EFAC" if _gs_ok else "#FCD34D"
+            _gs_title = "📊 " + ("نسخة Google Sheets الدائمة" if _is_ar else "Durable Google Sheets backup")
+            _gs_link_html = ""
+            if _gs_ok and _gs_id:
+                _gs_link_text = "فتح الشيت ↗" if _is_ar else "Open Sheet ↗"
+                _gs_link_html = (
+                    '<a href="https://docs.google.com/spreadsheets/d/' + _gs_id + '/edit" '
+                    'target="_blank" style="color:#60A5FA;font-weight:700;text-decoration:none;">'
+                    + _gs_link_text + '</a>'
                 )
-            else:
-                st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_scorecard_disabled")
-        with col_reset:
-            if st.button(T('reset_metrics'), use_container_width=True):
-                st.session_state["metrics"] = {}
-                save_metrics_file({})
-                delete_all_runs()
-                clear_gsheet_data()
-                _save_json_list(_AUTO_EVAL_FILE_PATH, [])
-                _save_pending_buckets({})
-                _save_json_dict(_PENDING_PERF_FILE_PATH, {})
-                st.success(T('metrics_reset'))
-                st.rerun()
+            _gs_html = (
+                '<div dir="' + _dir + '" style="padding:.8rem 1rem;border-radius:10px;'
+                'border:1px solid ' + _gs_border + ';background:' + _gs_bg + ';'
+                'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;'
+                'margin-bottom:1rem;">'
+                '<div>'
+                '<div style="font-weight:800;color:' + _gs_title_color + ';">' + _gs_title + '</div>'
+                '<div style="font-size:.8rem;color:#9CA3AF;">' + _gs_msg + '</div>'
+                '</div>'
+                + _gs_link_html +
+                '</div>'
+            )
+            st.markdown(_gs_html, unsafe_allow_html=True)
+        except Exception:
+            pass
 
         # ── نسبة الاعتماد الفعلي على API مقابل القالب المحلي (مستوى متوسط) ──
         # معزول بالكامل داخل try/except حتى لا يؤثر أي خطأ هنا على بقية اللوحة.
         try:
-            st.markdown("---")
             st.markdown(
                 ("**📡 نسبة استخدام الذكاء الاصطناعي فعليًا (مستوى متوسط)**" if _is_ar
                  else "**📡 Actual AI usage rate (medium difficulty)**")
@@ -3838,13 +3317,13 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                  else "### 🔬 Automated 4-Provider Comparison")
             )
             st.caption(
-                "يشغّل كل مزوّد تلقائيًا عبر نفس الـ10 دورات (5 إنجليزي + 5 عربي، بمزيج من الأدوار الأربعة والمستويات الثلاثة)، "
-                "ويحسب 8 مقاييس آلية لكل واحد، ثم يرتّبهم بدرجة نهائية موزونة. يستغرق عدة دقائق ويستهلك استدعاءات API فعلية "
+                "يشغّل كل مزوّد تلقائيًا عبر نفس الـ50 دورة (25 إنجليزي + 25 عربي، بمزيج من الأدوار الأربعة والمستويات الثلاثة)، "
+                "ويحسب 8 مقاييس آلية لكل واحد، ثم يرتّبهم بدرجة نهائية موزونة. يستغرق وقتًا أطول ويستهلك استدعاءات API فعلية "
                 "لكل مزوّد — شغّليها وقت ما تكون النتائج مهمة فعليًا، مو لتجربة سريعة."
                 if _is_ar else
-                "Automatically runs every provider through the same 10-cycle plan (5 English + 5 Arabic, mixing all "
+                "Automatically runs every provider through the same 50-cycle plan (25 English + 25 Arabic, mixing all "
                 "4 roles and all 3 difficulty levels), computes 8 automatic metrics for each, then ranks them by a "
-                "weighted final score. Takes several minutes and makes real API calls per provider — run it when the "
+                "weighted final score. Takes longer and makes real API calls per provider — run it when the "
                 "results actually matter, not for a quick test."
             )
 
@@ -3852,8 +3331,8 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             _comp_col1, _comp_col2 = st.columns([3, 1])
             with _comp_col1:
                 _start_comparison = st.button(
-                    ("▶️ ابدأ المقارنة التلقائية (٤ مزودين × ١٠ دورات)" if _is_ar
-                     else "▶️ Start Automated Comparison (4 providers × 10 cycles)"),
+                    ("▶️ ابدأ المقارنة التلقائية (٤ مزودين × ٥٠ دورة)" if _is_ar
+                     else "▶️ Start Automated Comparison (4 providers × 50 cycles)"),
                     use_container_width=True, type="primary", key="start_auto_comparison_btn",
                 )
             with _comp_col2:
@@ -3875,16 +3354,16 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 _progress_bar = st.progress(0.0)
                 _status_box = st.empty()
                 _prov_labels_map = {
-                    "groq": "🟠 Groq", "anthropic": "🟣 Claude",
-                    "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini",
+                    "groq": "🟠 Groq (LLaMA 3.3-70b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)",
+                    "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)",
                 }
 
                 def _on_progress(prov, cycle_no, step, total_steps):
                     _progress_bar.progress(min(step / total_steps, 1.0))
                     _status_box.markdown(
-                        (f"⏳ {_prov_labels_map.get(prov, prov)} — الدورة {cycle_no} من 10 "
+                        (f"⏳ {_prov_labels_map.get(prov, prov)} — الدورة {cycle_no} من 50 "
                          f"({step}/{total_steps})") if _is_ar else
-                        (f"⏳ {_prov_labels_map.get(prov, prov)} — cycle {cycle_no} of 10 "
+                        (f"⏳ {_prov_labels_map.get(prov, prov)} — cycle {cycle_no} of 50 "
                          f"({step}/{total_steps})")
                     )
 
@@ -3910,49 +3389,71 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             if not _last and load_auto_comparisons():
                 _last = load_auto_comparisons()[-1]
 
+            _CAT_LEGEND = [
+                ("purple", "Text quality" if not _is_ar else "جودة النص",
+                 ["Fluency", "Coherence", "Consistency", "Relevance"] if not _is_ar
+                 else ["الطلاقة", "الترابط", "الاتساق", "الملاءمة"]),
+                ("purple", "Diversity" if not _is_ar else "التنوّع",
+                 ["Distinct responses"] if not _is_ar else ["ردود متمايزة"]),
+                ("purple", "Phishing realism" if not _is_ar else "واقعية التصيّد",
+                 ["Cue count", "Audience fit"] if not _is_ar else ["عدد المؤشرات", "ملاءمة الجمهور"]),
+                ("teal", "Operational" if not _is_ar else "الأداء التشغيلي",
+                 ["Speed", "JSON success", "Error rate"] if not _is_ar
+                 else ["السرعة", "نجاح JSON", "نسبة الأخطاء"]),
+            ]
+            _CAT_COLORS = {"purple": ("#7F77DD", "rgba(127,119,221,.08)"), "teal": ("#1D9E75", "rgba(29,158,117,.08)")}
+            _leg_cols = st.columns(4)
+            for _ci, (_ramp, _cat_title, _cat_items) in enumerate(_CAT_LEGEND):
+                _border, _bg = _CAT_COLORS[_ramp]
+                with _leg_cols[_ci]:
+                    _items_html = "".join(f'<div style="font-size:.72rem;color:#CBD5E1;padding:.1rem 0;">{it}</div>' for it in _cat_items)
+                    st.markdown(
+                        f'<div style="border:1px solid {_border}66;background:{_bg};border-radius:12px;padding:.7rem .6rem;height:100%;">'
+                        f'<div style="font-weight:800;color:{_border};font-size:.82rem;margin-bottom:.4rem;">{_cat_title}</div>'
+                        f'{_items_html}</div>', unsafe_allow_html=True)
+            st.markdown('<div style="height:.9rem"></div>', unsafe_allow_html=True)
+
             def _render_comparison_table(record, is_ar_local):
                 res = record.get("results", {})
                 scored = {p: compute_comparison_weighted_score(res.get(p, {})) for p in _COMPARISON_PROVIDERS}
                 valid_scores = {p: s for p, s in scored.items() if s is not None}
                 winner = max(valid_scores, key=valid_scores.get) if valid_scores else None
-                prov_labels = {"groq": "🟠 Groq", "anthropic": "🟣 Claude", "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini"}
-                if winner:
-                    st.markdown(
-                        (f"#### 🏆 الأفضل حسب هذي الدورة: {prov_labels[winner]} — {valid_scores[winner]}/100"
-                         if is_ar_local else
-                         f"#### 🏆 Best in this run: {prov_labels[winner]} — {valid_scores[winner]}/100")
-                    )
+                prov_labels = {"groq": "🟠 Groq (LLaMA 3.3-70b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)", "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)"}
+
+                def _fmt(v, suffix=""):
+                    return f"{v}{suffix}" if v is not None else "—"
+
                 rows_meta = [
-                    ("difficulty_score", "مطابقة الصعوبة %" if is_ar_local else "Difficulty match %"),
-                    ("arabic_score", "جودة العربي %" if is_ar_local else "Arabic quality %"),
-                    ("quality_score", "الجودة العامة %" if is_ar_local else "General quality %"),
-                    ("medical_score", "الصلة الطبية %" if is_ar_local else "Medical relevance %"),
-                    ("avg_speed", "متوسط السرعة (ث)" if is_ar_local else "Avg speed (s)"),
-                    ("json_rate", "نجاح JSON %" if is_ar_local else "JSON success %"),
-                    ("error_rate", "نسبة الأخطاء %" if is_ar_local else "Error rate %"),
-                    ("diversity", "التنوع" if is_ar_local else "Diversity"),
+                    ("Text quality" if not is_ar_local else "جودة النص",
+                     lambda p: _fmt(res.get(p, {}).get("quality_score"), "%")),
+                    ("Diversity" if not is_ar_local else "التنوّع",
+                     lambda p: res.get(p, {}).get("diversity", "—")),
+                    ("Phishing realism" if not is_ar_local else "واقعية التصيّد",
+                     lambda p: _fmt(res.get(p, {}).get("difficulty_score"), "%")),
+                    ("Operational" if not is_ar_local else "الأداء التشغيلي",
+                     lambda p: f"{_fmt(res.get(p, {}).get('avg_speed'), 's')} · {_fmt(res.get(p, {}).get('json_rate'), '%')} · {_fmt(res.get(p, {}).get('error_rate'), '%')}"),
                 ]
                 header_cells = "".join(
-                    f'<th style="padding:.5rem;border:1px solid rgba(255,255,255,.15);color:#F8FAFC;">{prov_labels[p]}</th>'
+                    f'<th style="padding:.5rem;border-bottom:1.5px solid rgba(255,255,255,.15);color:#F8FAFC;text-align:center;">{prov_labels[p]}</th>'
                     for p in _COMPARISON_PROVIDERS
                 )
                 body_rows = ""
-                for key, label in rows_meta:
-                    cells = ""
-                    for p in _COMPARISON_PROVIDERS:
-                        v = res.get(p, {}).get(key, "—")
-                        cells += f'<td style="padding:.5rem;text-align:center;border:1px solid rgba(255,255,255,.1);color:#E2E8F0;">{v if v is not None else "—"}</td>'
-                    body_rows += f'<tr><td style="padding:.5rem;border:1px solid rgba(255,255,255,.1);color:#93C5FD;font-weight:700;">{label}</td>{cells}</tr>'
+                for label, getter in rows_meta:
+                    cells = "".join(
+                        f'<td style="padding:.5rem;text-align:center;border-bottom:1px solid rgba(255,255,255,.08);color:#E2E8F0;">{getter(p)}</td>'
+                        for p in _COMPARISON_PROVIDERS
+                    )
+                    body_rows += f'<tr><td style="padding:.5rem;color:#93C5FD;border-bottom:1px solid rgba(255,255,255,.08);">{label}</td>{cells}</tr>'
                 score_cells = ""
                 for p in _COMPARISON_PROVIDERS:
                     s = scored.get(p)
                     is_winner = (p == winner)
-                    bg = "background:rgba(34,197,94,.25);" if is_winner else ""
-                    score_cells += f'<td style="padding:.5rem;text-align:center;border:1px solid rgba(255,255,255,.1);color:#F8FAFC;font-weight:900;{bg}">{s if s is not None else "—"}{" 🏆" if is_winner else ""}</td>'
-                body_rows += f'<tr><td style="padding:.5rem;border:1px solid rgba(255,255,255,.1);color:#FCD34D;font-weight:900;">{"الدرجة النهائية الموزونة" if is_ar_local else "Weighted final score"}</td>{score_cells}</tr>'
+                    bg = "background:rgba(34,197,94,.22);border-radius:8px;" if is_winner else ""
+                    score_cells += f'<td style="padding:.6rem .3rem;text-align:center;color:#F8FAFC;font-weight:900;{bg}">{s if s is not None else "—"}{" ✓" if is_winner else ""}</td>'
+                body_rows += f'<tr style="border-top:2px solid rgba(255,255,255,.2);"><td style="padding:.6rem .3rem;color:#FCD34D;font-weight:900;">{"المجموع" if is_ar_local else "Overall"}</td>{score_cells}</tr>'
                 st.markdown(
                     f'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:.85rem;">'
-                    f'<tr><th style="padding:.5rem;border:1px solid rgba(255,255,255,.15);"></th>{header_cells}</tr>'
+                    f'<tr><th style="padding:.5rem;"></th>{header_cells}</tr>'
                     f'{body_rows}</table></div>',
                     unsafe_allow_html=True,
                 )
@@ -3975,247 +3476,9 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             except Exception: pass
 
     # ──────────────────────────────────────────────────────────
-    # TAB 3 — Manual Ratings (👍 اليدوية)
+    # TAB 3 — Debug Log
     # ──────────────────────────────────────────────────────────
     with tab3:
-        st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
-        cur_prov = st.session_state.get("ai_provider", "groq")
-        prov_label = provider_info.get(cur_prov, {}).get("label", cur_prov)
-
-        st.markdown(
-            f'<div style="font-weight:900;color:#D1FAE5;margin-bottom:.3rem;">'
-            f'{"قيّمي الدورة الكاملة (٦ تعلّم + ١٠ اختبار) بعد ما تخلّصينها" if _is_ar else "Rate the FULL cycle (6 learning + 10 assessment) after finishing it"}'
-            f'</div>'
-            f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">{T("active_provider")}: {prov_label}</div>',
-            unsafe_allow_html=True)
-
-        # Compute which cycle # comes next (based on saved cycles for this
-        # provider) BEFORE showing the language radio, so the radio can
-        # default to whatever the rotation plan says for that cycle.
-        _runs_now_pre = load_runs()
-        _n_done_total = len([r for r in _runs_now_pre if r.get("provider")==cur_prov])
-        _cycle_no = min(_n_done_total + 1, 10)
-        _plan = ROTATION_PLAN[_cycle_no - 1]
-        _plan_role = _plan["role_ar"] if _is_ar else _plan["role_en"]
-        _plan_diff = {"easy": ("سهل" if _is_ar else "Easy"), "medium": ("متوسط" if _is_ar else "Medium"), "hard": ("صعب" if _is_ar else "Hard")}[_plan["difficulty"]]
-        _plan_lang = _plan["language"]
-
-        # Which language was this cycle run in? Defaults to whatever the
-        # rotation plan says for this cycle number (can be overridden).
-        lang_for_run = st.radio(
-            ("🏷️ صنّفي بيانات هذي الدورة: المحتوى المولّد كان بـ" if _is_ar else "🏷️ Tag this cycle's data: generated content was in"),
-            options=["English", "Arabic"],
-            index=0 if _plan_lang=="English" else 1,
-            horizontal=True,
-            key="run_lang_selector",
-        )
-
-        # Progress counter for this provider+language combo (target 5+5=10)
-        _runs_now = load_runs()
-        _n_done_lang = len([r for r in _runs_now if r.get("provider")==cur_prov and r.get("language")==lang_for_run])
-        _target_lang = 5
-        _pct = min(_n_done_lang / _target_lang, 1.0)
-
-        st.markdown(
-            f'<div style="margin:.3rem 0 .6rem;">'
-            f'<div style="color:#93C5FD;font-size:.9rem;font-weight:700;margin-bottom:.3rem;">'
-            f'{("اللغة:" if _is_ar else "Language:")} {lang_for_run} — {_n_done_lang}/{_target_lang}'
-            f'</div>'
-            f'<div style="background:rgba(255,255,255,.1);border-radius:6px;height:8px;overflow:hidden;">'
-            f'<div style="background:#22C55E;height:100%;width:{_pct*100:.0f}%;"></div>'
-            f'</div></div>',
-            unsafe_allow_html=True)
-
-        _plan_lang_show = ("🇸🇦 عربي" if _plan_lang=="Arabic" else "🇬🇧 إنجليزي") if _is_ar else _plan_lang
-        st.markdown(
-            f'<div dir="{_dir}" style="border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:.6rem .9rem;'
-            f'background:rgba(40,30,4,.4);margin-bottom:1rem;font-size:.85rem;color:#FCD34D;">'
-            f'📋 {("الدورة التالية حسب جدول التدوير رقم" if _is_ar else "Next cycle per rotation plan, #")} {_cycle_no}/10 — '
-            f'{("الوظيفة" if _is_ar else "Role")}: <b>{_plan_role}</b> | {("المستوى" if _is_ar else "Difficulty")}: <b>{_plan_diff}</b> | {("اللغة" if _is_ar else "Language")}: <b>{_plan_lang_show}</b>'
-            f'</div>',
-            unsafe_allow_html=True)
-
-        # Snapshot of the automatic scores collected since the last saved cycle
-        _pending = _load_pending_buckets().get(f"{cur_prov}__{lang_for_run}", [])
-        _pending_perf = _load_json_dict(_PENDING_PERF_FILE_PATH).get(f"{cur_prov}__{lang_for_run}", [])
-        if _pending or _pending_perf:
-            def _pavg(field):
-                vals = [it[field] for it in _pending if it.get(field) is not None]
-                return round(sum(vals)/len(vals), 1) if vals else None
-            _perf_speeds = [it["speed"] for it in _pending_perf if it.get("speed") is not None]
-            _perf_speed_avg = round(sum(_perf_speeds)/len(_perf_speeds), 1) if _perf_speeds else None
-            _perf_calls = len(_pending_perf)
-            _perf_errors = sum(1 for it in _pending_perf if it.get("is_error"))
-            _perf_err_rate = round(_perf_errors/_perf_calls*100) if _perf_calls else None
-            st.markdown(
-                f'<div style="border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:.6rem .9rem;'
-                f'background:rgba(4,30,10,.4);margin-bottom:1rem;font-size:.82rem;color:#86EFAC;">'
-                f'⚙️ {("نتائج آلية لهذي الدورة لحد الآن" if _is_ar else "Automatic scores collected so far this cycle")} '
-                f'({len(_pending)} {("إيميل" if _is_ar else "emails")}): '
-                f'{("صعوبة" if _is_ar else "Difficulty")} {_pavg("difficulty_score")}% · '
-                f'{("عربي" if _is_ar else "Arabic")} {_pavg("arabic_score")}% · '
-                f'{("جودة" if _is_ar else "Quality")} {_pavg("quality_score")}% · '
-                f'{("طبي" if _is_ar else "Medical")} {_pavg("medical_score")}% · '
-                f'{("سرعة" if _is_ar else "Speed")} {_perf_speed_avg if _perf_speed_avg is not None else "—"}s · '
-                f'{("أخطاء" if _is_ar else "Errors")} {_perf_err_rate if _perf_err_rate is not None else "—"}%'
-                f'</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(
-                f'<div style="color:#6B7280;font-size:.78rem;margin-bottom:1rem;">'
-                f'{("لسا ما ولّدتي أي إيميل بهذي الدورة — النتائج الآلية بتظهر هنا أوتوماتيك" if _is_ar else "No emails generated yet this cycle — automatic scores will appear here")}'
-                f'</div>', unsafe_allow_html=True)
-
-        # تنسيق حقل الملاحظات بشكل شفاف مع إطار مثل باقي العناصر
-        st.markdown("""<style>
-.stTextInput input{
-    background:transparent!important;
-    color:#E2E8F0!important;
-    border:none!important;
-    box-shadow:none!important;
-}
-.stTextInput input::placeholder{color:#6B7280!important;}
-.stTextInput>div>div,
-.stTextInput div[data-baseweb="base-input"]{
-    background:transparent!important;
-    background-color:transparent!important;
-    border:none!important;
-    box-shadow:none!important;
-}
-.stTextInput div[data-baseweb="input"]{
-    background:rgba(15,23,42,.5)!important;
-    border:1px solid rgba(255,255,255,.15)!important;
-    border-radius:8px!important;
-    box-shadow:none!important;
-}
-</style>""", unsafe_allow_html=True)
-
-        st.markdown(f'<div style="margin-bottom:.2rem;"><span style="font-weight:700;color:#E2E8F0;">⭐ '
-                    f'{("الانطباع العام" if _is_ar else "Overall Impression")}</span>'
-                    f'<span style="color:#6B7280;font-size:.8rem;margin-right:.5rem;"> — '
-                    f'{("حكمك الشامل عن جودة/واقعية/لغة هذي الدورة بالكامل" if _is_ar else "Your holistic judgement of quality/realism/language for this whole cycle")}</span></div>',
-                    unsafe_allow_html=True)
-        # NEW: a per-(provider, language) "form version" counter. Bumping it
-        # after every successful save changes the slider/note widget keys,
-        # which forces Streamlit to reset them to their defaults instead of
-        # silently keeping the just-saved values — this was the root cause
-        # of accidental double-saves (clicking Save twice resubmitted the
-        # same note/rating because the widgets never visibly reset).
-        _form_ver_key = f"cycle_form_version_{cur_prov}_{lang_for_run}"
-        _form_ver = st.session_state.get(_form_ver_key, 0)
-
-        overall_rating = st.select_slider(
-            label="overall",
-            options=[1, 2, 3, 4, 5],
-            value=3,
-            format_func=lambda x: f"{'⭐'*x}{'☆'*(5-x)} ({x}/5)",
-            key=f"rating_overall_{cur_prov}_{lang_for_run}_{_form_ver}",
-            label_visibility="collapsed"
-        )
-        st.markdown('<div style="height:.4rem"></div>', unsafe_allow_html=True)
-
-        col_note, _ = st.columns([2,1])
-        with col_note:
-            note = st.text_input(T('note_label'), placeholder=T('note_placeholder'),
-                                 key=f"note_{cur_prov}_{lang_for_run}_{_form_ver}")
-
-        def _save_cycle_rating(overall_val, note_text):
-            snap = snapshot_and_clear_pending_cycle(cur_prov, lang_for_run)
-            perf_snap = snapshot_and_clear_pending_perf(cur_prov, lang_for_run)
-            record = {
-                "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-                "provider": cur_prov,
-                "language": lang_for_run,
-                "overall": overall_val,
-                "auto_difficulty": snap["difficulty_score"],
-                "auto_arabic": snap["arabic_score"],
-                "auto_quality": snap["quality_score"],
-                "auto_medical": snap["medical_score"],
-                "n_auto_emails": snap["n_emails"],
-                "avg_speed": perf_snap["avg_speed"],
-                "json_rate": perf_snap["json_rate"],
-                "error_rate": perf_snap["error_rate"],
-                "diversity": perf_snap["diversity"],
-                "note": note_text or "",
-            }
-            save_run(record)
-            # Bump the form version so the slider/note reset to defaults on
-            # the next render, making it visually obvious the save went
-            # through and preventing a second click from resubmitting it.
-            st.session_state[_form_ver_key] = _form_ver + 1
-
-        if st.button(T('save_btn'), use_container_width=True):
-            _save_cycle_rating(overall_rating, note)
-            st.success(f"{T('ratings_saved')} {prov_label} ({lang_for_run}) — {_n_done_lang+1}/{_target_lang}")
-            st.rerun()
-
-        # Quick thumbs up/down shortcut — still one record per FULL cycle
-        st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:.4rem;">{T("quick_rating")}</div>', unsafe_allow_html=True)
-        qc1, qc2, qc3 = st.columns(3)
-        with qc1:
-            if st.button(T('good_btn'), use_container_width=True, key="quick_good"):
-                _save_cycle_rating(4, note)
-                st.success(T('saved_45'))
-                st.rerun()
-        with qc2:
-            if st.button(T('avg_btn'), use_container_width=True, key="quick_avg"):
-                _save_cycle_rating(3, note)
-                st.success(T('saved_35'))
-                st.rerun()
-        with qc3:
-            if st.button(T('poor_btn'), use_container_width=True, key="quick_bad"):
-                _save_cycle_rating(2, note)
-                st.success(T('saved_25'))
-                st.rerun()
-
-        # Undo last entry for this provider+language, in case of a mis-click
-        # (also restores the snapshot back into the pending bucket so no
-        # automatic data is lost).
-        st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
-        if st.button("↩️ " + ("تراجع عن آخر دورة محفوظة لهذا المزوّد/اللغة" if _is_ar else "Undo last saved cycle for this provider/language"),
-                     use_container_width=True, key="undo_last_run"):
-            all_runs = load_runs()
-            for i in range(len(all_runs) - 1, -1, -1):
-                if all_runs[i].get("provider") == cur_prov and all_runs[i].get("language") == lang_for_run:
-                    removed_record = all_runs.pop(i)
-                    try:
-                        with open(_RUNS_FILE_PATH, "w", encoding="utf-8") as f:
-                            json.dump(all_runs, f, ensure_ascii=False, indent=2)
-                    except Exception:
-                        pass
-                    delete_run_from_gsheet(removed_record)
-                    st.success("✅ " + ("تم حذف آخر دورة" if _is_ar else "Last cycle removed"))
-                    st.rerun()
-                    break
-
-        # History summary for this provider+language
-        st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
-        my_runs = [r for r in load_runs() if r.get("provider")==cur_prov and r.get("language")==lang_for_run]
-        if my_runs:
-            overall_vals = [r.get("overall") for r in my_runs if r.get("overall") is not None]
-            if overall_vals:
-                a = round(sum(overall_vals)/len(overall_vals), 1)
-                st.markdown(f'<div style="font-weight:700;color:#D1FAE5;margin-bottom:.2rem;">{T("rating_history")} {prov_label} ({lang_for_run})</div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="color:#9CA3AF;font-size:.82rem;">{("الانطباع العام" if _is_ar else "Overall")}: {T("avg_label")} {a}/5 ({len(overall_vals)} {("دورة" if _is_ar else "cycles")}) {"⭐"*round(a)}</div>', unsafe_allow_html=True)
-
-        # Same full Excel export, available here too so the researcher
-        # doesn't need to switch tabs just to download her results.
-        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        _all_runs_now = load_runs()
-        if _all_runs_now:
-            st.download_button(
-                "⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"),
-                data=build_excel_export(),
-                file_name="phishing_research_results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key="export_excel_manual",
-            )
-        else:
-            st.markdown(f'<div dir="{_dir}" style="text-align:{_align};font-size:.8rem;color:#6B7280;">⚠️ ' + ("احفظي تقييمًا واحدًا على الأقل أعلاه لتفعيل التصدير." if _is_ar else "Save at least one rating above to enable export.") + '</div>', unsafe_allow_html=True)
-            st.button("⬇️ " + ("تصدير كل النتائج Excel" if _is_ar else "Export full results (Excel)"), use_container_width=True, disabled=True, key="export_excel_manual_disabled")
-
-    with tab4:
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
         st.markdown(
             f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">'
@@ -4249,104 +3512,6 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 with st.expander(f"#{len(debug_log)-i} — {entry.get('stage','?')}"):
                     st.json(entry.get("error"))
 
-    with tab5:
-        st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div style="color:#9CA3AF;font-size:.85rem;margin-bottom:1rem;">'
-            f'{"كل عيّنة عُرضت على خبير أثناء جلسة Think-Aloud نشطة، محفوظة كما ظهرت له بالضبط — تُستخدم لربط تعليقاته بالمحتوى الدقيق وقت التحليل الكيفي." if _is_ar else "Every sample shown to an expert during an active Think-Aloud session, saved exactly as they saw it — used to tie their comments back to the precise content during qualitative analysis."}'
-            f'</div>', unsafe_allow_html=True)
-
-        if is_expert_session_active():
-            st.markdown(
-                f'<div style="padding:.5rem 1rem;border:1px solid rgba(16,185,129,.5);border-radius:10px;'
-                f'background:rgba(4,30,16,.5);margin-bottom:1rem;color:#6EE7B7;font-size:.85rem;">'
-                f'🔴 {"جلسة نشطة الآن" if _is_ar else "Session currently active"}: <b>{st.session_state["expert_session_id"]}</b>'
-                f'</div>', unsafe_allow_html=True)
-
-        samples = load_expert_samples()
-        if not samples:
-            st.info("لا توجد عيّنات محفوظة حتى الآن — تُحفظ فقط أثناء جلسة خبير نشطة." if _is_ar
-                     else "No samples saved yet — these are only captured while an expert session is active.")
-        else:
-            sessions = {}
-            for s in samples:
-                sessions.setdefault(s.get("expert_session_id", "?"), []).append(s)
-
-            st.markdown(
-                f'<div style="color:#9CA3AF;font-size:.82rem;margin-bottom:.6rem;">'
-                f'{"إجمالي" if _is_ar else "Total"}: {len(samples)} {"عيّنة عبر" if _is_ar else "samples across"} {len(sessions)} {"جلسة" if _is_ar else "session(s)"}'
-                f'</div>', unsafe_allow_html=True)
-
-            # ---- Export everything to Excel (same in-memory pattern as build_excel_export) ----
-            try:
-                from openpyxl import Workbook
-                from openpyxl.styles import Font, PatternFill, Alignment
-                from openpyxl.utils import get_column_letter
-                import io as _io
-
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "Expert_Samples"
-                headers = ["Session", "Timestamp", "Provider", "Role", "Role_Type", "Language",
-                           "Difficulty", "Phase", "Index", "Subject", "From", "Body",
-                           "Is_Phishing", "Indicators_Count", "Full_JSON"]
-                ws.append(headers)
-                for c in ws[1]:
-                    c.font = Font(bold=True, color="FFFFFF")
-                    c.fill = PatternFill("solid", fgColor="2F5496")
-                for s in samples:
-                    email = s.get("email", {}) or {}
-                    ws.append([
-                        s.get("expert_session_id", ""), s.get("timestamp", ""), s.get("provider", ""),
-                        s.get("role", ""), s.get("role_type", ""), s.get("language", ""),
-                        s.get("difficulty", ""), s.get("phase", ""), s.get("index", ""),
-                        email.get("subject", ""), email.get("from", ""), email.get("body", ""),
-                        email.get("is_phishing", ""), len(email.get("indicators", []) or []),
-                        json.dumps(email, ensure_ascii=False),
-                    ])
-                for i, _h in enumerate(headers, 1):
-                    ws.column_dimensions[get_column_letter(i)].width = 22
-                buf = _io.BytesIO()
-                wb.save(buf)
-                st.download_button(
-                    "⬇️ " + ("تصدير كل العيّنات (Excel)" if _is_ar else "Export all samples (Excel)"),
-                    data=buf.getvalue(),
-                    file_name="expert_samples.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
-            except Exception as e:
-                st.warning(("تعذّر إنشاء ملف Excel: " if _is_ar else "Could not build Excel export: ") + str(e))
-
-            st.markdown('<div style="height:.8rem"></div>', unsafe_allow_html=True)
-
-            for sess_id, rows in sorted(sessions.items(), key=lambda kv: kv[1][0].get("timestamp", ""), reverse=True):
-                with st.expander(f"🎙️ {sess_id}  —  {len(rows)} " + ("عيّنة" if _is_ar else "samples")):
-                    for r in rows:
-                        email = r.get("email", {}) or {}
-                        st.markdown(
-                            f'<div style="border:1px solid rgba(148,163,184,.25);border-radius:10px;'
-                            f'padding:.6rem .9rem;margin-bottom:.5rem;background:rgba(15,23,42,.4);">'
-                            f'<div style="font-size:.78rem;color:#94A3B8;">{r.get("timestamp","")} · {r.get("role","")} · '
-                            f'{r.get("difficulty","")} · {r.get("language","")} · {r.get("phase","")} #{r.get("index","")} · {r.get("provider","")}</div>'
-                            f'<div style="font-weight:700;color:#F1F5F9;margin-top:.2rem;">{html_lib.escape(str(email.get("subject","")))}</div>'
-                            f'</div>', unsafe_allow_html=True)
-                        st.json(email, expanded=False)
-
-            st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-            with st.expander("🗑️ " + ("تفريغ كل عيّنات الخبراء" if _is_ar else "Clear all expert samples")):
-                st.warning("هذا الإجراء نهائي وما ينرجع — يحذف كل العيّنات المحفوظة من كل الجلسات." if _is_ar
-                            else "This is permanent and cannot be undone — it deletes all saved samples from every session.")
-                confirm = st.checkbox("أؤكد إني أبي أحذف كل شي" if _is_ar else "I confirm I want to delete everything",
-                                       key="confirm_clear_expert_samples")
-                if st.button("🗑️ " + ("حذف نهائي" if _is_ar else "Permanently delete"), key="clear_expert_samples",
-                             disabled=not confirm):
-                    try:
-                        open(_EXPERT_SAMPLES_FILE_PATH, "w", encoding="utf-8").close()
-                        st.success("تم الحذف." if _is_ar else "Cleared.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(str(e))
 
 
 
@@ -4642,60 +3807,6 @@ def _reposition_trailing_lone_link(body, link):
 
 
 
-def clear_gsheet_data():
-    """Wipe all data rows (keeping headers) from both synced tabs. Used by
-    'Reset All Metrics' — now that load_runs() merges in the durable
-    Google Sheet copy, a local-only reset would otherwise be silently
-    undone on the next page load as old rows get pulled back in."""
-    client = _get_gsheet_client()
-    sheet_id = _get_gsheet_id()
-    if not client or not sheet_id:
-        return
-    for tab_name in ["Cycle Ratings", "Auto Metrics"]:
-        try:
-            sheet = client.open_by_key(sheet_id)
-            ws = sheet.worksheet(tab_name)
-            n_rows = ws.row_count
-            if n_rows > 1:
-                ws.delete_rows(2, n_rows)
-        except Exception:
-            pass
-    st.session_state.pop("_gsheet_runs_cache", None)
-
-def delete_run_from_gsheet(record):
-    """Remove the matching row (by timestamp+provider+language) from the
-    'Cycle Ratings' tab. Used by the Undo button so a removed cycle
-    doesn't silently reappear on the next load_runs() merge — without
-    this, Undo would only ever be temporary since Google Sheets is the
-    durable source of truth and gets re-merged in on every page load."""
-    client = _get_gsheet_client()
-    sheet_id = _get_gsheet_id()
-    if not client or not sheet_id or not record:
-        return
-    try:
-        sheet = client.open_by_key(sheet_id)
-        ws = sheet.worksheet("Cycle Ratings")
-        all_vals = ws.get_all_values()
-        if not all_vals:
-            return
-        headers = all_vals[0]
-        try:
-            ts_i = headers.index("timestamp")
-            prov_i = headers.index("provider")
-            lang_i = headers.index("language")
-        except ValueError:
-            return
-        target = (str(record.get("timestamp", "")), str(record.get("provider", "")), str(record.get("language", "")))
-        for row_idx in range(len(all_vals) - 1, 0, -1):
-            row = all_vals[row_idx]
-            if len(row) > max(ts_i, prov_i, lang_i):
-                if (row[ts_i], row[prov_i], row[lang_i]) == target:
-                    ws.delete_rows(row_idx + 1)  # +1: sheet rows are 1-indexed
-                    break
-        # Invalidate the cached pull so the next load_runs() reflects the deletion.
-        st.session_state.pop("_gsheet_runs_cache", None)
-    except Exception:
-        pass
 
 
 
