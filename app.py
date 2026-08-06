@@ -3298,15 +3298,21 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 else:
                     _pct = round(100 * _api_n / _tot)
                     _pct_html = f'<div style="font-size:1.3rem;font-weight:900;color:#93C5FD;">{_pct}%</div>'
+                _ai_word = "AI" if not _is_ar else "من AI"
+                _local_word = "local" if not _is_ar else "محلي"
                 return (
                     f'<div dir="{_dir}" style="border:1px solid rgba(255,255,255,.12);border-radius:12px;'
                     f'padding:.7rem .6rem;text-align:center;">'
                     f'<div style="font-weight:800;font-size:.85rem;color:#E2E8F0;margin-bottom:.3rem;">{label}</div>'
                     f'{_pct_html}'
-                    f'<div style="font-size:.78rem;color:#6EE7B7;margin-top:.35rem;">✅ {_api_n} '
-                    + ("AI" if not _is_ar else "من AI") + '</div>'
-                    f'<div style="font-size:.78rem;color:#FCA5A5;">📋 {_local_n} '
-                    + ("local" if not _is_ar else "محلي") + '</div>'
+                    f'<div style="display:flex;align-items:center;justify-content:center;gap:.3rem;'
+                    f'font-size:.78rem;color:#6EE7B7;margin-top:.35rem;">'
+                    f'<span style="width:1.1em;text-align:center;flex-shrink:0;">✅</span>'
+                    f'<span>{_api_n} {_ai_word}</span></div>'
+                    f'<div style="display:flex;align-items:center;justify-content:center;gap:.3rem;'
+                    f'font-size:.78rem;color:#FCA5A5;">'
+                    f'<span style="width:1.1em;text-align:center;flex-shrink:0;">📋</span>'
+                    f'<span>{_local_n} {_local_word}</span></div>'
                     f'</div>'
                 )
 
