@@ -2753,7 +2753,32 @@ def page_results():
         ua=answers.get(i,""); ca2="phishing" if pattern[i] else "legitimate"; ok=ua==ca2
         bc2="rgba(16,185,129,.5)" if ok else "rgba(239,68,68,.5)"; bg2="rgba(16,185,129,.05)" if ok else "rgba(239,68,68,.05)"
         ri="✅" if ok else "❌"; tl=tr("Phishing","تصيد") if pattern[i] else tr("Legitimate","شرعية"); ic="🚨" if pattern[i] else "✅"
-        exp=re.sub(r'<[^>]+>','',(em.get("explanation") or ""))
+        # BUGFIX: this used to read em.get("explanation"), a field that is
+        # never set anywhere in the generation pipeline — so no reasoning
+        # ever appeared here, regardless of whether the trainee's answer
+        # was right or wrong. why_risky/learning_tip ARE populated for
+        # every assessment email (phishing: why_risky explains the red
+        # flags + learning_tip gives the safe action; legitimate: why_risky
+        # is empty by design and learning_tip alone explains what made the
+        # message trustworthy). Build the shown explanation from those
+        # real fields instead, with a "why correct/incorrect" lead-in so
+        # the trainee understands their own mistake, not just AI/local
+        # fallback jargon.
+        _why = str(em.get("why_risky") or "").strip()
+        _tip = str(em.get("learning_tip") or "").strip()
+        _reason = " ".join(p for p in [_why, _tip] if p)
+        if not _reason:
+            _reason = tr(
+                "No detailed explanation is available for this item.",
+                "لا يتوفر شرح تفصيلي لهذا العنصر."
+            )
+        if pattern[i]:  # this item WAS phishing
+            _lead = tr("Correct — you caught the phishing signs:", "إجابة صحيحة — تنبّهت لمؤشرات التصيّد:") if ok else \
+                    tr("Incorrect — this was actually phishing. What you should have noticed:", "إجابة غير صحيحة — هذي كانت رسالة تصيّد فعليًا. اللي كان المفروض تلاحظينه:")
+        else:  # this item was legitimate
+            _lead = tr("Correct — this was a genuine, safe message:", "إجابة صحيحة — هذي رسالة حقيقية وآمنة:") if ok else \
+                    tr("Incorrect — this was actually a legitimate message, not phishing. What made it safe:", "إجابة غير صحيحة — هذي كانت رسالة شرعية فعليًا، مو تصيّد. اللي كان يوضح إنها آمنة:")
+        exp = re.sub(r'<[^>]+>', '', f"{_lead} {_reason}")
         # FIX: bidi issue — Arabic explanations often embed Latin/domain
         # substrings (e.g. "hosp1tal-clinic.org") in the middle of a
         # sentence, sometimes inside parentheses with Arabic words on
@@ -5093,7 +5118,17 @@ def _v32_session_bucket(role_type, language, difficulty):
 def _v32_legitimate(plan, role, index):
     ar = plan["language"] == "Arabic"
     recipient = _v30_recipient(role, index, plan["language"], plan["phase"])
-    person = _v30_full_name(recipient, plan["language"])
+    # DIFFICULTY-CONTRACT FIX: at "easy" difficulty the greeting must stay
+    # generic (no real name) for EVERY email — phishing and legitimate
+    # alike — matching the researcher's own progressive-difficulty table.
+    # _v33_easy_phishing already does this correctly; legitimate emails
+    # were always using the recipient's full personal name regardless of
+    # difficulty, which silently broke the "easy = generic greeting"
+    # guarantee whenever a legitimate email happened to land on easy.
+    if plan.get("difficulty") == "easy":
+        person = _v33_pick(V32_GENERIC_TARGET_AR if ar else V32_GENERIC_TARGET_EN)
+    else:
+        person = _v30_full_name(recipient, plan["language"])
     sender_name = plan.get("sender_disp", plan["sender"]) if ar else plan["sender"]
     sender = f'{sender_name} <{_v32_choice(["notifications", "coordination", "quality", "clinical.ops", "records"])}@hospital.org>'
     disp_signature = plan.get("signature_disp", plan["signature"]) if ar else plan["signature"]
@@ -5297,6 +5332,14 @@ V33_SUBJECT_PATTERNS_AR = {
     ] for k in V33_PHISH_ARCHETYPES
 }
 
+# Bare generic nouns (no "Dear"/"عزيزي" prefix) — used to fill the
+# {person} slot inside legitimate-email templates like "عزيزي {person}،"
+# / "Dear {person}," when difficulty == "easy", so the greeting stays
+# generic without double-prefixing (V33_GENERIC_GREETINGS_* above already
+# includes its own "Dear"/"عزيزي" and is used standalone, not slotted in).
+V32_GENERIC_TARGET_EN = ["Staff Member", "Colleague", "Team Member", "Healthcare Employee"]
+V32_GENERIC_TARGET_AR = ["الموظف", "الزميل", "عضو الفريق", "زميل العمل"]
+
 V33_GENERIC_GREETINGS_EN = [
     "Dear Staff Member", "Dear Healthcare Employee", "Dear Colleague",
     "Hello Team", "Attention Staff", "Dear Team Member",
@@ -5400,6 +5443,29 @@ def _v33_plan(role, index, language, difficulty, phase, is_phishing):
     action_disp = family.get("actions_ar", family["actions"])[action_idx] if ar else action
     sender_disp = family.get("senders_ar", family["senders"])[sender_idx] if ar else sender
     signature_disp = family.get("signatures_ar", family["signatures"])[sender_idx % len(family["signatures"])] if ar else signature
+    # HEALTHCARE-CONTEXT FIX: clinical department names (Blood Bank,
+    # Emergency Medicine...) already read as unmistakably hospital-related.
+    # Admin/IT/Other department names (Warehouse Operations, Database
+    # Services...) are generic and could belong to any company — nothing
+    # guaranteed a hospital cue actually appeared in the visible email
+    # text, since that depended on which random domain/family got picked.
+    # This adds an explicit, natural "Hospital" qualifier to the sender
+    # name for every non-clinical role, so every single email — regardless
+    # of scenario, domain, or difficulty level — visibly reads as hospital
+    # correspondence. `sender` (raw/English) is fixed unconditionally,
+    # independent of `ar`: the hard-difficulty writer (_v30_compose_phishing)
+    # reads plan["sender"] directly for its "From:" field even on Arabic
+    # emails and never consults sender_disp, so leaving sender unprefixed
+    # whenever ar=True would silently keep leaking an English, hospital-less
+    # department name into Arabic hard-level emails specifically.
+    if role_type != "clinical":
+        if "hospital" not in sender.lower():
+            sender = f"Hospital {sender}"
+        if ar:
+            if "مستشفى" not in sender_disp:
+                sender_disp = f"{sender_disp} - المستشفى"
+        else:
+            sender_disp = sender
 
     plan = {
         "role_type": role_type, "language": language, "difficulty": diff,
