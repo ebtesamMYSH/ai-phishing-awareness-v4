@@ -5437,6 +5437,7 @@ def _v33_plan(role, index, language, difficulty, phase, is_phishing):
 
     obj_idx = family["objects"].index(obj)
     action_idx = family["actions"].index(action)
+    area = family["area"]
     area_disp = family.get("area_ar", family["area"]) if ar else family["area"]
     event_disp = family.get("event_ar", family["event"]) if ar else family["event"]
     obj_disp = family.get("objects_ar", family["objects"])[obj_idx] if ar else obj
@@ -5450,27 +5451,37 @@ def _v33_plan(role, index, language, difficulty, phase, is_phishing):
     # guaranteed a hospital cue actually appeared in the visible email
     # text, since that depended on which random domain/family got picked.
     # This adds an explicit, natural "Hospital" qualifier to the sender
-    # name for every non-clinical role, so every single email — regardless
-    # of scenario, domain, or difficulty level — visibly reads as hospital
-    # correspondence. `sender` (raw/English) is fixed unconditionally,
-    # independent of `ar`: the hard-difficulty writer (_v30_compose_phishing)
-    # reads plan["sender"] directly for its "From:" field even on Arabic
-    # emails and never consults sender_disp, so leaving sender unprefixed
-    # whenever ar=True would silently keep leaking an English, hospital-less
-    # department name into Arabic hard-level emails specifically.
+    # name AND to `area`/`area_disp` for every non-clinical role. Fixing
+    # sender alone was not enough: `area`/`area_disp` is what actually
+    # gets woven into the readable BODY sentences ("within {area}...",
+    # workflow notes, etc.) — measured directly, only ~20% of admin/IT
+    # bodies mentioned "hospital" anywhere in the visible message text
+    # even after the sender-only fix, because a human reads the body,
+    # not just the From line. `sender` (raw/English) and `area` (raw/
+    # English) are fixed unconditionally, independent of `ar`: the
+    # hard-difficulty writer (_v30_compose_phishing) reads plan["sender"]/
+    # plan["area"] directly for Arabic emails too and never consults the
+    # *_disp fields, so leaving the raw fields unprefixed whenever ar=True
+    # would silently keep leaking hospital-less English text into Arabic
+    # hard-level emails specifically.
     if role_type != "clinical":
         if "hospital" not in sender.lower():
             sender = f"Hospital {sender}"
+        if "hospital" not in area.lower():
+            area = f"Hospital {area}"
         if ar:
             if "مستشفى" not in sender_disp:
                 sender_disp = f"{sender_disp} - المستشفى"
+            if "مستشفى" not in area_disp:
+                area_disp = f"{area_disp} بالمستشفى"
         else:
             sender_disp = sender
+            area_disp = area
 
     plan = {
         "role_type": role_type, "language": language, "difficulty": diff,
         "phase": phase, "is_phishing": bool(is_phishing),
-        "family_id": family["id"], "area": family["area"], "event": family["event"],
+        "family_id": family["id"], "area": area, "event": family["event"],
         "object": obj, "action": action, "sender": sender, "signature": signature,
         "area_disp": area_disp, "event_disp": event_disp, "object_disp": obj_disp,
         "action_disp": action_disp, "sender_disp": sender_disp, "signature_disp": signature_disp,
@@ -5510,22 +5521,22 @@ def _v33_context_sentence(plan, ar=False):
             "state_change": f"تغيرت حالة {obj} في {area} بعد تحديث السجل.",
             "returned_item": f"أُعيد {obj} إلى قائمة {area} للمراجعة.",
             "missed_response": f"لم تُسجل استجابة على {obj} ضمن {area}.",
-            "new_exception": f"تم اكتشاف استثناء جديد في سجل {obj}.",
+            "new_exception": f"تم اكتشاف استثناء جديد في سجل {obj} ضمن {area}.",
             "release_ready": f"أصبح {obj} جاهزًا للإطلاق في {area}.",
             "queue_notice": f"يوجد عنصر متعلق بـ {obj} بانتظارك في قائمة {area}.",
             "follow_up": f"هذه متابعة بخصوص {obj} ضمن {area}.",
-            "service_event": f"تأثر الوصول إلى {obj} أثناء تحديث الخدمة.",
+            "service_event": f"تأثر الوصول إلى {obj} أثناء تحديث خدمة {area}.",
         }
     else:
         bank = {
             "state_change": f"The status of {obj} changed after an update in {area}.",
             "returned_item": f"The {obj} item was returned to the {area} queue for review.",
             "missed_response": f"No response has been recorded for {obj} in {area}.",
-            "new_exception": f"A new exception was detected in the {obj} record.",
+            "new_exception": f"A new exception was detected in the {obj} record within {area}.",
             "release_ready": f"The {obj} item is ready for release in {area}.",
             "queue_notice": f"An item related to {obj} is waiting in the {area} queue.",
             "follow_up": f"This is a follow-up regarding {obj} in {area}.",
-            "service_event": f"Access to {obj} was affected during a service update.",
+            "service_event": f"Access to {obj} was affected during a {area} service update.",
         }
     return bank[mode]
 
@@ -6757,11 +6768,24 @@ def _v40_goal_label(goal, language):
 
 def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase, workflow_note=None):
     ar = plan["language"] == "Arabic"; fam=plan["family"]; area=fam["area"]
+    role_type = plan.get("role_type", "clinical")
     _sidx=_V40_RNG.randrange(len(fam["senders"]))
     sender=(fam.get("senders_ar",fam["senders"])[_sidx] if ar else fam["senders"][_sidx])
     event=plan["event_disp"]; obj=plan["object_disp"]; goal=_v40_goal_label(plan["goal"],plan["language"]); deadline=_v40_deadline(plan["language"])
     if ar:
         area_ar=V40_AR_TERMS.get(area,area)
+        # HEALTHCARE-CONTEXT FIX (medium engine — separate code path from
+        # _v33_plan's own fix above, since this function pulls area/sender
+        # straight from the family object at render time instead of from a
+        # plan dict). Applied AFTER the V40_AR_TERMS lookup so the lookup
+        # key itself (`area`) stays untouched — prefixing it first would
+        # break the dictionary match and silently leak raw English text
+        # into the Arabic body instead of the translated term.
+        if role_type != "clinical":
+            if "مستشفى" not in area_ar:
+                area_ar = f"{area_ar} بالمستشفى"
+            if "مستشفى" not in sender:
+                sender = f"{sender} - المستشفى"
         # Medium requires a department/role greeting (never a personal name, never fully generic).
         greetings=[f"فريق {area_ar} العزيز",f"مرحبًا فريق {area_ar}",f"زملاء {area_ar} الكرام",f"صباح الخير فريق {area_ar}",f"إلى فريق {area_ar}"]
         g=_V40_RNG.choice(greetings)
@@ -6775,6 +6799,13 @@ def _v40_local_copy(plan, recipient, domain, link, attachment, evidence_phrase, 
         parts += [closing, f"مع التحية،\n{sign}"]
         body = "\n\n".join(parts)
     else:
+        # Same fix, English side: safe to prefix `area`/`sender` directly
+        # since there is no dictionary lookup keyed on them in this branch.
+        if role_type != "clinical":
+            if "hospital" not in area.lower():
+                area = f"Hospital {area}"
+            if "hospital" not in sender.lower():
+                sender = f"Hospital {sender}"
         greetings=[f"Dear {area} Team",f"Hello {area} Team",f"Dear {area} Colleagues",f"Attention {area} Team",f"Good morning {area} Team"]
         g=_V40_RNG.choice(greetings)
         subject=_V40_RNG.choice([f"Follow-up Required: {obj.title()}",f"{area} Update — {obj.title()}",f"Pending Action: {obj.title()}",f"Operational Review: {obj.title()}"])
@@ -6806,6 +6837,15 @@ def _v40_api_copy(plan, recipient, domain, link, attachment, evidence_phrase, wo
         sample = recent_list[-6:]
         quoted = "; ".join(f"\"{s}\"" for s in sample)
         avoid_rule = f"\nDIVERSITY RULE: Do NOT reuse the opening sentence, phrasing, or structure of any of these recently generated emails: {quoted}. Write a genuinely different opening idea and sentence structure this time."
+    hospital_context_rule = ""
+    if plan.get("role_type") != "clinical":
+        hospital_context_rule = (
+            "\nHOSPITAL CONTEXT (mandatory): explicitly signal this is hospital workplace "
+            "correspondence — naturally include the word \"hospital\" (Arabic: \"مستشفى\") at "
+            "least once in the body, e.g. in the department name, sender line, or a phrase "
+            "like \"at the hospital\" / \"within the hospital's {fam['area']} department\". "
+            "Never let the message read like it could belong to a generic, non-healthcare company."
+        )
     instruction = f"""Write ONE realistic {'Arabic' if ar else 'English'} workplace email for a Saudi hospital employee.
 Return JSON only with keys subject and body.
 Scenario area: {fam['area']}
@@ -6818,7 +6858,7 @@ Recipient: {recipient}
 MANDATORY exact sentence/fragment to include once in body: {evidence_phrase}{second_fragment_rule}{closing_rule}
 STRUCTURE: format the body as separate paragraphs divided by a BLANK LINE between each one (greeting on its own line, then one or more message paragraphs, then the closing/sign-off block on its own line as the very last paragraph) — never as one run-on block of text, and never drop the closing.
 Rules: 55-135 words; natural healthcare wording; vary opening, paragraph order and closing; no QR; no password/OTP request; do not add any URL other than the exact action fragment; do not mention phishing; no markdown except the supplied action fragment; do not invent a second action.
-GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT NAME or JOB TITLE only (e.g. "Dear {fam['area']} Team", "Hello Clinical Team") — never by the recipient's personal name and never with a fully generic greeting like "Dear Colleague" with no department reference.{avoid_rule}"""
+GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT NAME or JOB TITLE only (e.g. "Dear {fam['area']} Team", "Hello Clinical Team") — never by the recipient's personal name and never with a fully generic greeting like "Dear Colleague" with no department reference.{avoid_rule}{hospital_context_rule}"""
     try:
         data = call_ai(instruction, max_tokens=900)
         if not isinstance(data, dict) or "error" in data:
@@ -6850,6 +6890,15 @@ GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT N
                     # English opening must reference the department; otherwise it's too generic.
                     generic_only = not any(w in opening for w in ["Team", "Colleagues", fam["area"]])
                     if generic_only:
+                        return None
+                # HEALTHCARE-CONTEXT FIX: same guarantee as the local writer
+                # — reject an AI body that never signals hospital/healthcare
+                # context anywhere, for non-clinical roles. Falls back to
+                # _v40_local_copy, which now unconditionally includes it.
+                if plan.get("role_type") != "clinical":
+                    full_text = (subject + " " + body)
+                    has_hospital = ("hospital" in full_text.lower()) if not ar else ("مستشفى" in full_text)
+                    if not has_hospital:
                         return None
                 recent_list.append(opening[:140]); recent_list[:] = recent_list[-10:]
                 return subject,body
@@ -7290,6 +7339,36 @@ def _body_has_clean_paragraph_structure(body, greeting_line, closing_line):
     return True
 
 
+_RECIPIENT_TITLE_WORDS = {
+    "dr", "dr.", "nurse", "pharmacist", "lab", "technician", "radiology",
+    "د", "د.", "الممرض", "الممرضة", "الصيدلاني", "الصيدلانية",
+    "فني", "فنية", "المختبر", "الأشعة",
+}
+
+
+def _text_leaks_recipient_name(text):
+    """True if `text` contains any real recipient PERSON name (first or
+    last name) from RECIPIENT_POOLS — used to reject an AI rewrite that
+    invented or referenced a specific person anywhere in an easy-difficulty
+    email, even outside the (separately, exactly-matched) greeting line
+    itself. Generic profession titles (Dr./Nurse/Pharmacist/...) are
+    excluded on purpose — mentioning "the nurse team" is fine; the check
+    is only for an actual first/last name. Whole-word matches only, so
+    short particles can't trigger a false positive."""
+    text_l = text.lower()
+    for pool in RECIPIENT_POOLS.values():
+        for entry in pool:
+            for field in ("en", "ar"):
+                for token in entry.get(field, "").split():
+                    token_clean = token.strip(".,،")
+                    if len(token_clean) < 3 or token_clean.lower() in _RECIPIENT_TITLE_WORDS:
+                        continue
+                    if re.search(r'(?<!\w)' + re.escape(token_clean) + r'(?!\w)', text if field == "ar" else text_l,
+                                 re.IGNORECASE if field == "en" else 0):
+                        return True
+    return False
+
+
 def _ai_overlay_content(local_result, ar, is_phishing=True):
 
     """Attempt an AI-authored rewrite of local_result's wording.
@@ -7309,6 +7388,24 @@ def _ai_overlay_content(local_result, ar, is_phishing=True):
             ind_keys.append(k)
     frag_lines = "\n".join(f'- "{f}"' for f in frags) if frags else "(none)"
     lang_name = "Arabic" if ar else "English"
+    difficulty = str((local_result.get("scenario_meta") or {}).get("difficulty") or "").lower()
+    role_type = str((local_result.get("scenario_meta") or {}).get("role_type") or "").lower()
+    no_name_rule = ""
+    if difficulty == "easy":
+        no_name_rule = (
+            "\nIMPORTANT: this is an EASY-difficulty item — the recipient must stay fully anonymous "
+            "throughout. Do NOT invent, mention, or reference any specific person's name anywhere in "
+            "the subject or body (not the recipient's name, not a colleague's, not a manager's) — refer "
+            "to people only in generic terms (e.g. \"the team\", \"your manager\", \"staff\")."
+        )
+    hospital_context_rule = ""
+    if role_type and role_type != "clinical":
+        hospital_context_rule = (
+            "\nHOSPITAL CONTEXT (mandatory): explicitly signal this is hospital workplace "
+            "correspondence — naturally include the word \"hospital\" (Arabic: \"مستشفى\") at least "
+            "once in the subject or body. Never let the message read like it could belong to a "
+            "generic, non-healthcare company."
+        )
     shape_extra = ""
     rules_extra = ""
     if is_phishing:
@@ -7334,7 +7431,7 @@ STRUCTURE — the "body" must be formatted as separate paragraphs divided by a B
 - Then one or more paragraphs of message content, each separated by a blank line.{closing_rule}
 CONTENT: the message-content paragraphs must contain each of the following exact fragments verbatim and unchanged, somewhere in the text (reorder and rewrite everything else around them freely):
 {frag_lines}
-Rules: body length within roughly 20% of the reference's word count; do not add any link, QR marker, or attachment reference other than the ones already listed above; do not mention "phishing" or "training" inside subject/body.{rules_extra}{ind_rules}"""
+Rules: body length within roughly 20% of the reference's word count; do not add any link, QR marker, or attachment reference other than the ones already listed above; do not mention "phishing" or "training" inside subject/body.{rules_extra}{ind_rules}{no_name_rule}{hospital_context_rule}"""
     try:
         data = call_ai(instruction, max_tokens=1300)
         if not isinstance(data, dict) or "error" in data:
@@ -7353,6 +7450,13 @@ Rules: body length within roughly 20% of the reference's word count; do not add 
             return None
         for f in frags:
             if f not in body:
+                return None
+        if difficulty == "easy" and _text_leaks_recipient_name(subject + " " + body):
+            return None
+        if role_type and role_type != "clinical":
+            full_text = subject + " " + body
+            has_hospital = ("مستشفى" in full_text) if ar else ("hospital" in full_text.lower())
+            if not has_hospital:
                 return None
         ref_words = max(1, len(body0.split()))
         if not (0.5 * ref_words <= len(body.split()) <= 1.8 * ref_words):
