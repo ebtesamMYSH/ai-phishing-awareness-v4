@@ -321,12 +321,35 @@ def _get_or_create_worksheet(sheet, tab_name, headers):
         ws = sheet.add_worksheet(title=tab_name, rows=1000, cols=max(10, len(headers)))
         ws.append_row(headers)
         return ws
+    # The tab already existed with SOME header — but if the code was later
+    # updated to add new columns (e.g. AI-usage tracking added after the
+    # tab was first created), those new headers would never appear and
+    # every ws.append_row(...) call would silently misalign, writing
+    # values under the wrong (old) column count. Extend the header row in
+    # place with any headers not already present, preserving existing
+    # columns and their data untouched. Any failure here is logged (not
+    # silently swallowed) so a stuck header can actually be diagnosed.
     try:
         existing_header = ws.row_values(1)
-        if not existing_header:
+    except Exception as e:
+        try: _store_debug("gsheet_header_read", f"{tab_name}: {e}")
+        except Exception: pass
+        return ws
+    if not existing_header:
+        try:
             ws.append_row(headers)
-    except Exception:
-        pass
+        except Exception as e:
+            try: _store_debug("gsheet_header_init", f"{tab_name}: {e}")
+            except Exception: pass
+        return ws
+    missing = [h for h in headers if h not in existing_header]
+    if missing:
+        new_header = existing_header + missing
+        try:
+            ws.update(values=[new_header], range_name="A1")
+        except Exception as e:
+            try: _store_debug("gsheet_header_extend", f"{tab_name} missing={missing}: {e}")
+            except Exception: pass
     return ws
 
 
@@ -346,9 +369,9 @@ def _get_or_create_worksheet(sheet, tab_name, headers):
 def push_auto_comparison_to_gsheet(record):
     """Append one row per provider from a single automated-comparison
     run to the 'Auto Comparison' tab. Includes the AI-vs-local usage
-    tally (6 columns: api/local count per difficulty) so every saved
-    run keeps this breakdown permanently, not just for the current
-    session."""
+    tally (12 columns: api/local count per difficulty, for phishing AND
+    legitimate content) so every saved run keeps this breakdown
+    permanently, not just for the current session."""
     client = _get_gsheet_client()
     sheet_id = _get_gsheet_id()
     if not client or not sheet_id:
@@ -358,7 +381,9 @@ def push_auto_comparison_to_gsheet(record):
         headers = ["timestamp", "elapsed_minutes", "provider",
                    "difficulty_score", "arabic_score", "quality_score", "medical_score",
                    "avg_speed", "json_rate", "error_rate", "diversity", "diversity_ratio", "n_calls",
-                   "easy_ai", "easy_local", "medium_ai", "medium_local", "hard_ai", "hard_local"]
+                   "easy_ai", "easy_local", "medium_ai", "medium_local", "hard_ai", "hard_local",
+                   "legit_easy_ai", "legit_easy_local", "legit_medium_ai", "legit_medium_local",
+                   "legit_hard_ai", "legit_hard_local"]
         ws = _get_or_create_worksheet(sheet, "Auto Comparison", headers)
         ts = record.get("timestamp", "")
         elapsed = record.get("elapsed_minutes", "")
@@ -366,7 +391,7 @@ def push_auto_comparison_to_gsheet(record):
             m = m or {}
             usage = m.get("ai_usage") or {}
             usage_vals = []
-            for bk in ("easy", "medium", "hard"):
+            for bk in ("easy", "medium", "hard", "legitimate_easy", "legitimate_medium", "legitimate_hard"):
                 bk_stats = usage.get(bk) or {}
                 usage_vals.append(bk_stats.get("api", ""))
                 usage_vals.append(bk_stats.get("local", ""))
@@ -393,7 +418,13 @@ def pull_auto_comparisons_from_gsheet():
     grouped = {}
     numeric_fields = ["difficulty_score", "arabic_score", "quality_score", "medical_score",
                        "avg_speed", "json_rate", "error_rate", "diversity_ratio", "n_calls"]
-    usage_fields = ["easy_ai", "easy_local", "medium_ai", "medium_local", "hard_ai", "hard_local"]
+    # Maps the internal ai_usage dict keys to their (shorter) sheet column
+    # name prefixes — "legitimate_easy" internally vs. "legit_easy_ai" /
+    # "legit_easy_local" as actual column headers.
+    _bucket_to_col_prefix = {
+        "easy": "easy", "medium": "medium", "hard": "hard",
+        "legitimate_easy": "legit_easy", "legitimate_medium": "legit_medium", "legitimate_hard": "legit_hard",
+    }
     try:
         sheet = client.open_by_key(sheet_id)
         ws = sheet.worksheet("Auto Comparison")
@@ -417,14 +448,14 @@ def pull_auto_comparisons_from_gsheet():
                         m[f] = None
             m["diversity"] = rec.get("diversity", "")
             _usage = {}
-            for _bk in ("easy", "medium", "hard"):
+            for _bk, _col_prefix in _bucket_to_col_prefix.items():
                 def _uv(field):
                     v = rec.get(field)
                     try:
                         return int(float(v)) if v not in ("", None) else 0
                     except (ValueError, TypeError):
                         return 0
-                _usage[_bk] = {"api": _uv(f"{_bk}_ai"), "local": _uv(f"{_bk}_local")}
+                _usage[_bk] = {"api": _uv(f"{_col_prefix}_ai"), "local": _uv(f"{_col_prefix}_local")}
             m["ai_usage"] = _usage
             entry["results"][prov] = m
     except Exception:
@@ -763,7 +794,10 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None):
         # ThreadPoolExecutor future is always safe to read; a direct
         # st.session_state write made *inside* the worker thread was the
         # actual problem this replaces.
-        usage_tally = {"easy": {"api": 0, "local": 0}, "medium": {"api": 0, "local": 0}, "hard": {"api": 0, "local": 0}}
+        usage_tally = {
+            "easy": {"api": 0, "local": 0}, "medium": {"api": 0, "local": 0}, "hard": {"api": 0, "local": 0},
+            "legitimate_easy": {"api": 0, "local": 0}, "legitimate_medium": {"api": 0, "local": 0}, "legitimate_hard": {"api": 0, "local": 0},
+        }
 
         def _run_one(plan, kind):
             if add_script_run_ctx and _main_ctx:
@@ -776,14 +810,25 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None):
             t0 = time.time()
             try:
                 if kind == "learn":
+                    # The learning phase is inherently phishing-focused —
+                    # matches the real app (it teaches trainees to spot
+                    # phishing signs), so this stays as-is.
                     r = generate_email(role_key, 0, lang, diff)
+                    is_phishing = True
                 else:
-                    r = generate_assess_email(role_key, 0, True, lang, diff)
+                    # The assessment phase mixes phishing AND legitimate
+                    # content for the real trainee (that's the whole point
+                    # of testing comprehension) — alternate by cycle parity
+                    # for an even 25/25 split across the 50 cycles, so the
+                    # "Legitimate email AI reliance" boxes get real data
+                    # too instead of staying permanently empty.
+                    is_phishing = (plan["cycle"] % 2 == 1)
+                    r = generate_assess_email(role_key, 0, is_phishing, lang, diff)
                 _bucket = r.get("_gen_bucket") if isinstance(r, dict) else None
                 _source = r.get("_gen_source") if isinstance(r, dict) else None
-                return ("ok", r, time.time() - t0, diff, lang, _bucket, _source)
+                return ("ok", r, time.time() - t0, diff, lang, _bucket, _source, is_phishing)
             except Exception:
-                return ("error", None, 0.0, diff, lang, None, None)
+                return ("error", None, 0.0, diff, lang, None, None, True)
 
         _tasks = [(plan, kind) for plan in ROTATION_PLAN for kind in ("learn", "assess")]
         with _cf.ThreadPoolExecutor(max_workers=_COMPARISON_MAX_WORKERS) as _executor:
@@ -799,9 +844,9 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None):
                     except Exception:
                         pass
                 try:
-                    status, r, dt, diff, lang, bucket, source = _future.result()
+                    status, r, dt, diff, lang, bucket, source, is_phishing = _future.result()
                 except Exception:
-                    status, r, dt, diff, lang, bucket, source = "error", None, 0.0, None, None, None, None
+                    status, r, dt, diff, lang, bucket, source, is_phishing = "error", None, 0.0, None, None, None, None, True
                 calls += 1
                 # AI-vs-local tally + live callback — safe here: this whole
                 # loop body runs in the MAIN thread (as_completed yields
@@ -828,7 +873,12 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None):
                     # the rare result missing it entirely.
                     _sid = str(r.get("scenario_id") or "").strip()
                     hashes.add(_sid if _sid else hash(str(r.get("body", ""))[:250]))
-                    scores["difficulty_score"].append(check_difficulty_conformance(r, diff, True))
+                    # is_phishing must match what was ACTUALLY generated —
+                    # this used to be hardcoded True even for the legitimate
+                    # items now mixed into assess tasks, which would wrongly
+                    # grade a legitimate email against phishing-specific
+                    # criteria (generic greeting, urgency wording, etc.).
+                    scores["difficulty_score"].append(check_difficulty_conformance(r, diff, is_phishing))
                     scores["arabic_score"].append(check_arabic_quality(r, lang == "Arabic"))
                     scores["quality_score"].append(check_general_quality(r))
                     scores["medical_score"].append(check_medical_relevance(r))
@@ -3371,7 +3421,30 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
         # الثلاثة + إجمالي، لأن الاثنين الآن يُتتبّعان بنفس الدقة.
         # معزول بالكامل داخل try/except حتى لا يؤثر أي خطأ هنا على بقية اللوحة.
         try:
-            _full_src = st.session_state.get("ai_full_source_stats", {})
+            # SINGLE SOURCE OF TRUTH: read from the latest SAVED automated
+            # comparison run (summed across all 4 providers) instead of
+            # st.session_state["ai_full_source_stats"] — that session_state
+            # path is only reliably populated by the normal, single-
+            # threaded learning/assessment flow; during the automated
+            # comparison the actual generation happens inside worker
+            # threads, and _tag_source()'s dict-return path (aggregated in
+            # the main thread and saved into each run's "ai_usage" field)
+            # is the only path guaranteed correct there. Using the same
+            # saved-run data these boxes show is exactly what gets written
+            # to the "Auto Comparison" sheet, so there's one consistent
+            # number everywhere instead of two parallel, disagreeing ones.
+            _latest_run_for_usage = st.session_state.get("_last_auto_comparison")
+            if not _latest_run_for_usage:
+                _hist_for_usage = load_auto_comparisons()
+                _latest_run_for_usage = _hist_for_usage[-1] if _hist_for_usage else None
+
+            _full_src = {}
+            if _latest_run_for_usage:
+                for _prov_r in (_latest_run_for_usage.get("results") or {}).values():
+                    for _bk, _stats in (_prov_r.get("ai_usage") or {}).items():
+                        _acc = _full_src.setdefault(_bk, {"api": 0, "local": 0})
+                        _acc["api"] += (_stats or {}).get("api", 0)
+                        _acc["local"] += (_stats or {}).get("local", 0)
 
             def _usage_box(stats, label):
                 _api_n, _local_n = stats.get("api", 0), stats.get("local", 0)
@@ -3446,6 +3519,13 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 "legit",
                 {"easy": "legitimate_easy", "medium": "legitimate_medium", "hard": "legitimate_hard"},
             )
+            if _latest_run_for_usage:
+                st.markdown(
+                    f'<div dir="{_dir}" style="text-align:{_align};font-size:.72rem;color:#6B7280;margin-top:.3rem;">'
+                    + (f"من آخر تشغيلة محفوظة — {_latest_run_for_usage.get('timestamp','')}" if _is_ar
+                       else f"From the latest saved run — {_latest_run_for_usage.get('timestamp','')}")
+                    + '</div>', unsafe_allow_html=True
+                )
         except Exception:
             pass
 
@@ -3498,7 +3578,6 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             if _start_comparison:
                 _progress_bar = st.progress(0.0)
                 _status_box = st.empty()
-                _usage_live_box = st.empty()
                 _prov_labels_map = {
                     "groq": "🟠 Groq (LLaMA 3.3-70b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)",
                     "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)",
@@ -3513,36 +3592,14 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                          f"({step}/{total_steps})")
                     )
 
-                # Live running tally across the WHOLE run (all 4 providers,
-                # cumulative) — updates on every single completed generation
-                # via usage_callback, so this box visibly ticks up in real
-                # time instead of only appearing after everything finishes.
-                _live_usage = {"easy": {"api": 0, "local": 0}, "medium": {"api": 0, "local": 0}, "hard": {"api": 0, "local": 0}}
-
-                def _render_live_usage():
-                    _diff_labels_live = [("easy", "سهل" if _is_ar else "Easy"),
-                                          ("medium", "متوسط" if _is_ar else "Medium"),
-                                          ("hard", "صعب" if _is_ar else "Hard")]
-                    _cells = "".join(
-                        f'<div style="flex:1;text-align:center;padding:.4rem;border-inline-end:1px solid rgba(255,255,255,.1);">'
-                        f'<div style="font-size:.75rem;color:#9CA3AF;">{_lbl}</div>'
-                        f'<div style="font-size:.85rem;"><span style="color:#6EE7B7;">✅{_live_usage[_bk]["api"]}</span>'
-                        f' <span style="color:#FCA5A5;">📋{_live_usage[_bk]["local"]}</span></div></div>'
-                        for _bk, _lbl in _diff_labels_live
-                    )
-                    _usage_live_box.markdown(
-                        f'<div dir="{_dir}" style="display:flex;border:1px solid rgba(255,255,255,.12);'
-                        f'border-radius:10px;margin-top:.4rem;overflow:hidden;">{_cells}</div>',
-                        unsafe_allow_html=True,
-                    )
-
-                def _on_usage(prov, bucket, used_api):
-                    if bucket in _live_usage:
-                        _live_usage[bucket]["api" if used_api else "local"] += 1
-                        _render_live_usage()
-
+                # NOTE: AI-vs-local usage is intentionally NOT shown live
+                # here — it lives in ONE place only: the "Phishing/
+                # Legitimate email AI reliance" boxes higher up on this
+                # page, which read from the latest SAVED run once this
+                # finishes. A second live-updating display here would just
+                # be the same numbers duplicated in two places at once.
                 _t_start = time.time()
-                _comparison_results = run_full_auto_comparison(progress_callback=_on_progress, usage_callback=_on_usage)
+                _comparison_results = run_full_auto_comparison(progress_callback=_on_progress)
                 _elapsed_min = round((time.time() - _t_start) / 60, 1)
                 _progress_bar.progress(1.0)
                 _status_box.empty()
