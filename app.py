@@ -107,6 +107,11 @@ import re
 import time
 import threading
 import concurrent.futures as _cf
+try:
+    from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+except Exception:
+    add_script_run_ctx = None
+    get_script_run_ctx = None
 import html as html_lib
 import random
 import urllib.parse
@@ -258,10 +263,8 @@ def save_metrics_file(metrics_dict):
 #        type = "service_account"
 #        ... (every field from the downloaded JSON key, as TOML)
 #   5. Add "gspread" and "google-auth" to requirements.txt.
-# That's it — every future "Save Ratings" / metrics update will
-# also land in the Sheet automatically, with three tabs:
-#   - "Cycle Ratings" : one row per manually-rated cycle
-#   - "Auto Metrics"  : one row per periodic metrics snapshot
+# That's it — the automated comparison saves permanently to a single
+# "Auto Comparison" tab in the Sheet automatically.
 # =============================================================
 _GSHEET_CLIENT_CACHE = {"client": None, "tried": False}
 
@@ -325,41 +328,6 @@ def _get_or_create_worksheet(sheet, tab_name, headers):
     except Exception:
         pass
     return ws
-
-
-def push_metrics_snapshot_to_gsheet(provider, m):
-    """Append one timestamped snapshot row per provider to the
-    'Auto Metrics' tab, using the SAME raw shape _record_metric keeps
-    in st.session_state['metrics'][provider] (speed list, json_ok/
-    json_fail counts, errors, calls, hashes) — summarized here into
-    the same percentages shown on the Score Card."""
-    client = _get_gsheet_client()
-    sheet_id = _get_gsheet_id()
-    if not client or not sheet_id:
-        return
-    try:
-        sheet = client.open_by_key(sheet_id)
-        headers = ["timestamp", "provider", "calls", "avg_speed_s",
-                   "json_success_rate_pct", "error_rate_pct", "unique_responses"]
-        ws = _get_or_create_worksheet(sheet, "Auto Metrics", headers)
-        m = m or {}
-        speeds = m.get("speed") or []
-        avg_speed = round(sum(speeds) / len(speeds), 2) if speeds else ""
-        json_total = (m.get("json_ok", 0) + m.get("json_fail", 0))
-        json_rate = round(100 * m.get("json_ok", 0) / json_total, 1) if json_total else ""
-        calls = m.get("calls", 0)
-        err_rate = round(100 * m.get("errors", 0) / calls, 1) if calls else ""
-        unique = len(m.get("hashes") or [])
-        ws.append_row([
-            __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-            provider, calls, avg_speed, json_rate, err_rate, unique,
-        ], value_input_option="USER_ENTERED")
-    except Exception:
-        pass
-
-        latest = {}
-    st.session_state["_gsheet_auto_metrics_cache"] = {"ts": now, "latest": latest}
-    return latest
 
 
 # =============================================================
@@ -751,6 +719,13 @@ def run_full_auto_comparison(progress_callback=None):
     total_steps = len(_COMPARISON_PROVIDERS) * len(ROTATION_PLAN) * 2
     step_state = {"n": 0}
     step_lock = threading.Lock()
+    # Captured ONCE in the main thread — this is the object add_script_run_ctx
+    # attaches to each worker thread below, giving that thread correct access
+    # to st.session_state (which provider is active, AI-usage tracking, etc.)
+    # instead of it silently reading stale/default values or failing quietly.
+    # This is Streamlit's own documented pattern for ThreadPoolExecutor work
+    # that needs session_state: https://docs.streamlit.io/develop/concepts/design/multithreading
+    _main_ctx = get_script_run_ctx() if get_script_run_ctx else None
 
     for prov in _COMPARISON_PROVIDERS:
         st.session_state["ai_provider"] = prov
@@ -758,6 +733,11 @@ def run_full_auto_comparison(progress_callback=None):
         speeds = []; json_ok = 0; json_fail = 0; errors = 0; calls = 0; hashes = set()
 
         def _run_one(plan, kind):
+            if add_script_run_ctx and _main_ctx:
+                try:
+                    add_script_run_ctx(threading.current_thread(), _main_ctx)
+                except Exception:
+                    pass
             role_key = _ROTATION_ROLE_KEY.get((plan["role_en"], plan["language"]), "Clinical")
             diff = plan["difficulty"]; lang = plan["language"]
             t0 = time.time()
@@ -1487,10 +1467,6 @@ def _record_metric(provider, speed_sec, json_success, content_hash=None, is_erro
     if is_error:
         m["errors"] += 1
         save_metrics_file(st.session_state["metrics"])
-        try:
-            push_metrics_snapshot_to_gsheet(provider, m)
-        except Exception:
-            pass
         return
     m["speed"].append(round(speed_sec, 2))
     if json_success:
@@ -1500,10 +1476,6 @@ def _record_metric(provider, speed_sec, json_success, content_hash=None, is_erro
     if content_hash and content_hash not in m["hashes"]:
         m["hashes"].append(content_hash)
     save_metrics_file(st.session_state["metrics"])
-    try:
-        push_metrics_snapshot_to_gsheet(provider, m)
-    except Exception:
-        pass
 
 def call_ai(prompt, max_tokens=1600):
     import time
@@ -3593,6 +3565,61 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 _render_comparison_table(_last, _is_ar)
 
             _history = load_auto_comparisons()
+
+            # ── AGGREGATE SUMMARY across ALL saved runs ──
+            # Answers "which provider wins most often overall" automatically
+            # instead of requiring the researcher to eyeball every individual
+            # run and tally it by hand — the exact pain point that prompted
+            # this feature.
+            if len(_history) >= 1:
+                _prov_labels_full = {
+                    "groq": "🟠 Groq", "anthropic": "🟣 Claude",
+                    "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini",
+                }
+                _win_counts = {p: 0 for p in _COMPARISON_PROVIDERS}
+                _score_sums = {p: [] for p in _COMPARISON_PROVIDERS}
+                _counted_runs = 0
+                for _rec in _history:
+                    _res = _rec.get("results", {})
+                    _scored = {p: compute_comparison_weighted_score(_res.get(p, {})) for p in _COMPARISON_PROVIDERS}
+                    _valid = {p: s for p, s in _scored.items() if s is not None}
+                    if not _valid:
+                        continue
+                    _counted_runs += 1
+                    _winner = max(_valid, key=_valid.get)
+                    _win_counts[_winner] += 1
+                    for p, s in _valid.items():
+                        _score_sums[p].append(s)
+
+                if _counted_runs > 0:
+                    st.markdown(
+                        f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1.05rem;margin:.8rem 0 .5rem;">'
+                        + (f"📊 ملخص كل التشغيلات ({_counted_runs} تشغيلة محفوظة)" if _is_ar
+                           else f"📊 Summary across all runs ({_counted_runs} saved runs)")
+                        + '</div>', unsafe_allow_html=True
+                    )
+                    _overall_winner = max(_win_counts, key=_win_counts.get)
+                    _sum_cols = st.columns(4)
+                    for _ci, _p in enumerate(_COMPARISON_PROVIDERS):
+                        _wins = _win_counts[_p]
+                        _pct = round(100 * _wins / _counted_runs) if _counted_runs else 0
+                        _avg_s = round(sum(_score_sums[_p]) / len(_score_sums[_p]), 1) if _score_sums[_p] else None
+                        _is_top = (_p == _overall_winner and _wins > 0)
+                        _bg = "background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.5);" if _is_top else "border-color:rgba(255,255,255,.12);"
+                        with _sum_cols[_ci]:
+                            st.markdown(
+                                f'<div style="border:1px solid transparent;{_bg}border-radius:12px;padding:.7rem .6rem;text-align:center;">'
+                                f'<div style="font-weight:800;font-size:.85rem;color:#E2E8F0;margin-bottom:.3rem;">{_prov_labels_full[_p]}{" 🏆" if _is_top else ""}</div>'
+                                f'<div style="font-size:1.4rem;font-weight:900;color:#93C5FD;">{_wins}/{_counted_runs}</div>'
+                                f'<div style="font-size:.75rem;color:#9CA3AF;margin-top:.2rem;">'
+                                + (f"فاز {_pct}% من التشغيلات" if _is_ar else f"won {_pct}% of runs")
+                                + '</div>'
+                                + (f'<div style="font-size:.72rem;color:#6EE7B7;margin-top:.25rem;">'
+                                   + (f"متوسط الدرجة: {_avg_s}" if _is_ar else f"avg score: {_avg_s}") + '</div>' if _avg_s is not None else '')
+                                + '</div>', unsafe_allow_html=True
+                            )
+                    st.markdown('<div style="height:.9rem"></div>', unsafe_allow_html=True)
+
             if len(_history) > 1:
                 with st.expander(("📜 عرض المقارنات السابقة (" + str(len(_history) - 1) + ")") if _is_ar
                                   else f"📜 View past comparisons ({len(_history)-1})"):
