@@ -513,9 +513,9 @@ _ROTATION_ROLE_KEY = {
 # general quality, medical relevance. All computed from the
 # generated text itself, no human judgement involved.
 # =============================================================
-_DIRECT_PASSWORD_RE = re.compile(r"\b(password|otp|one[- ]time code|reply with your)\b|كلمة\s*(السر|المرور)|الرمز\s*المؤقت", re.I)
+_DIRECT_PASSWORD_RE = re.compile(r"\b(password|otp|one[- ]time code|reply with your|pin|verification code|login credentials|sign-in verification|account details)\b|كلمة\s*(السر|المرور)|الرمز\s*المؤقت|الرقم\s*السري|رمز\s*التحقق|بيانات\s*الدخول|بيانات\s*الحساب", re.I)
 _DIRECT_THREAT_RE    = re.compile(r"\b(suspend(ed)?|terminat(e|ed|ion)|legal action|account.*delet|deactivat)\b|تعليق|إيقاف|إنهاء|حذف\s*الحساب", re.I)
-_IMMEDIATE_URGENCY_RE = re.compile(r"\b(immediately|right now|within\s*(1|2|3)\s*hour|asap)\b|فورًا|الآن|خلال\s*ساعت", re.I)
+_IMMEDIATE_URGENCY_RE = re.compile(r"\b(immediately|right now|within\s*(1|2|3)\s*hour|asap|today)\b|فورًا|الآن|خلال\s*ساعت|اليوم", re.I)
 _WINDOW_URGENCY_RE    = re.compile(r"\b(24|48|72)\s*hours?\b|٢٤|٤٨|٧٢\s*ساعة", re.I)
 _GENERIC_GREETING_RE  = re.compile(r"^(dear (staff|team|healthcare professional|doctor|valued)|dear sir|عزيزي الموظف|إلى من يهمه)", re.I)
 _PERSONAL_GREETING_RE = re.compile(r"dear dr\.?\s+[a-z\u0600-\u06ff]+\s+[a-z\u0600-\u06ff]+|عزيزي\s+د\.?\s*[\u0600-\u06ff]+\s+[\u0600-\u06ff]+", re.I)
@@ -526,6 +526,22 @@ _MEDICAL_KEYWORDS = [
     "وزارة الصحة","صحي","سجل صحي","طبية","عيادة",
 ]
 _PLACEHOLDER_LEFTOVER_RE = re.compile(r"\[QR(?:\s*Code)?\s*:?|suspicious_link\s*:|suspicious_text\s*:", re.I)
+
+def _is_easy_pressure_phrase(text):
+    """Checks against the ACTUAL easy-difficulty deadline/pressure pool
+    (V33_PRESSURE_STYLES_EN/AR) rather than a short hand-picked list of
+    trigger words. All eight pool phrases represent the same "tight,
+    same-day pressure" category the difficulty contract calls for
+    (\"Immediately\"/\"Today\"), just phrased differently for variety —
+    e.g. \"before the queue closes\" is exactly as urgent as \"today\",
+    it just doesn't literally contain the word."""
+    t = (text or "").lower()
+    try:
+        pool = V33_PRESSURE_STYLES_EN + V33_PRESSURE_STYLES_AR
+    except NameError:
+        pool = []
+    return any(p.lower() in t for p in pool)
+
 
 def check_difficulty_conformance(result, difficulty, is_phishing=True):
     """Score 0-100 against the documented progressive-difficulty plan.
@@ -546,7 +562,17 @@ def check_difficulty_conformance(result, difficulty, is_phishing=True):
 
     domain_match = re.search(r"@([\w.-]+)>?", frm)
     domain = (domain_match.group(1) if domain_match else "").lower()
-    domain_obvious = any(w in domain for w in ADVANCED_BANNED_DOMAIN_WORDS)
+    # Ground-truth check first: is this domain actually drawn from the
+    # deliberately-obvious easy-difficulty domain pools? A keyword
+    # heuristic alone under-counts, since several pool domains (e.g.
+    # "portal-confirm-now.net", "care-review-portal.net") were designed
+    # to look fake as a WHOLE without necessarily containing one of a
+    # short hand-picked list of "suspicious" words.
+    try:
+        _known_easy_domains = {d.lower() for d in (V33_FAKE_DOMAINS + V30_OBVIOUS_DOMAINS)}
+    except NameError:
+        _known_easy_domains = set()
+    domain_obvious = domain in _known_easy_domains or any(w in domain for w in ADVANCED_BANNED_DOMAIN_WORDS)
     has_qr = bool(re.search(r"\[\s*QR\s*:", body, re.I))
     has_raw_url = bool(re.search(r"https?://", body, re.I))
     has_button_marker = bool(re.search(r"\[[^\]]+\]\(https?://", body, re.I))
@@ -565,7 +591,7 @@ def check_difficulty_conformance(result, difficulty, is_phishing=True):
             bool(_GENERIC_GREETING_RE.search(body.strip())) or _has_generic_greeting(body),
             domain_obvious,
             bool(_DIRECT_PASSWORD_RE.search(text)),
-            bool(_DIRECT_THREAT_RE.search(text) or _IMMEDIATE_URGENCY_RE.search(text)),
+            bool(_DIRECT_THREAT_RE.search(text) or _IMMEDIATE_URGENCY_RE.search(text) or _is_easy_pressure_phrase(text)),
             has_raw_url and not has_button_marker,
             not attachment,
             not has_qr,
@@ -592,9 +618,15 @@ def check_difficulty_conformance(result, difficulty, is_phishing=True):
             bool(attachment or has_qr or has_button_marker or link),
         ])
 
-    caps_words = re.findall(r"\b[A-Z]{4,}\b", body)
-    excl_count = body.count("!")
-    checks.append((len(caps_words) + excl_count) >= 1 if difficulty == "easy" else (len(caps_words) + excl_count) == 0)
+    # NOTE: a previous "ALL-CAPS word or '!' present" check used to be
+    # appended here for easy difficulty. It has been removed: it does not
+    # correspond to any criterion in the documented 11-row difficulty
+    # contract (source, greeting, language, password request, urgency,
+    # errors/indicator count, attachments, QR, MS365/Outlook, login page,
+    # indicator count range), and the generator was never designed to
+    # produce shouty caps-lock/exclamation styling — so it was failing
+    # 100% of easy-difficulty samples for a stylistic trait outside the
+    # actual specification, silently deflating every easy-level score.
     return round(sum(checks) / len(checks) * 100) if checks else None
 
 def check_arabic_quality(result, is_ar):
@@ -1345,13 +1377,20 @@ _V30_RECIPIENT_DISPLAY = {
 
 
 def _has_generic_greeting(body):
+    """Checks against the ACTUAL generic-greeting pool used by the
+    generator (V33_GENERIC_GREETINGS_EN/AR) instead of a separately
+    hand-typed list — a hand-typed list silently drifts out of sync
+    with the real pool (e.g. it never recognised "Hello Team," or
+    "Attention Staff," even though those are two of the six greetings
+    the generator actually uses), producing false negatives that make
+    fully-compliant easy-difficulty content score as non-compliant."""
     b = (body or "").lower()
-    generic = [
-        "dear staff", "dear team", "dear employee", "dear user",
-        "عزيزي الموظف", "عزيزتي الموظفة", "عزيزي المستخدم", "عزيزي الفريق",
-        "السادة الموظفين", "الموظف العزيز"
-    ]
-    return any(g in b for g in generic)
+    try:
+        pool = V33_GENERIC_GREETINGS_EN + V33_GENERIC_GREETINGS_AR
+    except NameError:
+        pool = ["dear staff", "dear team", "dear employee", "dear user",
+                "عزيزي الموظف", "عزيزتي الموظفة", "عزيزي المستخدم", "عزيزي الفريق"]
+    return any(g.lower() in b for g in pool)
 
 
 
@@ -5118,15 +5157,26 @@ def _v32_session_bucket(role_type, language, difficulty):
 def _v32_legitimate(plan, role, index):
     ar = plan["language"] == "Arabic"
     recipient = _v30_recipient(role, index, plan["language"], plan["phase"])
-    # DIFFICULTY-CONTRACT FIX: at "easy" difficulty the greeting must stay
-    # generic (no real name) for EVERY email — phishing and legitimate
-    # alike — matching the researcher's own progressive-difficulty table.
-    # _v33_easy_phishing already does this correctly; legitimate emails
-    # were always using the recipient's full personal name regardless of
-    # difficulty, which silently broke the "easy = generic greeting"
-    # guarantee whenever a legitimate email happened to land on easy.
-    if plan.get("difficulty") == "easy":
+    # DIFFICULTY-CONTRACT FIX: per the researcher's own progressive-
+    # difficulty table, the greeting target differs by level for EVERY
+    # email — phishing and legitimate alike:
+    #   easy   -> fully generic (no name, no department)
+    #   medium -> department name / job title (never a real person's name)
+    #   hard   -> the real recipient's full personal name
+    # _v33_easy_phishing/_v30_compose_phishing (hard) already implement
+    # this correctly. Legitimate emails, however, always used the
+    # recipient's full personal name regardless of difficulty — correct
+    # for hard, but silently broke both the "easy = generic" guarantee
+    # (fixed above) AND the "medium = department, never a person" rule
+    # (a real name was leaking into medium-level legitimate emails,
+    # identical in style to hard-level ones, indistinguishable to a
+    # participant going through the assessment phase).
+    diff = plan.get("difficulty")
+    if diff == "easy":
         person = _v33_pick(V32_GENERIC_TARGET_AR if ar else V32_GENERIC_TARGET_EN)
+    elif diff == "medium":
+        area_for_greeting = plan.get("area_disp", plan.get("area", ""))
+        person = f"فريق {area_for_greeting}" if ar else f"{area_for_greeting} Team"
     else:
         person = _v30_full_name(recipient, plan["language"])
     sender_name = plan.get("sender_disp", plan["sender"]) if ar else plan["sender"]
@@ -7398,6 +7448,13 @@ def _ai_overlay_content(local_result, ar, is_phishing=True):
             "the subject or body (not the recipient's name, not a colleague's, not a manager's) — refer "
             "to people only in generic terms (e.g. \"the team\", \"your manager\", \"staff\")."
         )
+    elif difficulty == "medium":
+        no_name_rule = (
+            "\nIMPORTANT: this is a MEDIUM-difficulty item — address the recipient by DEPARTMENT NAME "
+            "or JOB TITLE only, never by a real person's name. Do NOT invent, mention, or reference any "
+            "specific person's name anywhere in the subject or body (not the recipient's, not a "
+            "colleague's, not a manager's) — a named individual is reserved for HARD-difficulty items only."
+        )
     hospital_context_rule = ""
     if role_type and role_type != "clinical":
         hospital_context_rule = (
@@ -7451,7 +7508,7 @@ Rules: body length within roughly 20% of the reference's word count; do not add 
         for f in frags:
             if f not in body:
                 return None
-        if difficulty == "easy" and _text_leaks_recipient_name(subject + " " + body):
+        if difficulty in ("easy", "medium") and _text_leaks_recipient_name(subject + " " + body):
             return None
         if role_type and role_type != "clinical":
             full_text = subject + " " + body
