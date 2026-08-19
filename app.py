@@ -878,10 +878,32 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None):
                     # items now mixed into assess tasks, which would wrongly
                     # grade a legitimate email against phishing-specific
                     # criteria (generic greeting, urgency wording, etc.).
-                    scores["difficulty_score"].append(check_difficulty_conformance(r, diff, is_phishing))
-                    scores["arabic_score"].append(check_arabic_quality(r, lang == "Arabic"))
-                    scores["quality_score"].append(check_general_quality(r))
-                    scores["medical_score"].append(check_medical_relevance(r))
+                    # Guarded individually: a scoring function crashing on
+                    # one unexpected shape (out of 400 generations) must
+                    # never take down the entire run and lose everything —
+                    # it used to be able to, since nothing here was
+                    # protected once execution left _run_one's own
+                    # try/except.
+                    try:
+                        scores["difficulty_score"].append(check_difficulty_conformance(r, diff, is_phishing))
+                    except Exception as e:
+                        try: _store_debug("score_difficulty", str(e))
+                        except Exception: pass
+                    try:
+                        scores["arabic_score"].append(check_arabic_quality(r, lang == "Arabic"))
+                    except Exception as e:
+                        try: _store_debug("score_arabic", str(e))
+                        except Exception: pass
+                    try:
+                        scores["quality_score"].append(check_general_quality(r))
+                    except Exception as e:
+                        try: _store_debug("score_quality", str(e))
+                        except Exception: pass
+                    try:
+                        scores["medical_score"].append(check_medical_relevance(r))
+                    except Exception as e:
+                        try: _store_debug("score_medical", str(e))
+                        except Exception: pass
                 elif status == "ok":
                     json_fail += 1
                 else:
@@ -3598,23 +3620,39 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 # page, which read from the latest SAVED run once this
                 # finishes. A second live-updating display here would just
                 # be the same numbers duplicated in two places at once.
-                _t_start = time.time()
-                _comparison_results = run_full_auto_comparison(progress_callback=_on_progress)
-                _elapsed_min = round((time.time() - _t_start) / 60, 1)
-                _progress_bar.progress(1.0)
-                _status_box.empty()
+                #
+                # This whole block is now guarded top-to-bottom: previously,
+                # any single unexpected exception ANYWHERE in this 400-
+                # generation run (outside the per-task try/except already
+                # inside run_full_auto_comparison) would crash the entire
+                # Streamlit script before ever reaching save_auto_comparison
+                # — losing the whole run silently and leaving "Past runs"
+                # stuck at its old count, with no error shown to explain why.
+                try:
+                    _t_start = time.time()
+                    _comparison_results = run_full_auto_comparison(progress_callback=_on_progress)
+                    _elapsed_min = round((time.time() - _t_start) / 60, 1)
+                    _progress_bar.progress(1.0)
+                    _status_box.empty()
 
-                _record = {
-                    "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-                    "elapsed_minutes": _elapsed_min,
-                    "results": _comparison_results,
-                }
-                save_auto_comparison(_record)
-                st.session_state["_last_auto_comparison"] = _record
-                st.success(
-                    (f"✅ خلصت المقارنة ({_elapsed_min} دقيقة) — النتائج محفوظة دائمًا." if _is_ar
-                     else f"✅ Comparison finished ({_elapsed_min} min) — results saved permanently.")
-                )
+                    _record = {
+                        "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                        "elapsed_minutes": _elapsed_min,
+                        "results": _comparison_results,
+                    }
+                    save_auto_comparison(_record)
+                    st.session_state["_last_auto_comparison"] = _record
+                    st.success(
+                        (f"✅ خلصت المقارنة ({_elapsed_min} دقيقة) — النتائج محفوظة دائمًا." if _is_ar
+                         else f"✅ Comparison finished ({_elapsed_min} min) — results saved permanently.")
+                    )
+                except Exception as _run_err:
+                    try: _store_debug("run_full_auto_comparison", str(_run_err))
+                    except Exception: pass
+                    st.error(
+                        ("❌ صار خطأ غير متوقع أثناء المقارنة، ولم تُحفظ نتيجتها — راجعي Debug Log للتفاصيل." if _is_ar
+                         else "❌ An unexpected error interrupted the comparison, and it was not saved — check Debug Log for details.")
+                    )
 
             _last = st.session_state.get("_last_auto_comparison")
             if not _last and load_auto_comparisons():
@@ -7077,7 +7115,9 @@ GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT N
     try:
         data = call_ai(instruction, max_tokens=900)
         if not isinstance(data, dict) or "error" in data:
-            try: _store_debug("v40_api_copy", f"provider error: {str(data)[:300]}")
+            try:
+                _prov_now = st.session_state.get("ai_provider", "?")
+                _store_debug("v40_api_copy", f"provider={_prov_now} | raw={str(data)[:400]!r}")
             except Exception: pass
             return None
         text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "")
@@ -7118,7 +7158,9 @@ GREETING RULE (strict, medium difficulty): address the recipient by DEPARTMENT N
                 recent_list.append(opening[:140]); recent_list[:] = recent_list[-10:]
                 return subject,body
     except Exception as e:
-        try: _store_debug("v40_api_copy",str(e))
+        try:
+            _prov_now = st.session_state.get("ai_provider", "?")
+            _store_debug("v40_api_copy", f"provider={_prov_now} | {type(e).__name__}: {e!r}")
         except Exception: pass
     return None
 
@@ -7714,7 +7756,9 @@ Rules: body length within roughly 20% of the reference's word count; do not add 
                 new_result["indicators"] = new_indicators
         return new_result
     except Exception as e:
-        try: _store_debug("ai_overlay_content", str(e))
+        try:
+            _prov_now = st.session_state.get("ai_provider", "?")
+            _store_debug("ai_overlay_content", f"provider={_prov_now} | {type(e).__name__}: {e!r}")
         except Exception: pass
         return None
 
