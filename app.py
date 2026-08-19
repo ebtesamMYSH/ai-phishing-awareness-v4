@@ -345,7 +345,10 @@ def _get_or_create_worksheet(sheet, tab_name, headers):
 # =============================================================
 def push_auto_comparison_to_gsheet(record):
     """Append one row per provider from a single automated-comparison
-    run to the 'Auto Comparison' tab."""
+    run to the 'Auto Comparison' tab. Includes the AI-vs-local usage
+    tally (6 columns: api/local count per difficulty) so every saved
+    run keeps this breakdown permanently, not just for the current
+    session."""
     client = _get_gsheet_client()
     sheet_id = _get_gsheet_id()
     if not client or not sheet_id:
@@ -354,13 +357,20 @@ def push_auto_comparison_to_gsheet(record):
         sheet = client.open_by_key(sheet_id)
         headers = ["timestamp", "elapsed_minutes", "provider",
                    "difficulty_score", "arabic_score", "quality_score", "medical_score",
-                   "avg_speed", "json_rate", "error_rate", "diversity", "diversity_ratio", "n_calls"]
+                   "avg_speed", "json_rate", "error_rate", "diversity", "diversity_ratio", "n_calls",
+                   "easy_ai", "easy_local", "medium_ai", "medium_local", "hard_ai", "hard_local"]
         ws = _get_or_create_worksheet(sheet, "Auto Comparison", headers)
         ts = record.get("timestamp", "")
         elapsed = record.get("elapsed_minutes", "")
         for prov, m in (record.get("results") or {}).items():
             m = m or {}
-            ws.append_row([ts, elapsed, prov] + [m.get(h, "") for h in headers[3:]],
+            usage = m.get("ai_usage") or {}
+            usage_vals = []
+            for bk in ("easy", "medium", "hard"):
+                bk_stats = usage.get(bk) or {}
+                usage_vals.append(bk_stats.get("api", ""))
+                usage_vals.append(bk_stats.get("local", ""))
+            ws.append_row([ts, elapsed, prov] + [m.get(h, "") for h in headers[3:13]] + usage_vals,
                           value_input_option="USER_ENTERED")
     except Exception:
         pass
@@ -383,6 +393,7 @@ def pull_auto_comparisons_from_gsheet():
     grouped = {}
     numeric_fields = ["difficulty_score", "arabic_score", "quality_score", "medical_score",
                        "avg_speed", "json_rate", "error_rate", "diversity_ratio", "n_calls"]
+    usage_fields = ["easy_ai", "easy_local", "medium_ai", "medium_local", "hard_ai", "hard_local"]
     try:
         sheet = client.open_by_key(sheet_id)
         ws = sheet.worksheet("Auto Comparison")
@@ -405,6 +416,16 @@ def pull_auto_comparisons_from_gsheet():
                     except (ValueError, TypeError):
                         m[f] = None
             m["diversity"] = rec.get("diversity", "")
+            _usage = {}
+            for _bk in ("easy", "medium", "hard"):
+                def _uv(field):
+                    v = rec.get(field)
+                    try:
+                        return int(float(v)) if v not in ("", None) else 0
+                    except (ValueError, TypeError):
+                        return 0
+                _usage[_bk] = {"api": _uv(f"{_bk}_ai"), "local": _uv(f"{_bk}_local")}
+            m["ai_usage"] = _usage
             entry["results"][prov] = m
     except Exception:
         grouped = {}
@@ -705,15 +726,19 @@ _COMPARISON_WEIGHTS_NORM = {k: v / _w_sum for k, v in _COMPARISON_WEIGHTS_NORM.i
 _COMPARISON_MAX_WORKERS = 6  # concurrent calls within one provider's turn
 
 
-def run_full_auto_comparison(progress_callback=None):
+def run_full_auto_comparison(progress_callback=None, usage_callback=None):
     """Runs all 4 providers through the 50-cycle ROTATION_PLAN and returns
     {provider: {metric: value}}. `progress_callback(provider, cycle_no,
     step, total_steps)` is called as each generation completes if
-    provided, so the caller can show live progress. Never raises: any
-    per-email failure is caught and counted toward that provider's
-    error_rate instead of stopping the run. Within each provider's turn,
-    generations run concurrently (see module note above) for a real
-    speedup; providers themselves stay sequential for correctness."""
+    provided, so the caller can show live progress. `usage_callback(
+    provider, bucket, used_api)` is called the same way, once per
+    completed generation, so the caller can update a live AI-vs-local
+    tally as the run progresses — bucket is "easy"/"medium"/"hard" for
+    phishing content. Never raises: any per-email failure is caught and
+    counted toward that provider's error_rate instead of stopping the
+    run. Within each provider's turn, generations run concurrently (see
+    module note above) for a real speedup; providers themselves stay
+    sequential for correctness."""
     results = {}
     original_provider = st.session_state.get("ai_provider")
     total_steps = len(_COMPARISON_PROVIDERS) * len(ROTATION_PLAN) * 2
@@ -731,6 +756,14 @@ def run_full_auto_comparison(progress_callback=None):
         st.session_state["ai_provider"] = prov
         scores = {"difficulty_score": [], "arabic_score": [], "quality_score": [], "medical_score": []}
         speeds = []; json_ok = 0; json_fail = 0; errors = 0; calls = 0; hashes = set()
+        # Per-difficulty AI-vs-local tally for THIS provider's turn. Built
+        # up here in the main thread only (never inside a worker thread),
+        # from the "_gen_bucket"/"_gen_source" tags _tag_source() writes
+        # onto each returned result dict — a dict crossing back from a
+        # ThreadPoolExecutor future is always safe to read; a direct
+        # st.session_state write made *inside* the worker thread was the
+        # actual problem this replaces.
+        usage_tally = {"easy": {"api": 0, "local": 0}, "medium": {"api": 0, "local": 0}, "hard": {"api": 0, "local": 0}}
 
         def _run_one(plan, kind):
             if add_script_run_ctx and _main_ctx:
@@ -746,9 +779,11 @@ def run_full_auto_comparison(progress_callback=None):
                     r = generate_email(role_key, 0, lang, diff)
                 else:
                     r = generate_assess_email(role_key, 0, True, lang, diff)
-                return ("ok", r, time.time() - t0, diff, lang)
+                _bucket = r.get("_gen_bucket") if isinstance(r, dict) else None
+                _source = r.get("_gen_source") if isinstance(r, dict) else None
+                return ("ok", r, time.time() - t0, diff, lang, _bucket, _source)
             except Exception:
-                return ("error", None, 0.0, diff, lang)
+                return ("error", None, 0.0, diff, lang, None, None)
 
         _tasks = [(plan, kind) for plan in ROTATION_PLAN for kind in ("learn", "assess")]
         with _cf.ThreadPoolExecutor(max_workers=_COMPARISON_MAX_WORKERS) as _executor:
@@ -764,10 +799,21 @@ def run_full_auto_comparison(progress_callback=None):
                     except Exception:
                         pass
                 try:
-                    status, r, dt, diff, lang = _future.result()
+                    status, r, dt, diff, lang, bucket, source = _future.result()
                 except Exception:
-                    status, r, dt, diff, lang = "error", None, 0.0, None, None
+                    status, r, dt, diff, lang, bucket, source = "error", None, 0.0, None, None, None, None
                 calls += 1
+                # AI-vs-local tally + live callback — safe here: this whole
+                # loop body runs in the MAIN thread (as_completed yields
+                # control back to the thread that called it), never inside
+                # a worker.
+                if bucket in usage_tally and source in ("api", "local"):
+                    usage_tally[bucket][source] += 1
+                    if usage_callback:
+                        try:
+                            usage_callback(prov, bucket, source == "api")
+                        except Exception:
+                            pass
                 if status == "ok" and isinstance(r, dict) and str(r.get("body", "")).strip() and "error" not in r:
                     speeds.append(dt)
                     json_ok += 1
@@ -811,6 +857,7 @@ def run_full_auto_comparison(progress_callback=None):
             "diversity": f"{diversity_n}/{calls}",
             "diversity_ratio": round(diversity_n / calls * 100) if calls else None,
             "n_calls": calls,
+            "ai_usage": usage_tally,
         }
 
     st.session_state["ai_provider"] = original_provider
@@ -3451,6 +3498,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             if _start_comparison:
                 _progress_bar = st.progress(0.0)
                 _status_box = st.empty()
+                _usage_live_box = st.empty()
                 _prov_labels_map = {
                     "groq": "🟠 Groq (LLaMA 3.3-70b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)",
                     "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)",
@@ -3465,8 +3513,36 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                          f"({step}/{total_steps})")
                     )
 
+                # Live running tally across the WHOLE run (all 4 providers,
+                # cumulative) — updates on every single completed generation
+                # via usage_callback, so this box visibly ticks up in real
+                # time instead of only appearing after everything finishes.
+                _live_usage = {"easy": {"api": 0, "local": 0}, "medium": {"api": 0, "local": 0}, "hard": {"api": 0, "local": 0}}
+
+                def _render_live_usage():
+                    _diff_labels_live = [("easy", "سهل" if _is_ar else "Easy"),
+                                          ("medium", "متوسط" if _is_ar else "Medium"),
+                                          ("hard", "صعب" if _is_ar else "Hard")]
+                    _cells = "".join(
+                        f'<div style="flex:1;text-align:center;padding:.4rem;border-inline-end:1px solid rgba(255,255,255,.1);">'
+                        f'<div style="font-size:.75rem;color:#9CA3AF;">{_lbl}</div>'
+                        f'<div style="font-size:.85rem;"><span style="color:#6EE7B7;">✅{_live_usage[_bk]["api"]}</span>'
+                        f' <span style="color:#FCA5A5;">📋{_live_usage[_bk]["local"]}</span></div></div>'
+                        for _bk, _lbl in _diff_labels_live
+                    )
+                    _usage_live_box.markdown(
+                        f'<div dir="{_dir}" style="display:flex;border:1px solid rgba(255,255,255,.12);'
+                        f'border-radius:10px;margin-top:.4rem;overflow:hidden;">{_cells}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                def _on_usage(prov, bucket, used_api):
+                    if bucket in _live_usage:
+                        _live_usage[bucket]["api" if used_api else "local"] += 1
+                        _render_live_usage()
+
                 _t_start = time.time()
-                _comparison_results = run_full_auto_comparison(progress_callback=_on_progress)
+                _comparison_results = run_full_auto_comparison(progress_callback=_on_progress, usage_callback=_on_usage)
                 _elapsed_min = round((time.time() - _t_start) / 60, 1)
                 _progress_bar.progress(1.0)
                 _status_box.empty()
@@ -3978,13 +4054,17 @@ def _reposition_trailing_lone_link(body, link):
 # Override generators to apply the final normalization after each provider response.
 
 _DEBUG_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_log.json")
+_DEBUG_LOG_LOCK = threading.Lock()
 
 def _store_debug(stage, err):
     """Keep technical diagnostics out of the user-facing UI; persist them to
     disk (not just session_state) so the admin/debug panel still shows the
     real error even if the page was reloaded or the admin panel was opened
     in a fresh session — which was making the log look empty right when it
-    was needed most."""
+    was needed most. Guarded by a lock: this is called from multiple
+    concurrent worker threads during the automated comparison, and an
+    unlocked read-modify-write on the same file let two threads' writes
+    interleave and corrupt/garble each other's entries."""
     entry = {"stage": stage, "error": err, "ts": __import__("time").time()}
     try:
         log = st.session_state.setdefault("_debug_log", [])
@@ -3992,20 +4072,21 @@ def _store_debug(stage, err):
         st.session_state["_debug_log"] = log[-20:]
     except Exception:
         pass
-    try:
-        with open(_DEBUG_LOG_PATH, "r", encoding="utf-8") as f:
-            disk_log = json.load(f)
-        if not isinstance(disk_log, list):
+    with _DEBUG_LOG_LOCK:
+        try:
+            with open(_DEBUG_LOG_PATH, "r", encoding="utf-8") as f:
+                disk_log = json.load(f)
+            if not isinstance(disk_log, list):
+                disk_log = []
+        except Exception:
             disk_log = []
-    except Exception:
-        disk_log = []
-    disk_log.append(entry)
-    disk_log = disk_log[-20:]
-    try:
-        with open(_DEBUG_LOG_PATH, "w", encoding="utf-8") as f:
-            json.dump(disk_log, f, ensure_ascii=False, default=str)
-    except Exception:
-        pass
+        disk_log.append(entry)
+        disk_log = disk_log[-20:]
+        try:
+            with open(_DEBUG_LOG_PATH, "w", encoding="utf-8") as f:
+                json.dump(disk_log, f, ensure_ascii=False, default=str)
+        except Exception:
+            pass
 
 def _load_debug_log():
     try:
@@ -7581,6 +7662,24 @@ Rules: body length within roughly 20% of the reference's word count; do not add 
         return None
 
 
+def _tag_source(result, bucket, used_api):
+    """Records the AI-vs-local decision two ways: (1) the existing
+    session_state tracker (_track_ai_source), which works fine for the
+    normal single-threaded learning/assessment flow, and (2) a plain tag
+    written directly onto the result dict itself, which is what the
+    automated comparison's worker threads use instead — a dict return
+    value survives crossing a thread boundary safely, unlike a
+    st.session_state write made from inside that thread."""
+    try:
+        _track_ai_source(bucket, used_api)
+    except Exception:
+        pass
+    if isinstance(result, dict):
+        result["_gen_bucket"] = bucket
+        result["_gen_source"] = "api" if used_api else "local"
+    return result
+
+
 def _ai_full_easy(role, index, language, phase):
     ar = language == "Arabic"
     plan = _v33_plan(role, index, language, "easy", phase, True)
@@ -7589,12 +7688,10 @@ def _ai_full_easy(role, index, language, phase):
     if overlay:
         try:
             if _v33_validate(overlay, plan):
-                _track_ai_source("easy", True)
-                return overlay
+                return _tag_source(overlay, "easy", True)
         except Exception:
             pass
-    _track_ai_source("easy", False)
-    return local
+    return _tag_source(local, "easy", False)
 
 
 def _ai_full_medium(role, index, language, phase):
@@ -7604,12 +7701,10 @@ def _ai_full_medium(role, index, language, phase):
     if overlay:
         try:
             if _v40_validate(overlay):
-                _track_ai_source("medium", True)
-                return overlay
+                return _tag_source(overlay, "medium", True)
         except Exception:
             pass
-    _track_ai_source("medium", False)
-    return local
+    return _tag_source(local, "medium", False)
 
 
 def _ai_full_hard(role, index, language, phase):
@@ -7621,12 +7716,10 @@ def _ai_full_hard(role, index, language, phase):
         if overlay:
             try:
                 if _v31_validate(overlay, plan):
-                    _track_ai_source("hard", True)
-                    return overlay
+                    return _tag_source(overlay, "hard", True)
             except Exception:
                 pass
-    _track_ai_source("hard", False)
-    return local
+    return _tag_source(local, "hard", False)
 
 
 def _ai_full_legitimate(role, index, language, difficulty, phase):
@@ -7640,12 +7733,10 @@ def _ai_full_legitimate(role, index, language, difficulty, phase):
     if overlay:
         try:
             if _v33_validate(overlay, plan):
-                _track_ai_source(f"legitimate_{diff}", True)
-                return overlay
+                return _tag_source(overlay, f"legitimate_{diff}", True)
         except Exception:
             pass
-    _track_ai_source(f"legitimate_{diff}", False)
-    return local
+    return _tag_source(local, f"legitimate_{diff}", False)
 
 
 def generate_email_v42(role, index, language, difficulty="medium"):
