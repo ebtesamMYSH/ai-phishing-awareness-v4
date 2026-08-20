@@ -3384,6 +3384,41 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                             f'<div style="font-size:.75rem;color:#9CA3AF;margin-bottom:.3rem;">{pv["label"].split("—")[0].strip()}</div>'
                             f'<div style="font-size:.85rem;font-weight:700;color:white;">{dot} {preview}</div>'
                             f'</div>', unsafe_allow_html=True)
+                # Quick connection test — separate from "is a key present"
+                # above (🟢 there only means a key string exists, not that
+                # it actually works). This is what would have caught the
+                # Anthropic "credit balance too low" and OpenAI rate-limit
+                # issues in seconds instead of only surfacing after a full
+                # 50-cycle run: one tiny, fast real call straight to that
+                # provider (bypassing the retry wrapper on purpose — a
+                # quick check should fail fast, not sit through the same
+                # long backoff a real generation would).
+                if st.button(("🔌 اختبار الاتصال" if _is_ar else "🔌 Test connection"),
+                              key=f"adm_test_conn_{pk}", use_container_width=True, disabled=not has_key):
+                    _orig_provider = st.session_state.get("ai_provider")
+                    st.session_state["ai_provider"] = pk
+                    try:
+                        _t0 = time.time()
+                        _test_resp = _BASE_CALL_AI_FINAL("Reply with exactly: OK", max_tokens=10)
+                        _dt = round(time.time() - _t0, 1)
+                        if isinstance(_test_resp, dict) and "error" not in _test_resp:
+                            st.session_state[f"_conn_test_{pk}"] = {"ok": True, "detail": f"{_dt}s"}
+                        else:
+                            _err = _test_resp.get("error") if isinstance(_test_resp, dict) else _test_resp
+                            _msg = _err.get("message", str(_err)) if isinstance(_err, dict) else str(_err)
+                            st.session_state[f"_conn_test_{pk}"] = {"ok": False, "detail": _msg[:200]}
+                    except Exception as _e:
+                        st.session_state[f"_conn_test_{pk}"] = {"ok": False, "detail": str(_e)[:200]}
+                    finally:
+                        st.session_state["ai_provider"] = _orig_provider
+                _result = st.session_state.get(f"_conn_test_{pk}")
+                if _result:
+                    if _result["ok"]:
+                        st.markdown(f'<div style="font-size:.75rem;color:#6EE7B7;text-align:center;margin-top:.3rem;">✅ '
+                                     + ("متصل" if _is_ar else "Connected") + f' ({_result["detail"]})</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div dir="{_dir}" style="font-size:.72rem;color:#FCA5A5;text-align:center;margin-top:.3rem;word-break:break-word;">❌ '
+                                     + str(_result["detail"]) + '</div>', unsafe_allow_html=True)
 
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
 
