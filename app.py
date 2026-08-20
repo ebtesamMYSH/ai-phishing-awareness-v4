@@ -3475,7 +3475,15 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                     _pct_html = '<div style="font-size:.72rem;color:#6B7280;">' + ("لا بيانات" if _is_ar else "No data") + '</div>'
                 else:
                     _pct = round(100 * _api_n / _tot)
-                    _pct_html = f'<div style="font-size:1.3rem;font-weight:900;color:#93C5FD;">{_pct}%</div>'
+                    # Explicit "AI success rate" caption directly under the
+                    # number — the number alone (just "29%") was ambiguous:
+                    # is that 29% AI or 29% local? Spelling it out removes
+                    # any doubt at a glance.
+                    _pct_caption = ("نسبة نجاح AI الفعلي" if _is_ar else "AI success rate")
+                    _pct_html = (
+                        f'<div style="font-size:1.3rem;font-weight:900;color:#93C5FD;">{_pct}%</div>'
+                        f'<div style="font-size:.65rem;color:#6B7280;margin-top:-.1rem;">{_pct_caption}</div>'
+                    )
                 _ai_word = "AI" if not _is_ar else "ذكاء"
                 _local_word = "local" if not _is_ar else "محلي"
                 # Plain HTML table (not CSS grid/flex) for the icon|number|label
@@ -3838,7 +3846,21 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 st.rerun()
             for i, entry in enumerate(debug_log):
                 with st.expander(f"#{len(debug_log)-i} — {entry.get('stage','?')}"):
-                    st.json(entry.get("error"))
+                    # BUGFIX: this used to be st.json(entry.get("error")) —
+                    # st.json() expects JSON-serializable data and tries to
+                    # PARSE its input as JSON in the browser (client-side
+                    # JS). Every error message stored here is a plain
+                    # Python string (e.g. "provider=openai | ValueError:
+                    # ..."), which is never valid JSON syntax — so the
+                    # browser's own JSON parser failed on it every single
+                    # time and displayed ITS OWN parse error ("Unexpected
+                    # token 'p', \"provider e\"... is not valid JSON") in
+                    # place of the real message. This is the exact mystery
+                    # chased across several previous debugging rounds: the
+                    # underlying errors were being logged correctly all
+                    # along, only the display was ever broken. st.code()
+                    # renders the string as-is, no parsing involved.
+                    st.code(str(entry.get("error", "")), language=None)
 
 
 
