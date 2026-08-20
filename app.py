@@ -6,7 +6,7 @@
 #             phishing awareness training and assessment
 #             designed for Saudi healthcare employees.
 # Tech Stack: Python 3.9, Streamlit, Multi-Provider AI (Groq/Claude/OpenAI/Gemini)
-# AI Models : Groq LLaMA 3.3-70b | Claude claude-sonnet-4-6 | GPT-4o | Gemini 2.5 Flash
+# AI Models : Groq GPT-OSS-120b | Claude claude-sonnet-4-6 | GPT-4o | Gemini 2.5 Flash
 # Admin     : Hidden Admin Panel at /?admin=true (password protected)
 #             Compare 4 AI providers with 8-metric scoring system, either
 #             manually (one cycle at a time) or via the one-click
@@ -1629,7 +1629,15 @@ def call_ai(prompt, max_tokens=1600):
                     "Authorization": f"Bearer {get_secret('GROQ_API_KEY')}"
                 },
                 json={
-                    "model":       "llama-3.3-70b-versatile",
+                    # UPDATED 2026-08-20: Groq officially deprecated
+                    # llama-3.3-70b-versatile on 2026-08-16 (shutdown
+                    # confirmed complete as of this date — "Test connection"
+                    # in the admin panel started failing with "model does
+                    # not exist" right on schedule). Their own migration
+                    # guidance for this exact model recommends
+                    # openai/gpt-oss-120b for equivalent-or-better quality
+                    # with faster inference.
+                    "model":       "openai/gpt-oss-120b",
                     "max_tokens":  max_tokens,
                     "temperature": 0.85,
                     "messages":    [
@@ -2591,7 +2599,7 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
             st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size:.75rem;font-weight:800;color:#F59E0B;letter-spacing:.06em;margin-bottom:.5rem;direction:{dir_attr};">🔬 RESEARCHER MODE — AI Provider</div>', unsafe_allow_html=True)
             provider_options = {
-                "groq":      "🟠 Groq  (LLaMA 3.3-70b) — Baseline v3",
+                "groq":      "🟠 Groq (GPT-OSS-120b) — Baseline v3",
                 "openai":    "🟢 ChatGPT  (GPT-4o) — Most used globally",
                 "anthropic": "🟣 Claude  (claude-sonnet-4-6) — Best writing quality",
                 "gemini":    "🔵 Gemini  (2.5 Flash) — Fastest growing",
@@ -3322,7 +3330,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
 
     _persist_pk = st.session_state.get("ai_provider", load_persistent_provider("openai"))
     _persist_labels = {
-        "groq":      "🟠 Groq (LLaMA 3.3-70b)",
+        "groq":      "🟠 Groq (GPT-OSS-120b)",
         "anthropic": "🟣 Claude (claude-sonnet-4-6)",
         "openai":    "🟢 OpenAI (GPT-4o)",
         "gemini":    "🔵 Gemini (2.5 Flash)",
@@ -3342,7 +3350,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
 
         provider_info = {
-            "groq":      {"label": "🟠 Groq — LLaMA 3.3-70b",       "secret": "GROQ_API_KEY",      "color": "#F97316"},
+            "groq":      {"label": "🟠 Groq — GPT-OSS-120b",       "secret": "GROQ_API_KEY",      "color": "#F97316"},
             "anthropic": {"label": "🟣 Claude — claude-sonnet-4-6",  "secret": "ANTHROPIC_API_KEY", "color": "#A855F7"},
             "openai":    {"label": "🟢 OpenAI — GPT-4o",             "secret": "OPENAI_API_KEY",    "color": "#22C55E"},
             "gemini":    {"label": "🔵 Gemini — 2.5 Flash",          "secret": "GEMINI_API_KEY",    "color": "#3B82F6"},
@@ -3666,7 +3674,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 _progress_bar = st.progress(0.0)
                 _status_box = st.empty()
                 _prov_labels_map = {
-                    "groq": "🟠 Groq (LLaMA 3.3-70b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)",
+                    "groq": "🟠 Groq (GPT-OSS-120b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)",
                     "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)",
                 }
 
@@ -3767,7 +3775,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 scored = {p: compute_comparison_weighted_score(res.get(p, {})) for p in _COMPARISON_PROVIDERS}
                 valid_scores = {p: s for p, s in scored.items() if s is not None}
                 winner = max(valid_scores, key=valid_scores.get) if valid_scores else None
-                prov_labels = {"groq": "🟠 Groq (LLaMA 3.3-70b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)", "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)"}
+                prov_labels = {"groq": "🟠 Groq (GPT-OSS-120b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)", "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)"}
 
                 def _fmt(v, suffix=""):
                     return f"{v}{suffix}" if v is not None else "—"
