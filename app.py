@@ -754,7 +754,17 @@ _COMPARISON_WEIGHTS_NORM = {k: v for k, v in _COMPARISON_WEIGHTS.items() if k !=
 _w_sum = sum(_COMPARISON_WEIGHTS_NORM.values())
 _COMPARISON_WEIGHTS_NORM = {k: v / _w_sum for k, v in _COMPARISON_WEIGHTS_NORM.items()}
 
-_COMPARISON_MAX_WORKERS = 6  # concurrent calls within one provider's turn
+_COMPARISON_MAX_WORKERS = 3  # concurrent calls within one provider's turn
+# Lowered from 6: 6 simultaneous requests against the same provider was
+# routinely enough to blow through OpenAI's per-minute rate limit within
+# a single burst, observed directly as "Rate limit reached for gpt-4o..."
+# on nearly every call during a real run — which then unfairly forced
+# that provider onto the local fallback far more often than the others,
+# skewing every downstream score. Fewer concurrent calls means fewer
+# requests land in the same rate-limit window in the first place, working
+# together with the longer rate-limit-specific backoff in call_ai() above
+# (which handles whatever bursts still happen) rather than relying on
+# retries alone to fix a self-inflicted burst.
 
 
 def run_full_auto_comparison(progress_callback=None, usage_callback=None):
@@ -3404,6 +3414,18 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
     with tab2:
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
 
+        # If a comparison just finished (flag set right before the
+        # st.rerun() that brought us here), show the success message now —
+        # on THIS pass the boxes/counter below are already reading the
+        # fresh data, so the confirmation and the updated numbers appear
+        # together instead of the message showing before a stale render.
+        _just_saved = st.session_state.pop("_auto_comparison_just_saved", None)
+        if _just_saved is not None:
+            st.success(
+                (f"✅ خلصت المقارنة ({_just_saved} دقيقة) — النتائج محفوظة دائمًا، والأرقام تحت محدّثة الحين." if _is_ar
+                 else f"✅ Comparison finished ({_just_saved} min) — results saved permanently, numbers below are now up to date.")
+            )
+
         # ── نسخة Google Sheets الدائمة (منقولة من Provider Control) ──
         try:
             _gs_ok, _gs_msg = gsheet_setup_status()
@@ -3650,10 +3672,21 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                     }
                     save_auto_comparison(_record)
                     st.session_state["_last_auto_comparison"] = _record
-                    st.success(
-                        (f"✅ خلصت المقارنة ({_elapsed_min} دقيقة) — النتائج محفوظة دائمًا." if _is_ar
-                         else f"✅ Comparison finished ({_elapsed_min} min) — results saved permanently.")
-                    )
+                    # A plain st.success() here would only ever appear
+                    # AFTER the "AI reliance" boxes and "Past runs" counter
+                    # above have already finished rendering — Streamlit
+                    # draws the whole script top-to-bottom in one pass per
+                    # run, and this button's code sits BELOW those widgets
+                    # in page order. So every prior run looked "stuck": the
+                    # boxes/counter were correctly showing the state as of
+                    # the START of this script run, not the fresh save that
+                    # only just happened a few lines later in the SAME
+                    # pass. Recording a flag + forcing st.rerun() makes
+                    # Streamlit re-run the whole script immediately, so
+                    # this time the boxes/counter draw AFTER the new data
+                    # already exists on disk/sheet.
+                    st.session_state["_auto_comparison_just_saved"] = _elapsed_min
+                    st.rerun()
                 except Exception as _run_err:
                     try: _store_debug("run_full_auto_comparison", str(_run_err))
                     except Exception: pass
@@ -4251,6 +4284,18 @@ _PROVIDER_RETRYABLE_PATTERNS = re.compile(
     r"503|UNAVAILABLE|high demand|temporar|try again|rate limit|overloaded|timeout|timed out|deadline",
     re.I,
 )
+# Rate-limit errors specifically need a MUCH longer wait than a transient
+# network blip or a 503 — a "requests/tokens per minute" cap genuinely
+# takes real wall-clock time to clear, and won't recover in the ~1-2s the
+# generic retry backoff below allows. Observed directly during the
+# automated comparison: OpenAI hit "Rate limit reached for gpt-4o..."
+# on nearly every call in a burst (6 concurrent workers × 50 cycles is
+# enough to exceed a typical org's RPM/TPM tier), and the short generic
+# backoff meant the retry landed on the SAME still-exhausted window every
+# time — so it fell back to local on almost every single call, which then
+# unfairly deflated that provider's "AI success rate" relative to
+# providers with a more generous or unthrottled limit.
+_RATE_LIMIT_PATTERN = re.compile(r"rate limit", re.I)
 
 # Keep the original network caller, then wrap it with provider-aware retry.
 _BASE_CALL_AI_FINAL = call_ai
@@ -4261,6 +4306,13 @@ def _is_retryable_ai_error(data):
     err = data.get("error")
     msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
     return bool(_PROVIDER_RETRYABLE_PATTERNS.search(msg))
+
+def _is_rate_limit_error(data):
+    if not isinstance(data, dict) or "error" not in data:
+        return False
+    err = data.get("error")
+    msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+    return bool(_RATE_LIMIT_PATTERN.search(msg))
 
 def _compact_prompt_for_slow_provider(prompt):
     """Shorten long prompts for Claude/Gemini without removing the JSON contract."""
@@ -4281,7 +4333,24 @@ def call_ai(prompt, max_tokens=1600):
         if not _is_retryable_ai_error(data):
             return data
         last = data
-        _time_patch.sleep(1.2 * (attempt + 1))
+        if _is_rate_limit_error(data):
+            # 8s, then 16s — a real wait, instead of the 1.2s/2.4s generic
+            # backoff that never gave the rate-limit window a chance to
+            # actually clear before retrying into the same still-exhausted
+            # limit.
+            _time_patch.sleep(8.0 * (attempt + 1))
+        else:
+            _time_patch.sleep(1.2 * (attempt + 1))
+    if last is not None and _is_rate_limit_error(last):
+        # One bonus attempt specifically for rate limits, past the
+        # provider's normal attempt count, with the longest wait of all —
+        # this is what actually gave the window time to reset in testing.
+        _time_patch.sleep(20.0)
+        use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
+        data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens))
+        if not _is_retryable_ai_error(data):
+            return data
+        last = data
     return last or {"error": {"message": "AI provider failed after retries."}}
 
 
