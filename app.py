@@ -221,6 +221,42 @@ def save_auto_comparison(record):
         pass
     return runs
 
+
+def save_auto_comparison_provider_partial(run_timestamp, elapsed_minutes, provider, provider_result):
+    """Persist ONE provider's result the moment its 50-cycle turn finishes,
+    instead of waiting for all 4 providers to complete before anything is
+    saved. A full run can now run long — repeated rate-limit backoffs on
+    more than one provider pushed a real run past 10+ minutes — long
+    enough to hit a platform-level connection limit and disconnect before
+    the old "save once at the very end" ever ran, silently losing every
+    provider's results including ones that had already finished cleanly.
+    Locally: finds (or creates) the in-progress run entry by timestamp and
+    merges this provider's result into it. On Google Sheets: appends just
+    this one provider's row under the shared run timestamp — the existing
+    push_auto_comparison_to_gsheet already writes one row per provider, so
+    calling it with a single-provider "results" dict naturally produces
+    one row per call instead of four at once."""
+    try:
+        runs = load_auto_comparisons()
+        entry = next((r for r in runs if r.get("timestamp") == run_timestamp), None)
+        if entry is None:
+            entry = {"timestamp": run_timestamp, "elapsed_minutes": elapsed_minutes, "results": {}}
+            runs.append(entry)
+        entry["results"][provider] = provider_result
+        entry["elapsed_minutes"] = elapsed_minutes
+        with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(runs, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    try:
+        push_auto_comparison_to_gsheet({
+            "timestamp": run_timestamp,
+            "elapsed_minutes": elapsed_minutes,
+            "results": {provider: provider_result},
+        })
+    except Exception:
+        pass
+
 def load_metrics_file():
     try:
         with open(_METRICS_FILE_PATH, "r", encoding="utf-8") as f:
@@ -767,7 +803,7 @@ _COMPARISON_MAX_WORKERS = 3  # concurrent calls within one provider's turn
 # retries alone to fix a self-inflicted burst.
 
 
-def run_full_auto_comparison(progress_callback=None, usage_callback=None):
+def run_full_auto_comparison(progress_callback=None, usage_callback=None, provider_done_callback=None):
     """Runs all 4 providers through the 50-cycle ROTATION_PLAN and returns
     {provider: {metric: value}}. `progress_callback(provider, cycle_no,
     step, total_steps)` is called as each generation completes if
@@ -775,11 +811,20 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None):
     provider, bucket, used_api)` is called the same way, once per
     completed generation, so the caller can update a live AI-vs-local
     tally as the run progresses — bucket is "easy"/"medium"/"hard" for
-    phishing content. Never raises: any per-email failure is caught and
-    counted toward that provider's error_rate instead of stopping the
-    run. Within each provider's turn, generations run concurrently (see
-    module note above) for a real speedup; providers themselves stay
-    sequential for correctness."""
+    phishing content. `provider_done_callback(provider, provider_result)`
+    fires once a single provider's full 50-cycle turn is finished, so the
+    caller can save that provider's result IMMEDIATELY instead of only
+    persisting anything after all four providers complete — a run that
+    hits repeated rate-limit backoffs (observed directly: both Groq and
+    OpenAI rate-limiting mid-run pushed one full run past 10+ minutes)
+    can run long enough to hit a platform-level connection limit and
+    disconnect before ever reaching the final save, silently losing
+    every provider's results including ones that had already finished
+    cleanly. Never raises: any per-email failure is caught and counted
+    toward that provider's error_rate instead of stopping the run.
+    Within each provider's turn, generations run concurrently (see module
+    note above) for a real speedup; providers themselves stay sequential
+    for correctness."""
     results = {}
     original_provider = st.session_state.get("ai_provider")
     total_steps = len(_COMPARISON_PROVIDERS) * len(ROTATION_PLAN) * 2
@@ -941,6 +986,11 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None):
             "n_calls": calls,
             "ai_usage": usage_tally,
         }
+        if provider_done_callback:
+            try:
+                provider_done_callback(prov, results[prov])
+            except Exception:
+                pass
 
     st.session_state["ai_provider"] = original_provider
     return results
@@ -3703,17 +3753,55 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 # stuck at its old count, with no error shown to explain why.
                 try:
                     _t_start = time.time()
-                    _comparison_results = run_full_auto_comparison(progress_callback=_on_progress)
+                    _run_ts = __import__("datetime").datetime.now().isoformat(timespec="seconds")
+
+                    def _on_provider_done(prov, prov_result):
+                        # Saves THIS provider's result immediately — see
+                        # save_auto_comparison_provider_partial's docstring
+                        # for why: a run that runs long due to rate-limit
+                        # backoffs can disconnect before the old "save once
+                        # at the very end" ever executes, losing everything
+                        # including providers that had already finished
+                        # cleanly minutes earlier.
+                        _elapsed_so_far = round((time.time() - _t_start) / 60, 1)
+                        save_auto_comparison_provider_partial(_run_ts, _elapsed_so_far, prov, prov_result)
+                        _status_box.markdown(
+                            (f"💾 حُفظت نتيجة {_prov_labels_map.get(prov, prov)}" if _is_ar
+                             else f"💾 Saved {_prov_labels_map.get(prov, prov)}'s result")
+                        )
+
+                    _comparison_results = run_full_auto_comparison(
+                        progress_callback=_on_progress, provider_done_callback=_on_provider_done
+                    )
                     _elapsed_min = round((time.time() - _t_start) / 60, 1)
                     _progress_bar.progress(1.0)
                     _status_box.empty()
 
                     _record = {
-                        "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                        "timestamp": _run_ts,
                         "elapsed_minutes": _elapsed_min,
                         "results": _comparison_results,
                     }
-                    save_auto_comparison(_record)
+                    # Every provider was already saved individually the
+                    # moment it finished (via _on_provider_done above) — do
+                    # NOT call save_auto_comparison(_record) here too, it
+                    # would blindly append a SECOND, duplicate entry under
+                    # the same timestamp instead of recognizing the one
+                    # already written. This just tops up elapsed_minutes to
+                    # the true final total on the existing local entry
+                    # (each partial save only knew the elapsed time AT that
+                    # provider's completion, not the true end-to-end total)
+                    # — the Sheet already has all 4 provider rows and
+                    # doesn't need touching again.
+                    try:
+                        _runs_final = load_auto_comparisons()
+                        _entry_final = next((r for r in _runs_final if r.get("timestamp") == _run_ts), None)
+                        if _entry_final is not None:
+                            _entry_final["elapsed_minutes"] = _elapsed_min
+                            with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
+                                json.dump(_runs_final, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
                     st.session_state["_last_auto_comparison"] = _record
                     # A plain st.success() here would only ever appear
                     # AFTER the "AI reliance" boxes and "Past runs" counter
