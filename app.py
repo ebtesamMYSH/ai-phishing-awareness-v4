@@ -1712,7 +1712,24 @@ def call_ai(prompt, max_tokens=1600):
                         {"role": "user",   "content": prompt}
                     ]
                 },
-                timeout=45
+                # LOWERED 2026-08-20 from 45 -> 20: observed directly —
+                # when Groq's connection is having a slow patch (not a
+                # clean, fast rate-limit response, an actually slow/
+                # unresponsive network round-trip), every one of the 3
+                # normal attempts + 1 rate-limit bonus attempt could each
+                # independently eat the full 45s ceiling. Stacked with the
+                # 13s proactive pacing gap before every attempt (see
+                # _pace_groq_call above) and the retry backoff between
+                # attempts, a single stuck generation could take up to
+                # ~4.6 minutes before finally giving up and falling back
+                # to local — confirmed live: the progress counter sat
+                # frozen on the same call for 7 minutes. 20s still gives a
+                # genuinely slow-but-working response a fair chance while
+                # capping the worst case per attempt at under half what it
+                # was; a request that hasn't answered in 20s on a
+                # documented ~500 tok/s model is unlikely to complete
+                # usefully anyway.
+                timeout=20
             )
             data = resp.json()
             elapsed = time.time() - start_time
