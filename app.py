@@ -819,31 +819,45 @@ _COMPARISON_MAX_WORKERS = 3  # concurrent calls within one provider's turn
 _COMPARISON_MAX_WORKERS_BY_PROVIDER = {"groq": 1}
 
 
-def run_full_auto_comparison(progress_callback=None, usage_callback=None, provider_done_callback=None):
-    """Runs all 4 providers through the 50-cycle ROTATION_PLAN and returns
-    {provider: {metric: value}}. `progress_callback(provider, cycle_no,
-    step, total_steps)` is called as each generation completes if
-    provided, so the caller can show live progress. `usage_callback(
-    provider, bucket, used_api)` is called the same way, once per
-    completed generation, so the caller can update a live AI-vs-local
-    tally as the run progresses — bucket is "easy"/"medium"/"hard" for
-    phishing content. `provider_done_callback(provider, provider_result)`
-    fires once a single provider's full 50-cycle turn is finished, so the
-    caller can save that provider's result IMMEDIATELY instead of only
-    persisting anything after all four providers complete — a run that
-    hits repeated rate-limit backoffs (observed directly: both Groq and
-    OpenAI rate-limiting mid-run pushed one full run past 10+ minutes)
-    can run long enough to hit a platform-level connection limit and
-    disconnect before ever reaching the final save, silently losing
-    every provider's results including ones that had already finished
-    cleanly. Never raises: any per-email failure is caught and counted
-    toward that provider's error_rate instead of stopping the run.
-    Within each provider's turn, generations run concurrently (see module
-    note above) for a real speedup; providers themselves stay sequential
-    for correctness."""
+def run_full_auto_comparison(progress_callback=None, usage_callback=None, provider_done_callback=None, providers=None):
+    """Runs the SELECTED providers (defaults to all 4) through the
+    50-cycle ROTATION_PLAN and returns {provider: {metric: value}}.
+    `progress_callback(provider, cycle_no, step, total_steps)` is called
+    as each generation completes if provided, so the caller can show
+    live progress. `usage_callback(provider, bucket, used_api)` is called
+    the same way, once per completed generation, so the caller can
+    update a live AI-vs-local tally as the run progresses — bucket is
+    "easy"/"medium"/"hard" for phishing content. `provider_done_callback(
+    provider, provider_result)` fires once a single provider's turn is
+    finished, so the caller can save that provider's result IMMEDIATELY
+    instead of only persisting anything after every selected provider
+    completes — a run that hits repeated rate-limit backoffs can run
+    long enough to hit a platform-level connection limit and disconnect
+    before ever reaching a final save, silently losing every provider's
+    results including ones that had already finished cleanly. Never
+    raises: any per-email failure is caught and counted toward that
+    provider's error_rate instead of stopping the run. Within each
+    provider's turn, generations run concurrently (see module note
+    above) for a real speedup; providers themselves stay sequential for
+    correctness.
+
+    `providers`: which provider keys to actually run, in order — defaults
+    to all of _COMPARISON_PROVIDERS. When Groq is the ONLY selected
+    provider, its plan is automatically trimmed to the first 10 cycles
+    instead of the full 50: Groq's documented 8,000 TPM rate limit on
+    openai/gpt-oss-120b means even with proactive pacing, a full 50-cycle
+    Groq turn can take 8+ hours end to end — impractical to run on its
+    own. Ten cycles still gives a meaningful sample (~20 generations) in
+    well under half an hour. This trimming does NOT apply when Groq runs
+    alongside other providers, since its own turn happening in parallel
+    with faster providers' turns doesn't block the whole comparison the
+    same way."""
     results = {}
+    _selected_providers = providers if providers else list(_COMPARISON_PROVIDERS)
+    _groq_solo = (_selected_providers == ["groq"])
     original_provider = st.session_state.get("ai_provider")
-    total_steps = len(_COMPARISON_PROVIDERS) * len(ROTATION_PLAN) * 2
+    _plan_lengths = {p: (10 if (_groq_solo and p == "groq") else len(ROTATION_PLAN)) for p in _selected_providers}
+    total_steps = sum(_plan_lengths.values()) * 2
     step_state = {"n": 0}
     step_lock = threading.Lock()
     # Captured ONCE in the main thread — this is the object add_script_run_ctx
@@ -854,7 +868,8 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
     # that needs session_state: https://docs.streamlit.io/develop/concepts/design/multithreading
     _main_ctx = get_script_run_ctx() if get_script_run_ctx else None
 
-    for prov in _COMPARISON_PROVIDERS:
+    for prov in _selected_providers:
+        _prov_plan = ROTATION_PLAN[:_plan_lengths[prov]]
         st.session_state["ai_provider"] = prov
         scores = {"difficulty_score": [], "arabic_score": [], "quality_score": [], "medical_score": []}
         speeds = []; json_ok = 0; json_fail = 0; errors = 0; calls = 0; hashes = set()
@@ -901,7 +916,7 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
             except Exception:
                 return ("error", None, 0.0, diff, lang, None, None, True)
 
-        _tasks = [(plan, kind) for plan in ROTATION_PLAN for kind in ("learn", "assess")]
+        _tasks = [(plan, kind) for plan in _prov_plan for kind in ("learn", "assess")]
         _prov_workers = _COMPARISON_MAX_WORKERS_BY_PROVIDER.get(prov, _COMPARISON_MAX_WORKERS)
         with _cf.ThreadPoolExecutor(max_workers=_prov_workers) as _executor:
             _futures = {_executor.submit(_run_one, plan, kind): plan for plan, kind in _tasks}
@@ -3738,12 +3753,43 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             )
 
             _comp_running_key = "auto_comparison_running"
+            _prov_display = {
+                "groq": "🟠 Groq", "anthropic": "🟣 Claude",
+                "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini",
+            }
+            st.markdown(
+                f'<div dir="{_dir}" style="text-align:{_align};font-size:.85rem;color:#D1D5DB;margin-bottom:.4rem;">'
+                + ("اختاري مين تبين تشغّلينهم:" if _is_ar else "Choose which providers to run:")
+                + '</div>', unsafe_allow_html=True
+            )
+            _sel_cols = st.columns(4)
+            for _sci, _scp in enumerate(_COMPARISON_PROVIDERS):
+                with _sel_cols[_sci]:
+                    st.checkbox(_prov_display[_scp], value=True, key=f"_comp_select_{_scp}")
+            _selected_providers = [p for p in _COMPARISON_PROVIDERS if st.session_state.get(f"_comp_select_{p}", True)]
+            _groq_solo_selected = (_selected_providers == ["groq"])
+            _n_sel = len(_selected_providers)
+            _cycles_label = "10" if _groq_solo_selected else "50"
+            if _n_sel == 0:
+                _btn_label_ar = "▶️ اختاري مزوّد واحد على الأقل"
+                _btn_label_en = "▶️ Select at least one provider"
+            else:
+                _btn_label_ar = f"▶️ ابدأ المقارنة ({_n_sel} مزوّد × {_cycles_label} دورة)"
+                _btn_label_en = f"▶️ Start Comparison ({_n_sel} provider{'s' if _n_sel != 1 else ''} × {_cycles_label} cycles)"
+            if _groq_solo_selected:
+                st.markdown(
+                    f'<div dir="{_dir}" style="text-align:{_align};font-size:.78rem;color:#FCD34D;margin-bottom:.5rem;">'
+                    + ("⚠️ Groq وحده محدّد — عدد الدورات يُخفَّض تلقائيًا لـ10 (بدل 50) بسبب حد الاستخدام الضيق عنده، عشان الوقت يصير معقول."
+                       if _is_ar else
+                       "⚠️ Groq is the only one selected — cycles are auto-reduced to 10 (from 50) because of its tight rate limit, to keep the wait reasonable.")
+                    + '</div>', unsafe_allow_html=True
+                )
             _comp_col1, _comp_col2 = st.columns([3, 1])
             with _comp_col1:
                 _start_comparison = st.button(
-                    ("▶️ ابدأ المقارنة التلقائية (٤ مزودين × ٥٠ دورة)" if _is_ar
-                     else "▶️ Start Automated Comparison (4 providers × 50 cycles)"),
+                    (_btn_label_ar if _is_ar else _btn_label_en),
                     use_container_width=True, type="primary", key="start_auto_comparison_btn",
+                    disabled=(_n_sel == 0),
                 )
             with _comp_col2:
                 _hist_all = load_auto_comparisons()
@@ -3811,7 +3857,8 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                         )
 
                     _comparison_results = run_full_auto_comparison(
-                        progress_callback=_on_progress, provider_done_callback=_on_provider_done
+                        progress_callback=_on_progress, provider_done_callback=_on_provider_done,
+                        providers=_selected_providers,
                     )
                     _elapsed_min = round((time.time() - _t_start) / 60, 1)
                     _progress_bar.progress(1.0)
