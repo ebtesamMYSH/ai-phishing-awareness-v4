@@ -801,6 +801,22 @@ _COMPARISON_MAX_WORKERS = 3  # concurrent calls within one provider's turn
 # together with the longer rate-limit-specific backoff in call_ai() above
 # (which handles whatever bursts still happen) rather than relying on
 # retries alone to fix a self-inflicted burst.
+#
+# Groq needs its OWN, much lower number. After migrating off the
+# deprecated llama-3.3-70b-versatile (see call_ai above), the replacement
+# model openai/gpt-oss-120b carries a documented 8,000 TPM (tokens per
+# minute) limit on this tier — roughly 4-5 calls per minute total, full
+# stop, regardless of concurrency. Even 3 concurrent calls (~1,700 tokens
+# each ≈ 5,100 tokens in one burst) sits close enough to that ceiling that
+# two overlapping bursts inside the same rolling minute reliably blow
+# through it — confirmed directly: five back-to-back "Rate limit
+# reached... TPM: Limit 8000" entries appeared late in a real Groq turn,
+# well past its warm-up. Serializing Groq's calls (max_workers=1) is the
+# only way to guarantee no two of its own requests land in the same
+# window; it costs Groq's own turn some wall-clock time, but the other
+# three providers — which don't share this narrow a ceiling — keep the
+# faster, still rate-limit-aware default above.
+_COMPARISON_MAX_WORKERS_BY_PROVIDER = {"groq": 1}
 
 
 def run_full_auto_comparison(progress_callback=None, usage_callback=None, provider_done_callback=None):
@@ -886,7 +902,8 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
                 return ("error", None, 0.0, diff, lang, None, None, True)
 
         _tasks = [(plan, kind) for plan in ROTATION_PLAN for kind in ("learn", "assess")]
-        with _cf.ThreadPoolExecutor(max_workers=_COMPARISON_MAX_WORKERS) as _executor:
+        _prov_workers = _COMPARISON_MAX_WORKERS_BY_PROVIDER.get(prov, _COMPARISON_MAX_WORKERS)
+        with _cf.ThreadPoolExecutor(max_workers=_prov_workers) as _executor:
             _futures = {_executor.submit(_run_one, plan, kind): plan for plan, kind in _tasks}
             for _future in _cf.as_completed(_futures):
                 _plan = _futures[_future]
@@ -4454,11 +4471,40 @@ def _compact_prompt_for_slow_provider(prompt):
     tail = prompt[-1800:]
     return head + "\n\n[Prompt shortened: keep all rules above; avoid repetition; return valid JSON only.]\n\n" + tail
 
+# Proactive pacing for Groq specifically. Serializing calls
+# (_COMPARISON_MAX_WORKERS_BY_PROVIDER["groq"] = 1) alone stops two of
+# Groq's OWN requests from overlapping, but does nothing about the RATE
+# they fire at — Groq's raw generation speed is fast enough that even
+# fully sequential calls can still fire ~18 times a minute, well past the
+# ~4.7 calls/minute this deployment's 8,000 TPM ceiling actually
+# sustains. Waiting until AFTER hitting the limit and retrying (the
+# generic backoff below) works but wastes real calls that then fall back
+# to local unnecessarily. A minimum gap enforced BEFORE each Groq call —
+# tracked here with a lock so it's safe even if this is ever called from
+# more than one thread — keeps the request rate under the ceiling in the
+# first place, which should mean fewer wasted rate-limit hits overall
+# even though Groq's own turn still takes real wall-clock time either way.
+_GROQ_PACING_LOCK = threading.Lock()
+_GROQ_PACING_STATE = {"last_call_ts": 0.0}
+_GROQ_MIN_GAP_SECONDS = 13.0  # ~4.6 calls/min, just under the ~4.7/min the 8,000 TPM ceiling allows
+
+
+def _pace_groq_call():
+    with _GROQ_PACING_LOCK:
+        now = _time_patch.time()
+        wait = _GROQ_MIN_GAP_SECONDS - (now - _GROQ_PACING_STATE["last_call_ts"])
+        if wait > 0:
+            _time_patch.sleep(wait)
+        _GROQ_PACING_STATE["last_call_ts"] = _time_patch.time()
+
+
 def call_ai(prompt, max_tokens=1600):
     provider = st.session_state.get("ai_provider", "groq")
     attempts = 3 if provider in {"gemini", "anthropic", "groq"} else 2
     last = None
     for attempt in range(attempts):
+        if provider == "groq":
+            _pace_groq_call()
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
         data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens))
         if not _is_retryable_ai_error(data):
@@ -4477,6 +4523,8 @@ def call_ai(prompt, max_tokens=1600):
         # provider's normal attempt count, with the longest wait of all —
         # this is what actually gave the window time to reset in testing.
         _time_patch.sleep(20.0)
+        if provider == "groq":
+            _pace_groq_call()
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
         data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens))
         if not _is_retryable_ai_error(data):
