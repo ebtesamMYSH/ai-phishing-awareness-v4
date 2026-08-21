@@ -4515,15 +4515,57 @@ def _pace_groq_call():
         _GROQ_PACING_STATE["last_call_ts"] = _time_patch.time()
 
 
+_HARD_DEADLINE_EXECUTOR = _cf.ThreadPoolExecutor(max_workers=8)
+
+
+def _call_with_hard_deadline(fn, args, kwargs, deadline_seconds):
+    """Guarantees this function returns within `deadline_seconds`, no
+    matter what the wrapped call is doing internally. requests' own
+    `timeout=` parameter is NOT a reliable absolute ceiling — it only
+    bounds each individual socket read, not the request's total duration;
+    a server trickling data down in small, individually-fast chunks can
+    keep a "timeout=20" call alive far longer than 20 seconds without
+    ever tripping that timeout. Confirmed live: lowering Groq's
+    timeout=45 -> timeout=20 did not fix a run that sat frozen on the
+    same call for 7+ minutes with zero error ever logged — exactly the
+    symptom of a request that's still "receiving", just too slowly to
+    ever be useful, so its own timeout never fires. Running the call in
+    a worker thread and bounding it with future.result(timeout=...)
+    instead is the only mechanism Python has for a true wall-clock
+    ceiling: if it's not done by the deadline, this returns a timeout
+    error immediately regardless of what the underlying call is doing.
+    The orphaned worker thread is abandoned (Python cannot forcibly kill
+    a running thread) but does not block anything else — the executor
+    has enough spare capacity for this to happen repeatedly without
+    starving future calls."""
+    future = _HARD_DEADLINE_EXECUTOR.submit(fn, *args, **kwargs)
+    try:
+        return future.result(timeout=deadline_seconds)
+    except _cf.TimeoutError:
+        return {"error": {"message": f"Hard deadline exceeded ({deadline_seconds}s) — provider call abandoned."}}
+    except Exception as e:
+        return {"error": {"message": str(e)}}
+
+
 def call_ai(prompt, max_tokens=1600):
     provider = st.session_state.get("ai_provider", "groq")
     attempts = 3 if provider in {"gemini", "anthropic", "groq"} else 2
+    # Absolute wall-clock ceiling per attempt, enforced independently of
+    # whatever timeout the network layer itself claims to honor. A little
+    # above the provider's own requests-level timeout (20s for Groq) so
+    # that one gets a fair chance to fire normally first; this is purely
+    # the backstop for when it doesn't.
+    _hard_deadline = 25.0
     last = None
     for attempt in range(attempts):
         if provider == "groq":
             _pace_groq_call()
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
-        data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens))
+        data = _call_with_hard_deadline(
+            _BASE_CALL_AI_FINAL, (use_prompt,),
+            {"max_tokens": max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens)},
+            _hard_deadline,
+        )
         if not _is_retryable_ai_error(data):
             return data
         last = data
@@ -4543,7 +4585,11 @@ def call_ai(prompt, max_tokens=1600):
         if provider == "groq":
             _pace_groq_call()
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
-        data = _BASE_CALL_AI_FINAL(use_prompt, max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens))
+        data = _call_with_hard_deadline(
+            _BASE_CALL_AI_FINAL, (use_prompt,),
+            {"max_tokens": max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens)},
+            _hard_deadline,
+        )
         if not _is_retryable_ai_error(data):
             return data
         last = data
