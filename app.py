@@ -1673,9 +1673,15 @@ def _record_metric(provider, speed_sec, json_success, content_hash=None, is_erro
         m["hashes"].append(content_hash)
     save_metrics_file(st.session_state["metrics"])
 
-def call_ai(prompt, max_tokens=1600):
+def call_ai(prompt, max_tokens=1600, provider=None):
     import time
-    provider = st.session_state.get("ai_provider", "groq")
+    # `provider` can be passed explicitly (see the retry wrapper below,
+    # which captures it in the correctly-contextualized outer thread and
+    # passes it straight through) — falls back to session_state only when
+    # not given, for any other caller still using the old calling
+    # convention.
+    if provider is None:
+        provider = st.session_state.get("ai_provider", "groq")
     system_prompt = get_system_prompt()
 
     def get_secret(key):
@@ -4548,7 +4554,31 @@ def _call_with_hard_deadline(fn, args, kwargs, deadline_seconds):
     waiting for."""
     executor = _cf.ThreadPoolExecutor(max_workers=1)
     try:
-        future = executor.submit(fn, *args, **kwargs)
+        # CRITICAL: without this, the inner worker thread this executor
+        # spawns has NO Streamlit ScriptRunContext attached to it at all
+        # — add_script_run_ctx was only ever applied to the OUTER worker
+        # thread (_run_one, in run_full_auto_comparison), never to this
+        # SECOND, nested layer of threading this function introduces.
+        # _BASE_CALL_AI_FINAL (the actual network call) reads
+        # st.session_state["ai_provider"] as its very first line, before
+        # ever reaching the network — a thread with no context trying to
+        # touch st.session_state is exactly the scenario Streamlit's own
+        # docs warn can misbehave. This was the real reason the "hard
+        # deadline" safety net never fired: execution was getting stuck
+        # INSIDE this thread before it ever reached the point a timeout
+        # could even apply to, so the 25s ceiling never had anything to
+        # bound.
+        _inner_ctx = get_script_run_ctx() if get_script_run_ctx else None
+        if add_script_run_ctx and _inner_ctx:
+            def _fn_with_ctx(*a, **k):
+                try:
+                    add_script_run_ctx(threading.current_thread(), _inner_ctx)
+                except Exception:
+                    pass
+                return fn(*a, **k)
+            future = executor.submit(_fn_with_ctx, *args, **kwargs)
+        else:
+            future = executor.submit(fn, *args, **kwargs)
         try:
             return future.result(timeout=deadline_seconds)
         except _cf.TimeoutError:
@@ -4575,7 +4605,7 @@ def call_ai(prompt, max_tokens=1600):
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
         data = _call_with_hard_deadline(
             _BASE_CALL_AI_FINAL, (use_prompt,),
-            {"max_tokens": max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens)},
+            {"max_tokens": max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens), "provider": provider},
             _hard_deadline,
         )
         if not _is_retryable_ai_error(data):
@@ -4599,7 +4629,7 @@ def call_ai(prompt, max_tokens=1600):
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
         data = _call_with_hard_deadline(
             _BASE_CALL_AI_FINAL, (use_prompt,),
-            {"max_tokens": max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens)},
+            {"max_tokens": max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens), "provider": provider},
             _hard_deadline,
         )
         if not _is_retryable_ai_error(data):
