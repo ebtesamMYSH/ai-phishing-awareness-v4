@@ -4521,93 +4521,39 @@ def _pace_groq_call():
         _GROQ_PACING_STATE["last_call_ts"] = _time_patch.time()
 
 
-def _call_with_hard_deadline(fn, args, kwargs, deadline_seconds):
-    """Guarantees this function returns within `deadline_seconds`, no
-    matter what the wrapped call is doing internally. requests' own
-    `timeout=` parameter is NOT a reliable absolute ceiling — it only
-    bounds each individual socket read, not the request's total duration;
-    a server trickling data down in small, individually-fast chunks can
-    keep a "timeout=20" call alive far longer than 20 seconds without
-    ever tripping that timeout. Confirmed live: lowering Groq's
-    timeout=45 -> timeout=20 did not fix a run that sat frozen on the
-    same call for 7+ minutes with zero error ever logged — exactly the
-    symptom of a request that's still "receiving", just too slowly to
-    ever be useful, so its own timeout never fires. Running the call in
-    a worker thread and bounding it with future.result(timeout=...)
-    instead is the only mechanism Python has for a true wall-clock
-    ceiling: if it's not done by the deadline, this returns a timeout
-    error immediately regardless of what the underlying call is doing.
-    The orphaned worker thread is abandoned (Python cannot forcibly kill
-    a running thread) but does not block anything else.
-
-    A FRESH, single-use executor is created and torn down for every call
-    — not a module-level constant. Streamlit re-executes this entire
-    script top-to-bottom on every rerun (every button click, every widget
-    interaction), so a module-level `ThreadPoolExecutor(...)` gets
-    silently RE-CREATED on every single one of those reruns without the
-    previous instance ever being shut down — a real thread-pool leak
-    confirmed to be the actual cause of a run that froze solid at step 0
-    after a few earlier attempts in the same session: each attempt piled
-    another abandoned pool of workers on top of the last. shutdown(
-    wait=False) here is deliberate: waiting would mean blocking on
-    exactly the stuck orphaned thread this function exists to stop
-    waiting for."""
-    executor = _cf.ThreadPoolExecutor(max_workers=1)
-    try:
-        # CRITICAL: without this, the inner worker thread this executor
-        # spawns has NO Streamlit ScriptRunContext attached to it at all
-        # — add_script_run_ctx was only ever applied to the OUTER worker
-        # thread (_run_one, in run_full_auto_comparison), never to this
-        # SECOND, nested layer of threading this function introduces.
-        # _BASE_CALL_AI_FINAL (the actual network call) reads
-        # st.session_state["ai_provider"] as its very first line, before
-        # ever reaching the network — a thread with no context trying to
-        # touch st.session_state is exactly the scenario Streamlit's own
-        # docs warn can misbehave. This was the real reason the "hard
-        # deadline" safety net never fired: execution was getting stuck
-        # INSIDE this thread before it ever reached the point a timeout
-        # could even apply to, so the 25s ceiling never had anything to
-        # bound.
-        _inner_ctx = get_script_run_ctx() if get_script_run_ctx else None
-        if add_script_run_ctx and _inner_ctx:
-            def _fn_with_ctx(*a, **k):
-                try:
-                    add_script_run_ctx(threading.current_thread(), _inner_ctx)
-                except Exception:
-                    pass
-                return fn(*a, **k)
-            future = executor.submit(_fn_with_ctx, *args, **kwargs)
-        else:
-            future = executor.submit(fn, *args, **kwargs)
-        try:
-            return future.result(timeout=deadline_seconds)
-        except _cf.TimeoutError:
-            return {"error": {"message": f"Hard deadline exceeded ({deadline_seconds}s) — provider call abandoned."}}
-        except Exception as e:
-            return {"error": {"message": str(e)}}
-    finally:
-        executor.shutdown(wait=False)
-
-
 def call_ai(prompt, max_tokens=1600):
     provider = st.session_state.get("ai_provider", "groq")
     attempts = 3 if provider in {"gemini", "anthropic", "groq"} else 2
-    # Absolute wall-clock ceiling per attempt, enforced independently of
-    # whatever timeout the network layer itself claims to honor. A little
-    # above the provider's own requests-level timeout (20s for Groq) so
-    # that one gets a fair chance to fire normally first; this is purely
-    # the backstop for when it doesn't.
-    _hard_deadline = 25.0
+    # REVERTED 2026-08-20: this used to route every call through
+    # _call_with_hard_deadline, which ran the real network call inside a
+    # SECOND, nested ThreadPoolExecutor (the outer nesting already being
+    # this comparison's own per-provider worker thread) to force an
+    # absolute wall-clock ceiling, on the theory that requests' own
+    # `timeout=` isn't a fully reliable ceiling. That nested-executor
+    # layer turned out to be the actual problem: confirmed live — the
+    # simple, direct "Test connection" button (which calls
+    # _BASE_CALL_AI_FINAL straight, no nesting) kept working fine and
+    # fast throughout, while the full comparison never advanced past
+    # 0/400 for 5+ minutes even after that theory was implemented and
+    # fixed twice over. The extra layer of thread nesting was the bug,
+    # not the fix. Falling back to the same simple, direct call pattern
+    # "Test connection" already proves works — provider's own
+    # requests-level timeout (20s for Groq, set where _BASE_CALL_AI_FINAL
+    # makes the request) is the only ceiling now, same as it always was
+    # for every other successful call in this app.
     last = None
     for attempt in range(attempts):
         if provider == "groq":
             _pace_groq_call()
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
-        data = _call_with_hard_deadline(
-            _BASE_CALL_AI_FINAL, (use_prompt,),
-            {"max_tokens": max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens), "provider": provider},
-            _hard_deadline,
-        )
+        try:
+            data = _BASE_CALL_AI_FINAL(
+                use_prompt,
+                max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens),
+                provider=provider,
+            )
+        except Exception as e:
+            data = {"error": {"message": str(e)}}
         if not _is_retryable_ai_error(data):
             return data
         last = data
@@ -4627,11 +4573,14 @@ def call_ai(prompt, max_tokens=1600):
         if provider == "groq":
             _pace_groq_call()
         use_prompt = _compact_prompt_for_slow_provider(prompt) if provider in {"gemini", "anthropic"} else prompt
-        data = _call_with_hard_deadline(
-            _BASE_CALL_AI_FINAL, (use_prompt,),
-            {"max_tokens": max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens), "provider": provider},
-            _hard_deadline,
-        )
+        try:
+            data = _BASE_CALL_AI_FINAL(
+                use_prompt,
+                max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens),
+                provider=provider,
+            )
+        except Exception as e:
+            data = {"error": {"message": str(e)}}
         if not _is_retryable_ai_error(data):
             return data
         last = data
