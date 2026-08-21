@@ -4515,9 +4515,6 @@ def _pace_groq_call():
         _GROQ_PACING_STATE["last_call_ts"] = _time_patch.time()
 
 
-_HARD_DEADLINE_EXECUTOR = _cf.ThreadPoolExecutor(max_workers=8)
-
-
 def _call_with_hard_deadline(fn, args, kwargs, deadline_seconds):
     """Guarantees this function returns within `deadline_seconds`, no
     matter what the wrapped call is doing internally. requests' own
@@ -4535,16 +4532,31 @@ def _call_with_hard_deadline(fn, args, kwargs, deadline_seconds):
     ceiling: if it's not done by the deadline, this returns a timeout
     error immediately regardless of what the underlying call is doing.
     The orphaned worker thread is abandoned (Python cannot forcibly kill
-    a running thread) but does not block anything else — the executor
-    has enough spare capacity for this to happen repeatedly without
-    starving future calls."""
-    future = _HARD_DEADLINE_EXECUTOR.submit(fn, *args, **kwargs)
+    a running thread) but does not block anything else.
+
+    A FRESH, single-use executor is created and torn down for every call
+    — not a module-level constant. Streamlit re-executes this entire
+    script top-to-bottom on every rerun (every button click, every widget
+    interaction), so a module-level `ThreadPoolExecutor(...)` gets
+    silently RE-CREATED on every single one of those reruns without the
+    previous instance ever being shut down — a real thread-pool leak
+    confirmed to be the actual cause of a run that froze solid at step 0
+    after a few earlier attempts in the same session: each attempt piled
+    another abandoned pool of workers on top of the last. shutdown(
+    wait=False) here is deliberate: waiting would mean blocking on
+    exactly the stuck orphaned thread this function exists to stop
+    waiting for."""
+    executor = _cf.ThreadPoolExecutor(max_workers=1)
     try:
-        return future.result(timeout=deadline_seconds)
-    except _cf.TimeoutError:
-        return {"error": {"message": f"Hard deadline exceeded ({deadline_seconds}s) — provider call abandoned."}}
-    except Exception as e:
-        return {"error": {"message": str(e)}}
+        future = executor.submit(fn, *args, **kwargs)
+        try:
+            return future.result(timeout=deadline_seconds)
+        except _cf.TimeoutError:
+            return {"error": {"message": f"Hard deadline exceeded ({deadline_seconds}s) — provider call abandoned."}}
+        except Exception as e:
+            return {"error": {"message": str(e)}}
+    finally:
+        executor.shutdown(wait=False)
 
 
 def call_ai(prompt, max_tokens=1600):
