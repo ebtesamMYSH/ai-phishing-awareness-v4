@@ -3806,6 +3806,52 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                               else "Download after every new run — a manual extra copy that needs no external setup"),
                     )
 
+            # ── مسح كامل لسجل المقارنات (محلي + Google Sheets معًا) ──
+            # لازم نمسح الاثنين مع بعض: لو مسحنا الملف المحلي بس، دالة
+            # merge_local_and_gsheet_auto_comparisons بترجع تسحب النتائج
+            # القديمة من الشيت تلقائيًا عند أول تحميل بعدها، فيبان إنها
+            # "رجعت من العدم". خلف زر تأكيد (checkbox) لتفادي مسح بالغلط.
+            if _hist_all:
+                st.markdown('<div style="height:.4rem"></div>', unsafe_allow_html=True)
+                _confirm_clear = st.checkbox(
+                    (f"متأكدة إني أبي أمسح كل الـ{len(_hist_all)} مقارنة سابقة نهائيًا (ما ترجع)" if _is_ar
+                     else f"I'm sure I want to permanently delete all {len(_hist_all)} past runs (cannot be undone)"),
+                    key="_confirm_clear_history",
+                )
+                if st.button(
+                    ("🗑️ امسح كل سجل المقارنات" if _is_ar else "🗑️ Clear all comparison history"),
+                    disabled=not _confirm_clear, key="clear_all_comparisons_btn",
+                    use_container_width=True,
+                ):
+                    try:
+                        with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
+                            json.dump([], f)
+                    except Exception:
+                        pass
+                    try:
+                        _clear_client = _get_gsheet_client()
+                        _clear_sid = _get_gsheet_id()
+                        if _clear_client and _clear_sid:
+                            _clear_sheet = _clear_client.open_by_key(_clear_sid)
+                            _clear_ws = _clear_sheet.worksheet("Auto Comparison")
+                            _clear_ws.clear()
+                            _clear_ws.append_row([
+                                "timestamp", "elapsed_minutes", "provider",
+                                "difficulty_score", "arabic_score", "quality_score", "medical_score",
+                                "avg_speed", "json_rate", "error_rate", "diversity", "diversity_ratio", "n_calls",
+                                "easy_ai", "easy_local", "medium_ai", "medium_local", "hard_ai", "hard_local",
+                                "legit_easy_ai", "legit_easy_local", "legit_medium_ai", "legit_medium_local",
+                                "legit_hard_ai", "legit_hard_local",
+                            ])
+                    except Exception:
+                        pass
+                    st.session_state.pop("_last_auto_comparison", None)
+                    st.session_state.pop("_gsheet_auto_comp_cache", None)
+                    st.session_state.pop("_confirm_clear_history", None)
+                    st.success("✅ تم مسح كل سجل المقارنات (محلي + Google Sheets)" if _is_ar
+                               else "✅ All comparison history cleared (local + Google Sheets)")
+                    st.rerun()
+
             if _start_comparison:
                 _progress_bar = st.progress(0.0)
                 _status_box = st.empty()
