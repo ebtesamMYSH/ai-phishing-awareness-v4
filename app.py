@@ -775,6 +775,14 @@ def check_medical_relevance(result):
 # applied at the safe granularity for this app's architecture.
 # =============================================================
 _COMPARISON_PROVIDERS = ["groq", "anthropic", "openai", "gemini"]
+# Groq's own single-worker, 13s-paced turn is the single biggest time cost
+# in the automated comparison (see run_full_auto_comparison's docstring).
+# Capped at 15 cycles (30 calls) regardless of whether other providers are
+# also selected: 30 x 13s pacing = ~6.5 min minimum, comfortably under any
+# platform/connection ceiling even with several retries added on top —
+# versus 50 cycles' ~22+ minute minimum that was landing right at the
+# ~30-minute mark where runs were observed getting cut off.
+_GROQ_MAX_CYCLES = 15
 _COMPARISON_WEIGHTS = {
     "difficulty_score": 0.25,
     "quality_arabic_avg": 0.20,   # average of quality_score and arabic_score
@@ -856,7 +864,21 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
     _selected_providers = providers if providers else list(_COMPARISON_PROVIDERS)
     _groq_solo = (_selected_providers == ["groq"])
     original_provider = st.session_state.get("ai_provider")
-    _plan_lengths = {p: (10 if (_groq_solo and p == "groq") else len(ROTATION_PLAN)) for p in _selected_providers}
+    # UPDATED 2026-08-22: Groq is now capped at _GROQ_MAX_CYCLES regardless
+    # of whether it's running solo or alongside other providers. Providers
+    # run SEQUENTIALLY (this for-loop), never in parallel with each other —
+    # so Groq's own single-worker, 13s-paced bottleneck costs the same
+    # ~22+ minute minimum whether or not other providers are also
+    # selected. Confirmed live: a full 4-provider run with Groq at 50
+    # cycles was landing right around the ~30-minute mark and getting cut
+    # off (counter resetting to zero) before Groq's turn — and often
+    # before the run — could finish, almost certainly a platform/
+    # connection-level ceiling on one continuous long-running script, not
+    # a Groq outage (groqstatus.com shows fully operational). Capping
+    # Groq's turn to _GROQ_MAX_CYCLES keeps its worst case comfortably
+    # under 10 minutes even with several retries, leaving plenty of
+    # headroom for the other 3 providers' sequential turns afterward.
+    _plan_lengths = {p: (min(_GROQ_MAX_CYCLES, len(ROTATION_PLAN)) if p == "groq" else len(ROTATION_PLAN)) for p in _selected_providers}
     total_steps = sum(_plan_lengths.values()) * 2
     step_state = {"n": 0}
     step_lock = threading.Lock()
@@ -869,6 +891,8 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
     _main_ctx = get_script_run_ctx() if get_script_run_ctx else None
 
     for prov in _selected_providers:
+        if prov == "groq":
+            _groq_circuit_reset()
         _prov_plan = ROTATION_PLAN[:_plan_lengths[prov]]
         st.session_state["ai_provider"] = prov
         scores = {"difficulty_score": [], "arabic_score": [], "quality_score": [], "medical_score": []}
@@ -3767,21 +3791,28 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 with _sel_cols[_sci]:
                     st.checkbox(_prov_display[_scp], value=True, key=f"_comp_select_{_scp}")
             _selected_providers = [p for p in _COMPARISON_PROVIDERS if st.session_state.get(f"_comp_select_{p}", True)]
+            _groq_selected = ("groq" in _selected_providers)
             _groq_solo_selected = (_selected_providers == ["groq"])
             _n_sel = len(_selected_providers)
-            _cycles_label = "10" if _groq_solo_selected else "50"
+            _n_others = _n_sel - (1 if _groq_selected else 0)
             if _n_sel == 0:
                 _btn_label_ar = "▶️ اختاري مزوّد واحد على الأقل"
                 _btn_label_en = "▶️ Select at least one provider"
+            elif _groq_solo_selected:
+                _btn_label_ar = f"▶️ ابدأ المقارنة (Groq × {_GROQ_MAX_CYCLES} دورة)"
+                _btn_label_en = f"▶️ Start Comparison (Groq × {_GROQ_MAX_CYCLES} cycles)"
+            elif _groq_selected:
+                _btn_label_ar = f"▶️ ابدأ المقارنة (Groq × {_GROQ_MAX_CYCLES} دورة + {_n_others} مزوّد × 50 دورة)"
+                _btn_label_en = f"▶️ Start Comparison (Groq × {_GROQ_MAX_CYCLES} cycles + {_n_others} provider{'s' if _n_others != 1 else ''} × 50 cycles)"
             else:
-                _btn_label_ar = f"▶️ ابدأ المقارنة ({_n_sel} مزوّد × {_cycles_label} دورة)"
-                _btn_label_en = f"▶️ Start Comparison ({_n_sel} provider{'s' if _n_sel != 1 else ''} × {_cycles_label} cycles)"
-            if _groq_solo_selected:
+                _btn_label_ar = f"▶️ ابدأ المقارنة ({_n_sel} مزوّد × 50 دورة)"
+                _btn_label_en = f"▶️ Start Comparison ({_n_sel} provider{'s' if _n_sel != 1 else ''} × 50 cycles)"
+            if _groq_selected:
                 st.markdown(
                     f'<div dir="{_dir}" style="text-align:{_align};font-size:.78rem;color:#FCD34D;margin-bottom:.5rem;">'
-                    + ("⚠️ Groq وحده محدّد — عدد الدورات يُخفَّض تلقائيًا لـ10 (بدل 50) بسبب حد الاستخدام الضيق عنده، عشان الوقت يصير معقول."
+                    + (f"⚠️ دور Groq مخفّض دائمًا لـ{_GROQ_MAX_CYCLES} دورة (بدل 50) بسبب حد الاستخدام الضيق عنده — يشتغل بمعدّل واحد بالمرة، فحتى مع الباقي، دوره لحاله ياخذ وقت. لو فشل عدة مرات متتالية، يتوقف تلقائيًا عن المحاولة ويكمل بالمحتوى المحلي البديل عشان ما يضيّع وقت التشغيلة كاملة."
                        if _is_ar else
-                       "⚠️ Groq is the only one selected — cycles are auto-reduced to 10 (from 50) because of its tight rate limit, to keep the wait reasonable.")
+                       f"⚠️ Groq's turn is always capped at {_GROQ_MAX_CYCLES} cycles (from 50) because of its tight rate limit — it runs one call at a time, so even alongside others its own turn takes real time. If it fails repeatedly in a row, it auto-stops trying and falls back to local content so it doesn't burn the whole run's time budget.")
                     + '</div>', unsafe_allow_html=True
                 )
             _comp_col1, _comp_col2 = st.columns([3, 1])
@@ -4622,6 +4653,50 @@ _GROQ_PACING_LOCK = threading.Lock()
 _GROQ_PACING_STATE = {"last_call_ts": 0.0}
 _GROQ_MIN_GAP_SECONDS = 13.0  # ~4.6 calls/min, just under the ~4.7/min the 8,000 TPM ceiling allows
 
+# =============================================================
+# GROQ CIRCUIT BREAKER — added 2026-08-22
+# -------------------------------------------------------------
+# If Groq is having a rough patch RIGHT NOW (e.g. the intermittent
+# empty-response "char 0" issue), retrying every single call still costs
+# real wall-clock time per attempt. Burning the FULL remaining cycle
+# budget retrying a provider that keeps failing is exactly what pushed
+# past-30-minute runs. After _GROQ_CIRCUIT_THRESHOLD consecutive
+# full-failures (i.e. exhausted all retries) within one automated-
+# comparison run, stop attempting the network call entirely for the rest
+# of Groq's turn — fall straight to local content instead, fast. This
+# protects total run time without needing to know in advance whether
+# today is a "Groq is having issues" day. Reset at the start of every new
+# run (see run_full_auto_comparison) so a bad patch during one run never
+# permanently disables Groq for later runs/sessions.
+# =============================================================
+_GROQ_CIRCUIT_LOCK = threading.Lock()
+_GROQ_CIRCUIT_STATE = {"consecutive_failures": 0, "open": False}
+_GROQ_CIRCUIT_THRESHOLD = 5
+
+
+def _groq_circuit_reset():
+    with _GROQ_CIRCUIT_LOCK:
+        _GROQ_CIRCUIT_STATE["consecutive_failures"] = 0
+        _GROQ_CIRCUIT_STATE["open"] = False
+
+
+def _groq_circuit_record_result(success):
+    """Call after every FINAL (post-retry) Groq outcome. Returns True if
+    the circuit is now open (caller should stop trying Groq)."""
+    with _GROQ_CIRCUIT_LOCK:
+        if success:
+            _GROQ_CIRCUIT_STATE["consecutive_failures"] = 0
+        else:
+            _GROQ_CIRCUIT_STATE["consecutive_failures"] += 1
+            if _GROQ_CIRCUIT_STATE["consecutive_failures"] >= _GROQ_CIRCUIT_THRESHOLD:
+                _GROQ_CIRCUIT_STATE["open"] = True
+        return _GROQ_CIRCUIT_STATE["open"]
+
+
+def _groq_circuit_is_open():
+    with _GROQ_CIRCUIT_LOCK:
+        return _GROQ_CIRCUIT_STATE["open"]
+
 
 def _pace_groq_call():
     with _GROQ_PACING_LOCK:
@@ -4634,6 +4709,15 @@ def _pace_groq_call():
 
 def call_ai(prompt, max_tokens=1600):
     provider = st.session_state.get("ai_provider", "groq")
+    # Circuit breaker check: if Groq has failed _GROQ_CIRCUIT_THRESHOLD
+    # times in a row (post-retries) earlier in THIS run, skip the network
+    # call entirely — fall straight to the error path so the caller's
+    # existing local-fallback logic (generate_email/generate_assess_email)
+    # kicks in immediately instead of burning another ~20-60s (pacing +
+    # timeout + retries) on a provider that's clearly having a rough
+    # patch right now. See _groq_circuit_reset()/_groq_circuit_is_open().
+    if provider == "groq" and _groq_circuit_is_open():
+        return {"error": {"message": "Groq circuit breaker open (too many consecutive failures this run) — skipping to local fallback to save time."}}
     attempts = 3 if provider in {"gemini", "anthropic", "groq"} else 2
     # REVERTED 2026-08-20: this used to route every call through
     # _call_with_hard_deadline, which ran the real network call inside a
@@ -4653,6 +4737,7 @@ def call_ai(prompt, max_tokens=1600):
     # makes the request) is the only ceiling now, same as it always was
     # for every other successful call in this app.
     last = None
+    result = None
     for attempt in range(attempts):
         if provider == "groq":
             _pace_groq_call()
@@ -4666,7 +4751,8 @@ def call_ai(prompt, max_tokens=1600):
         except Exception as e:
             data = {"error": {"message": str(e)}}
         if not _is_retryable_ai_error(data):
-            return data
+            result = data
+            break
         last = data
         if _is_rate_limit_error(data):
             # 8s, then 16s — a real wait, instead of the 1.2s/2.4s generic
@@ -4676,7 +4762,7 @@ def call_ai(prompt, max_tokens=1600):
             _time_patch.sleep(8.0 * (attempt + 1))
         else:
             _time_patch.sleep(1.2 * (attempt + 1))
-    if last is not None and _is_rate_limit_error(last):
+    if result is None and last is not None and _is_rate_limit_error(last):
         # One bonus attempt specifically for rate limits, past the
         # provider's normal attempt count, with the longest wait of all —
         # this is what actually gave the window time to reset in testing.
@@ -4693,9 +4779,15 @@ def call_ai(prompt, max_tokens=1600):
         except Exception as e:
             data = {"error": {"message": str(e)}}
         if not _is_retryable_ai_error(data):
-            return data
-        last = data
-    return last or {"error": {"message": "AI provider failed after retries."}}
+            result = data
+        else:
+            last = data
+    if result is None:
+        result = last or {"error": {"message": "AI provider failed after retries."}}
+    if provider == "groq":
+        _groq_circuit_record_result(success=("error" not in result))
+    return result
+
 
 
 # Stronger prompt wording that avoids placeholder-like indicator titles.
