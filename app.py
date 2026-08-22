@@ -889,6 +889,8 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
     # This is Streamlit's own documented pattern for ThreadPoolExecutor work
     # that needs session_state: https://docs.streamlit.io/develop/concepts/design/multithreading
     _main_ctx = get_script_run_ctx() if get_script_run_ctx else None
+    _reset_rate_limit_hits()
+    _run_start_ts = time.time()
 
     def _run_provider_turn(prov):
         if add_script_run_ctx and _main_ctx:
@@ -1048,6 +1050,12 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
             "diversity_ratio": round(diversity_n / calls * 100) if calls else None,
             "n_calls": calls,
             "ai_usage": usage_tally,
+            # Per-provider wall-clock time — meaningful now that providers
+            # run concurrently (they all start from the same _run_start_ts),
+            # unlike the old shared/overwritten "elapsed_minutes" field on
+            # the whole run record.
+            "provider_elapsed_minutes": round((time.time() - _run_start_ts) / 60, 1),
+            "hit_rate_limit": prov in _get_rate_limit_hit_providers(),
         }
         if provider_done_callback:
             with step_lock:
@@ -3624,6 +3632,34 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 (f"✅ خلصت المقارنة ({_just_saved} دقيقة) — النتائج محفوظة دائمًا، والأرقام تحت محدّثة الحين." if _is_ar
                  else f"✅ Comparison finished ({_just_saved} min) — results saved permanently, numbers below are now up to date.")
             )
+            # عرض وقت كل مزوّد لحاله — مفيد الحين إن المزودين يشتغلون
+            # بالتوازي، فمعرفة مين أخذ أطول وقت (عادة Groq) توضح ليش
+            # التشغيلة كلها استغرقت هالمدة.
+            _prov_times = st.session_state.pop("_auto_comparison_provider_times", {}) or {}
+            if _prov_times:
+                _time_names = {"groq": "Groq", "anthropic": "Claude", "openai": "GPT-4o", "gemini": "Gemini"}
+                _time_parts = [
+                    f"{_time_names.get(p, p)}: {t} " + ("دقيقة" if _is_ar else "min")
+                    for p, t in _prov_times.items() if t is not None
+                ]
+                if _time_parts:
+                    st.markdown(
+                        f'<div dir="{_dir}" style="text-align:{_align};font-size:.8rem;color:#9CA3AF;margin:-.3rem 0 .6rem;">'
+                        + "⏱️ " + " | ".join(_time_parts) + '</div>', unsafe_allow_html=True
+                    )
+            # تنبيه لو أي مزوّد صادف حد استخدام أثناء دوره — حتى لو
+            # تعافى بالنهاية عن طريق إعادة المحاولة والنتيجة النهائية
+            # سليمة، هذا مؤشر مبكر إنه يستاهل شحن رصيد قبل ما يصير فشل
+            # فعلي بالتشغيلة الجاية.
+            _rl_hits = st.session_state.pop("_auto_comparison_rate_limit_hits", []) or []
+            if _rl_hits:
+                _rl_names = {"groq": "Groq", "anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
+                _rl_list = "، ".join(_rl_names.get(p, p) for p in _rl_hits) if _is_ar else ", ".join(_rl_names.get(p, p) for p in _rl_hits)
+                st.warning(
+                    (f"⚠️ {_rl_list} قرّب أو وصل حد استخدامه أثناء هذي التشغيلة. فكّري تشحنين رصيد قبل التشغيلة الجاية."
+                     if _is_ar else
+                     f"⚠️ {_rl_list} hit or came close to its usage limit during this run. Consider topping up credit before the next run.")
+                )
 
         # ── نسخة Google Sheets الدائمة (منقولة من Provider Control) ──
         try:
@@ -3657,122 +3693,108 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
         except Exception:
             pass
 
-        # ── نسبة الاعتماد الفعلي على API مقابل القالب المحلي ──
-        # يستخدم ai_full_source_stats — المتتبّع الموحّد الشامل الذي يقيس
-        # القرار النهائي الفعلي (بعد طبقة v42 الكاملة). يعرض التصيّدي
-        # والشرعي بشكل متوازٍ ومتماثل، كل واحد منهم عبر مستويات الصعوبة
-        # الثلاثة + إجمالي، لأن الاثنين الآن يُتتبّعان بنفس الدقة.
-        # معزول بالكامل داخل try/except حتى لا يؤثر أي خطأ هنا على بقية اللوحة.
+        # ── نسبة توليد المحتوى عبر AI API لكل مزوّد لحاله ──
+        # بطاقة واحدة لكل مزوّد (مو مجموع الأربعة سوا زي قبل) — عشان
+        # نقدر نشخّص فورًا مين المزوّد الضعيف وبأي مستوى صعوبة بالضبط،
+        # بدل ما نروح نفلتر الشيت يدويًا. معزول بالكامل داخل try/except
+        # حتى لا يؤثر أي خطأ هنا على بقية اللوحة.
         try:
-            # SINGLE SOURCE OF TRUTH: read from the latest SAVED automated
-            # comparison run (summed across all 4 providers) instead of
-            # st.session_state["ai_full_source_stats"] — that session_state
-            # path is only reliably populated by the normal, single-
-            # threaded learning/assessment flow; during the automated
-            # comparison the actual generation happens inside worker
-            # threads, and _tag_source()'s dict-return path (aggregated in
-            # the main thread and saved into each run's "ai_usage" field)
-            # is the only path guaranteed correct there. Using the same
-            # saved-run data these boxes show is exactly what gets written
-            # to the "Auto Comparison" sheet, so there's one consistent
-            # number everywhere instead of two parallel, disagreeing ones.
             _latest_run_for_usage = st.session_state.get("_last_auto_comparison")
             if not _latest_run_for_usage:
                 _hist_for_usage = load_auto_comparisons()
                 _latest_run_for_usage = _hist_for_usage[-1] if _hist_for_usage else None
 
-            _full_src = {}
-            if _latest_run_for_usage:
-                for _prov_r in (_latest_run_for_usage.get("results") or {}).values():
-                    for _bk, _stats in (_prov_r.get("ai_usage") or {}).items():
-                        _acc = _full_src.setdefault(_bk, {"api": 0, "local": 0})
-                        _acc["api"] += (_stats or {}).get("api", 0)
-                        _acc["local"] += (_stats or {}).get("local", 0)
+            _results_by_prov = (_latest_run_for_usage or {}).get("results") or {}
 
-            def _usage_box(stats, label):
-                _api_n, _local_n = stats.get("api", 0), stats.get("local", 0)
-                _tot = _api_n + _local_n
-                if _tot == 0:
-                    _pct_html = '<div style="font-size:.72rem;color:#6B7280;">' + ("لا بيانات" if _is_ar else "No data") + '</div>'
-                else:
-                    _pct = round(100 * _api_n / _tot)
-                    # Explicit "AI success rate" caption directly under the
-                    # number — the number alone (just "29%") was ambiguous:
-                    # is that 29% AI or 29% local? Spelling it out removes
-                    # any doubt at a glance.
-                    _pct_caption = ("نسبة نجاح AI الفعلي" if _is_ar else "AI success rate")
-                    _pct_html = (
-                        f'<div style="font-size:1.3rem;font-weight:900;color:#93C5FD;">{_pct}%</div>'
-                        f'<div style="font-size:.65rem;color:#6B7280;margin-top:-.1rem;">{_pct_caption}</div>'
-                    )
-                _ai_word = "AI" if not _is_ar else "ذكاء"
-                _local_word = "local" if not _is_ar else "محلي"
-                # Plain HTML table (not CSS grid/flex) for the icon|number|label
-                # rows — tables guarantee the number column lines up at the
-                # exact same position across both rows in every browser,
-                # regardless of "AI"/"local" word-length differences.
-                _rows_html = (
-                    f'<tr>'
-                    f'<td style="text-align:center;color:#6EE7B7;padding:0 .15rem;">✅</td>'
-                    f'<td style="text-align:center;color:#6EE7B7;padding:0 .15rem;">{_api_n}</td>'
-                    f'<td style="text-align:start;color:#6EE7B7;padding:0 .15rem;">{_ai_word}</td>'
-                    f'</tr>'
-                    f'<tr>'
-                    f'<td style="text-align:center;color:#FCA5A5;padding:0 .15rem;">📋</td>'
-                    f'<td style="text-align:center;color:#FCA5A5;padding:0 .15rem;">{_local_n}</td>'
-                    f'<td style="text-align:start;color:#FCA5A5;padding:0 .15rem;">{_local_word}</td>'
-                    f'</tr>'
-                )
+            _card_colors = {"groq": "#F59E0B", "anthropic": "#A78BFA", "openai": "#34D399", "gemini": "#60A5FA"}
+            _card_names = {"groq": "Groq", "anthropic": "Claude", "openai": "GPT-4o", "gemini": "Gemini"}
+
+            def _pct_color(pct):
+                if pct is None:
+                    return "#9CA3AF"
+                if pct >= 80:
+                    return "#6EE7B7"
+                if pct >= 50:
+                    return "#FCD34D"
+                return "#FCA5A5"
+
+            def _cell_html(stats):
+                api_n = (stats or {}).get("api", 0)
+                tot = api_n + (stats or {}).get("local", 0)
+                if tot == 0:
+                    return '<td style="text-align:center;padding:.15rem;"><span style="color:#4B5563;font-size:.72rem;">—</span></td>'
+                pct = round(100 * api_n / tot)
+                c = _pct_color(pct)
                 return (
-                    f'<div dir="{_dir}" style="border:1px solid rgba(255,255,255,.12);border-radius:12px;'
-                    f'padding:.7rem .6rem;text-align:center;">'
-                    f'<div style="font-weight:800;font-size:.85rem;color:#E2E8F0;margin-bottom:.3rem;">{label}</div>'
-                    f'{_pct_html}'
-                    f'<table style="margin:.35rem auto 0;border-collapse:collapse;font-size:.78rem;">'
-                    f'{_rows_html}</table>'
+                    f'<td style="text-align:center;padding:.15rem;">'
+                    f'<div style="color:{c};font-weight:800;font-size:.8rem;">{pct}%</div>'
+                    f'<div style="color:#6B7280;font-size:.62rem;">({api_n}/{tot})</div>'
+                    f'</td>'
+                )
+
+            def _provider_card(prov):
+                usage = (_results_by_prov.get(prov) or {}).get("ai_usage") or {}
+                phish_keys = ["easy", "medium", "hard"]
+                legit_keys = ["legitimate_easy", "legitimate_medium", "legitimate_hard"]
+                total_api = sum((usage.get(k) or {}).get("api", 0) for k in phish_keys + legit_keys)
+                total_all = sum(
+                    (usage.get(k) or {}).get("api", 0) + (usage.get(k) or {}).get("local", 0)
+                    for k in phish_keys + legit_keys
+                )
+                overall_pct = round(100 * total_api / total_all) if total_all else None
+                overall_color = _pct_color(overall_pct)
+                overall_txt = f"{overall_pct}%" if overall_pct is not None else "—"
+                diff_labels_html = (
+                    '<tr>'
+                    + ''.join(
+                        f'<td style="text-align:center;font-size:.62rem;color:#6B7280;">{lbl}</td>'
+                        for lbl in (["سهل", "متوسط", "صعب"] if _is_ar else ["Easy", "Medium", "Hard"])
+                    )
+                    + '</tr>'
+                )
+                phish_row = '<tr>' + ''.join(_cell_html(usage.get(k)) for k in phish_keys) + '</tr>'
+                legit_row = '<tr>' + ''.join(_cell_html(usage.get(k)) for k in legit_keys) + '</tr>'
+                dot = _card_colors.get(prov, "#9CA3AF")
+                name = _card_names.get(prov, prov)
+                total_lbl = ("إجمالي" if _is_ar else "total")
+                phish_lbl = ("تصيّدي" if _is_ar else "Phishing")
+                legit_lbl = ("شرعي" if _is_ar else "Legitimate")
+                return (
+                    f'<div dir="{_dir}" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.12);'
+                    f'border-radius:12px;padding:.75rem .6rem;">'
+                    f'<div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem;">'
+                    f'<div style="width:12px;height:12px;border-radius:50%;background:{dot};flex-shrink:0;"></div>'
+                    f'<span style="font-weight:800;font-size:.88rem;color:#E2E8F0;">{name}</span>'
+                    f'</div>'
+                    f'<div style="margin-bottom:.55rem;">'
+                    f'<div style="font-size:1.4rem;font-weight:900;color:{overall_color};">{overall_txt}</div>'
+                    f'<div style="font-size:.62rem;color:#6B7280;">{total_api}/{total_all} {total_lbl}</div>'
+                    f'</div>'
+                    f'<div style="border-top:1px solid rgba(255,255,255,.1);padding-top:.35rem;margin-bottom:.35rem;">'
+                    f'<div style="font-size:.68rem;color:#9CA3AF;margin-bottom:.2rem;">🎣 {phish_lbl}</div>'
+                    f'<table style="width:100%;border-collapse:collapse;">{diff_labels_html}{phish_row}</table>'
+                    f'</div>'
+                    f'<div style="border-top:1px solid rgba(255,255,255,.1);padding-top:.35rem;">'
+                    f'<div style="font-size:.68rem;color:#9CA3AF;margin-bottom:.2rem;">📋 {legit_lbl}</div>'
+                    f'<table style="width:100%;border-collapse:collapse;">{diff_labels_html}{legit_row}</table>'
+                    f'</div>'
                     f'</div>'
                 )
 
-            def _sum_stats(keys):
-                return {
-                    "api": sum(_full_src.get(k, {}).get("api", 0) for k in keys),
-                    "local": sum(_full_src.get(k, {}).get("local", 0) for k in keys),
-                }
-
-            def _render_type_row(title_ar, title_en, prefix, keys):
-                st.markdown(
-                    f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1rem;margin-bottom:.4rem;">'
-                    + (title_ar if _is_ar else title_en) + '</div>', unsafe_allow_html=True
-                )
-                _cols = st.columns(4)
-                _diff_labels = [
-                    ("easy", "سهل" if _is_ar else "Easy"),
-                    ("medium", "متوسط" if _is_ar else "Medium"),
-                    ("hard", "صعب" if _is_ar else "Hard"),
-                ]
-                for _ci, (_dk, _dl) in enumerate(_diff_labels):
-                    with _cols[_ci]:
-                        st.markdown(_usage_box(_full_src.get(keys[_dk], {"api": 0, "local": 0}), _dl), unsafe_allow_html=True)
-                with _cols[3]:
-                    _overall_lbl = ("الإجمالي" if _is_ar else "Overall")
-                    st.markdown(_usage_box(_sum_stats(keys.values()), f"🔷 {_overall_lbl}"), unsafe_allow_html=True)
-
-            _render_type_row(
-                "🎣 اعتماد رسائل التصيّد على الذكاء الاصطناعي",
-                "🎣 Phishing email AI reliance",
-                "phish",
-                {"easy": "easy", "medium": "medium", "hard": "hard"},
+            st.markdown(
+                f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1rem;margin-bottom:.5rem;">'
+                + ("📊 نسبة توليد المحتوى عبر AI API (الهدف: أعلى نسبة ممكنة)" if _is_ar
+                   else "📊 AI API generation rate (goal: as high as possible)")
+                + '</div>', unsafe_allow_html=True
             )
-            st.markdown('<div style="height:.7rem"></div>', unsafe_allow_html=True)
-            _render_type_row(
-                "✅ اعتماد الرسائل الشرعية على الذكاء الاصطناعي",
-                "✅ Legitimate email AI reliance",
-                "legit",
-                {"easy": "legitimate_easy", "medium": "legitimate_medium", "hard": "legitimate_hard"},
-            )
+            _card_cols = st.columns(4)
+            for _ci, _cp in enumerate(_COMPARISON_PROVIDERS):
+                with _card_cols[_ci]:
+                    st.markdown(_provider_card(_cp), unsafe_allow_html=True)
+
             if _latest_run_for_usage:
                 st.markdown(
-                    f'<div dir="{_dir}" style="text-align:{_align};font-size:.72rem;color:#6B7280;margin-top:.3rem;">'
+                    f'<div dir="{_dir}" style="text-align:{_align};font-size:.72rem;color:#6B7280;margin-top:.4rem;">'
                     + (f"من آخر تشغيلة محفوظة — {_latest_run_for_usage.get('timestamp','')}" if _is_ar
                        else f"From the latest saved run — {_latest_run_for_usage.get('timestamp','')}")
                     + '</div>', unsafe_allow_html=True
@@ -3833,9 +3855,9 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             if _groq_selected and not _groq_solo_selected:
                 st.markdown(
                     f'<div dir="{_dir}" style="text-align:{_align};font-size:.78rem;color:#FCD34D;margin-bottom:.5rem;">'
-                    + ("⚠️ كل المزودين يشتغلون بنفس الـ50 دورة بالضبط — مقارنة عادلة 100%. المزودين يشتغلون بالتوازي (مو بالتتابع)، فالوقت الكلي = وقت أطول واحد بس (عادة Groq، بسبب حد استخدامه الضيق يخليه ياخذ ~20-22 دقيقة)، مو مجموع الأربعة. لو Groq فشل عدة مرات متتالية، يتوقف تلقائيًا ويكمل بالمحتوى المحلي البديل بدل ما يضيّع الوقت."
+                    + ("⚠️ المزودين الأربعة يشتغلون بالتوازي (مو بالتتابع) — نفس الـ50 دورة للجميع."
                        if _is_ar else
-                       "⚠️ Every provider runs the exact same 50 cycles — a fully fair comparison. Providers run in parallel (not sequentially), so total time ≈ the slowest one alone (usually Groq, ~20-22 min due to its tight rate limit), not the sum of all four. If Groq fails repeatedly in a row, it auto-stops trying and falls back to local content instead of burning time.")
+                       "⚠️ All four providers run in parallel (not sequentially) — the same 50 cycles for everyone.")
                     + '</div>', unsafe_allow_html=True
                 )
             elif _groq_solo_selected:
@@ -4012,6 +4034,13 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                     # this time the boxes/counter draw AFTER the new data
                     # already exists on disk/sheet.
                     st.session_state["_auto_comparison_just_saved"] = _elapsed_min
+                    st.session_state["_auto_comparison_provider_times"] = {
+                        p: (_comparison_results.get(p) or {}).get("provider_elapsed_minutes")
+                        for p in _selected_providers
+                    }
+                    st.session_state["_auto_comparison_rate_limit_hits"] = [
+                        p for p in _selected_providers if (_comparison_results.get(p) or {}).get("hit_rate_limit")
+                    ]
                     st.rerun()
                 except Exception as _run_err:
                     try: _store_debug("run_full_auto_comparison", str(_run_err))
@@ -4658,6 +4687,36 @@ def _is_rate_limit_error(data):
     msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
     return bool(_RATE_LIMIT_PATTERN.search(msg))
 
+# =============================================================
+# RATE-LIMIT HIT TRACKER — added 2026-08-22
+# -------------------------------------------------------------
+# Tracks which providers hit a rate-limit response at least once during
+# the CURRENT automated comparison run, even if the retry logic
+# ultimately recovered and the run's error_rate ended at 0%. A clean
+# final score doesn't mean nothing went wrong along the way — this
+# powers a post-run "you're close to this provider's usage limit"
+# banner so the person knows to top up credit before it becomes an
+# actual failure. Reset at the start of every run.
+# =============================================================
+_RATE_LIMIT_HITS_LOCK = threading.Lock()
+_RATE_LIMIT_HITS_STATE = {}
+
+
+def _reset_rate_limit_hits():
+    with _RATE_LIMIT_HITS_LOCK:
+        _RATE_LIMIT_HITS_STATE.clear()
+
+
+def _mark_rate_limit_hit(provider):
+    with _RATE_LIMIT_HITS_LOCK:
+        _RATE_LIMIT_HITS_STATE[provider] = True
+
+
+def _get_rate_limit_hit_providers():
+    with _RATE_LIMIT_HITS_LOCK:
+        return set(_RATE_LIMIT_HITS_STATE.keys())
+
+
 def _compact_prompt_for_slow_provider(prompt):
     """Shorten long prompts for Claude/Gemini without removing the JSON contract."""
     if not isinstance(prompt, str) or len(prompt) < 3500:
@@ -4787,6 +4846,7 @@ def call_ai(prompt, max_tokens=1600, provider=None):
             break
         last = data
         if _is_rate_limit_error(data):
+            _mark_rate_limit_hit(provider)
             # 8s, then 16s — a real wait, instead of the 1.2s/2.4s generic
             # backoff that never gave the rate-limit window a chance to
             # actually clear before retrying into the same still-exhausted
@@ -4795,6 +4855,7 @@ def call_ai(prompt, max_tokens=1600, provider=None):
         else:
             _time_patch.sleep(1.2 * (attempt + 1))
     if result is None and last is not None and _is_rate_limit_error(last):
+        _mark_rate_limit_hit(provider)
         # One bonus attempt specifically for rate limits, past the
         # provider's normal attempt count, with the longest wait of all —
         # this is what actually gave the window time to reset in testing.
