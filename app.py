@@ -3622,44 +3622,59 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
         st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
 
         # If a comparison just finished (flag set right before the
-        # st.rerun() that brought us here), show the success message now —
-        # on THIS pass the boxes/counter below are already reading the
-        # fresh data, so the confirmation and the updated numbers appear
-        # together instead of the message showing before a stale render.
+        # st.rerun() that brought us here), show the one-time success
+        # toast now — this part IS meant to be transient (it's a
+        # "just happened" confirmation).
         _just_saved = st.session_state.pop("_auto_comparison_just_saved", None)
+        st.session_state.pop("_auto_comparison_provider_times", None)
+        st.session_state.pop("_auto_comparison_rate_limit_hits", None)
         if _just_saved is not None:
             st.success(
                 (f"✅ خلصت المقارنة ({_just_saved} دقيقة) — النتائج محفوظة دائمًا، والأرقام تحت محدّثة الحين." if _is_ar
                  else f"✅ Comparison finished ({_just_saved} min) — results saved permanently, numbers below are now up to date.")
             )
-            # عرض وقت كل مزوّد لحاله — مفيد الحين إن المزودين يشتغلون
-            # بالتوازي، فمعرفة مين أخذ أطول وقت (عادة Groq) توضح ليش
-            # التشغيلة كلها استغرقت هالمدة.
-            _prov_times = st.session_state.pop("_auto_comparison_provider_times", {}) or {}
-            if _prov_times:
+
+        # ── وقت كل مزوّد + تنبيه حد الاستخدام — من آخر تشغيلة محفوظة ──
+        # PERSISTENT (not session_state-based): تُقرأ من نفس البيانات
+        # المحفوظة دائمًا على القرص/الشيت، فتفضل ظاهرة حتى بعد تحديث
+        # الصفحة أو الرجوع لها بعد ساعات — تختفي بس لما تُشغَّل مقارنة
+        # جديدة (لأنها ترجع تعكس بيانات "آخر تشغيلة" الجديدة). قبل هذا
+        # التعديل كانت تُقرأ من session_state، اللي يُمسح بأي rerun/تحديث
+        # صفحة — فكانت تختفي فورًا حتى لو المشكلة نفسها موجودة بالسجل.
+        try:
+            _latest_run_for_banner = st.session_state.get("_last_auto_comparison")
+            if not _latest_run_for_banner:
+                _hist_for_banner = load_auto_comparisons()
+                _latest_run_for_banner = _hist_for_banner[-1] if _hist_for_banner else None
+            _banner_results = (_latest_run_for_banner or {}).get("results") or {}
+
+            _prov_times = {p: r.get("provider_elapsed_minutes") for p, r in _banner_results.items()}
+            if any(t is not None for t in _prov_times.values()):
                 _time_names = {"groq": "Groq", "anthropic": "Claude", "openai": "GPT-4o", "gemini": "Gemini"}
                 _time_parts = [
                     f"{_time_names.get(p, p)}: {t} " + ("دقيقة" if _is_ar else "min")
                     for p, t in _prov_times.items() if t is not None
                 ]
-                if _time_parts:
-                    st.markdown(
-                        f'<div dir="{_dir}" style="text-align:{_align};font-size:.8rem;color:#9CA3AF;margin:-.3rem 0 .6rem;">'
-                        + "⏱️ " + " | ".join(_time_parts) + '</div>', unsafe_allow_html=True
-                    )
+                st.markdown(
+                    f'<div dir="{_dir}" style="text-align:{_align};font-size:.8rem;color:#9CA3AF;margin:0 0 .6rem;">'
+                    + "⏱️ " + " | ".join(_time_parts) + '</div>', unsafe_allow_html=True
+                )
+
             # تنبيه لو أي مزوّد صادف حد استخدام أثناء دوره — حتى لو
             # تعافى بالنهاية عن طريق إعادة المحاولة والنتيجة النهائية
             # سليمة، هذا مؤشر مبكر إنه يستاهل شحن رصيد قبل ما يصير فشل
             # فعلي بالتشغيلة الجاية.
-            _rl_hits = st.session_state.pop("_auto_comparison_rate_limit_hits", []) or []
+            _rl_hits = [p for p, r in _banner_results.items() if r.get("hit_rate_limit")]
             if _rl_hits:
                 _rl_names = {"groq": "Groq", "anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
-                _rl_list = "، ".join(_rl_names.get(p, p) for p in _rl_hits) if _is_ar else ", ".join(_rl_names.get(p, p) for p in _rl_hits)
+                _rl_list = ("، " if _is_ar else ", ").join(_rl_names.get(p, p) for p in _rl_hits)
                 st.warning(
                     (f"⚠️ {_rl_list} قرّب أو وصل حد استخدامه أثناء هذي التشغيلة. فكّري تشحنين رصيد قبل التشغيلة الجاية."
                      if _is_ar else
                      f"⚠️ {_rl_list} hit or came close to its usage limit during this run. Consider topping up credit before the next run.")
                 )
+        except Exception:
+            pass
 
         # ── نسخة Google Sheets الدائمة (منقولة من Provider Control) ──
         try:
@@ -3783,8 +3798,8 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
 
             st.markdown(
                 f'<div dir="{_dir}" style="text-align:{_align};font-weight:800;font-size:1rem;margin-bottom:.5rem;">'
-                + ("📊 نسبة توليد المحتوى عبر AI API (الهدف: أعلى نسبة ممكنة)" if _is_ar
-                   else "📊 AI API generation rate (goal: as high as possible)")
+                + ("📊 نسبة توليد المحتوى عبر AI API" if _is_ar
+                   else "📊 AI API generation rate")
                 + '</div>', unsafe_allow_html=True
             )
             _card_cols = st.columns(4)
