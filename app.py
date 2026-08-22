@@ -4545,7 +4545,25 @@ def _load_debug_log():
 import time as _time_patch
 
 _PROVIDER_RETRYABLE_PATTERNS = re.compile(
-    r"503|UNAVAILABLE|high demand|temporar|try again|rate limit|overloaded|timeout|timed out|deadline",
+    # BUGFIX 2026-08-22: Groq intermittently returns a completely EMPTY
+    # response body (not an error JSON — just zero bytes), typically
+    # under load. requests' resp.json() then raises its own
+    # JSONDecodeError ("Cannot parse JSON: line 1 column 1 (char 0)" /
+    # "Expecting value: line 1 column 1 (char 0)"), which call_ai's
+    # except-block wraps as {"error": "<that message>"}. Before this
+    # fix, none of the patterns below matched that message, so
+    # _is_retryable_ai_error() returned False and the call was treated
+    # as a PERMANENT failure — given up on instantly instead of
+    # retried — even though this is exactly the kind of transient
+    # network blip retrying already exists to handle. Confirmed live:
+    # this was firing repeatedly on Groq mid-comparison (Debug Log
+    # entries #13-#17, all "provider=groq | JSONDecodeError... char 0"),
+    # making Groq's turn slower/more failure-prone than necessary and
+    # contributing to comparisons stalling on Groq's very long turn
+    # (single-threaded, 13s-paced, so already ~22+ min minimum).
+    r"503|UNAVAILABLE|high demand|temporar|try again|rate limit|overloaded|timeout|timed out|deadline"
+    r"|cannot parse json|expecting value|char 0|connection reset|connection aborted|remote end closed"
+    r"|connectionerror|readtimeout|chunkedencodingerror",
     re.I,
 )
 # Rate-limit errors specifically need a MUCH longer wait than a transient
