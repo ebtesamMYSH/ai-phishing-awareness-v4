@@ -6,7 +6,7 @@
 #             phishing awareness training and assessment
 #             designed for Saudi healthcare employees.
 # Tech Stack: Python 3.9, Streamlit, Multi-Provider AI (Groq/Claude/OpenAI/Gemini)
-# AI Models : Groq GPT-OSS-120b | Claude claude-sonnet-4-6 | GPT-4o | Gemini 2.5 Flash
+# AI Models : Groq GPT-OSS-120b | Claude claude-sonnet-4-6 | GPT-5.6 Sol | Gemini 2.5 Flash
 # Admin     : Hidden Admin Panel at /?admin=true (password protected)
 #             Compare 4 AI providers with 8-metric scoring system, either
 #             manually (one cycle at a time) or via the one-click
@@ -446,7 +446,7 @@ def push_auto_comparison_to_gsheet(record):
                 usage_vals.append(bk_stats.get("api", ""))
                 usage_vals.append(bk_stats.get("local", ""))
             ws.append_row([ts, elapsed, prov] + [m.get(h, "") for h in headers[3:13]] + usage_vals,
-                          value_input_option="USER_ENTERED")
+                          value_input_option="RAW")
     except Exception:
         pass
 
@@ -517,15 +517,37 @@ def pull_auto_comparisons_from_gsheet():
 
 def merge_local_and_gsheet_auto_comparisons(local_runs):
     """Combine local auto_comparisons.json entries with the durable
-    Google Sheet copy, deduplicating by timestamp."""
+    Google Sheet copy, deduplicating by timestamp.
+
+    BUGFIX 2026-08-22: dedup used to compare raw timestamp strings
+    directly. Confirmed live: Google Sheets' USER_ENTERED write mode
+    auto-reformats a recognizable ISO datetime string on write —
+    "2026-08-22T18:23:42" (written) came back as
+    "2026-08-22 18:23:42" (T replaced with a space) when read back via
+    the API. Since the FASTEST provider (Gemini) is always the first
+    row written into a freshly-cleared sheet, and Sheets' auto-detection
+    behavior on a column's very first value can differ from later ones
+    in the same column, Gemini's row was consistently the one landing
+    with the reformatted timestamp — creating a "ghost" duplicate run
+    entry containing only Gemini every time. Switched the write side to
+    RAW (see push_auto_comparison_to_gsheet) so Sheets never reformats
+    it in the first place — but ALSO normalizing here as a second,
+    independent safety net against any other future formatting drift
+    between the two sources (timezone suffixes, trailing whitespace,
+    etc.), so a single point of failure doesn't reintroduce this bug."""
     sheet_runs = pull_auto_comparisons_from_gsheet()
     if not sheet_runs:
         return local_runs
-    seen = {r.get("timestamp") for r in local_runs}
+
+    def _norm_ts(ts):
+        return str(ts or "").strip().replace("T", " ")
+
+    seen = {_norm_ts(r.get("timestamp")) for r in local_runs}
     merged = list(local_runs)
     for r in sheet_runs:
-        if r.get("timestamp") not in seen:
-            seen.add(r.get("timestamp"))
+        _nts = _norm_ts(r.get("timestamp"))
+        if _nts not in seen:
+            seen.add(_nts)
             merged.append(r)
     merged.sort(key=lambda r: r.get("timestamp", ""))
     return merged
@@ -1838,9 +1860,28 @@ def call_ai(prompt, max_tokens=1600, provider=None):
                     "Authorization": f"Bearer {get_secret('OPENAI_API_KEY')}"
                 },
                 json={
-                    "model":       "gpt-4o",
-                    "max_tokens":  max_tokens,
-                    "temperature": 0.85,
+                    # UPDATED 2026-08-22: gpt-4o retired from ChatGPT
+                    # Feb 13, 2026 and is now a deprioritized legacy model
+                    # (confirmed: it no longer even appears in this
+                    # account's rate-limit tables, unlike current models) —
+                    # switched to gpt-5.6-sol, OpenAI's current flagship,
+                    # the fair like-for-like peer to Claude sonnet-4-6 /
+                    # Gemini 2.5 Flash / Groq's gpt-oss-120b in this
+                    # comparison. gpt-5.6-sol is a REASONING model, which
+                    # changes two request parameters vs the old gpt-4o call:
+                    # "max_tokens" -> "max_completion_tokens" (renamed for
+                    # this model family), and "temperature" is dropped
+                    # entirely (reasoning models reject it — a fixed
+                    # temperature doesn't apply to how they generate).
+                    # reasoning_effort="low": this task is straightforward
+                    # structured JSON generation, not a task needing deep
+                    # multi-step reasoning, so a low effort level keeps
+                    # latency/cost close to what gpt-4o used to cost here
+                    # instead of paying for reasoning depth this task
+                    # doesn't need.
+                    "model":       "gpt-5.6-sol",
+                    "max_completion_tokens": max_tokens,
+                    "reasoning_effort": "low",
                     "response_format": {"type": "json_object"},
                     "messages":    [
                         {"role": "system", "content": system_prompt},
@@ -2778,7 +2819,7 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
             st.markdown(f'<div style="font-size:.75rem;font-weight:800;color:#F59E0B;letter-spacing:.06em;margin-bottom:.5rem;direction:{dir_attr};">🔬 RESEARCHER MODE — AI Provider</div>', unsafe_allow_html=True)
             provider_options = {
                 "groq":      "🟠 Groq (GPT-OSS-120b) — Baseline v3",
-                "openai":    "🟢 ChatGPT  (GPT-4o) — Most used globally",
+                "openai":    "🟢 ChatGPT  (GPT-5.6 Sol) — Most used globally",
                 "anthropic": "🟣 Claude  (claude-sonnet-4-6) — Best writing quality",
                 "gemini":    "🔵 Gemini  (2.5 Flash) — Fastest growing",
             }
@@ -3510,7 +3551,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
     _persist_labels = {
         "groq":      "🟠 Groq (GPT-OSS-120b)",
         "anthropic": "🟣 Claude (claude-sonnet-4-6)",
-        "openai":    "🟢 OpenAI (GPT-4o)",
+        "openai":    "🟢 OpenAI (GPT-5.6 Sol)",
         "gemini":    "🔵 Gemini (2.5 Flash)",
     }
     st.markdown(f"""
@@ -3530,7 +3571,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
         provider_info = {
             "groq":      {"label": "🟠 Groq — GPT-OSS-120b",       "secret": "GROQ_API_KEY",      "color": "#F97316"},
             "anthropic": {"label": "🟣 Claude — claude-sonnet-4-6",  "secret": "ANTHROPIC_API_KEY", "color": "#A855F7"},
-            "openai":    {"label": "🟢 OpenAI — GPT-4o",             "secret": "OPENAI_API_KEY",    "color": "#22C55E"},
+            "openai":    {"label": "🟢 OpenAI — GPT-5.6 Sol",         "secret": "OPENAI_API_KEY",    "color": "#22C55E"},
             "gemini":    {"label": "🔵 Gemini — 2.5 Flash",          "secret": "GEMINI_API_KEY",    "color": "#3B82F6"},
         }
 
@@ -3664,7 +3705,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
 
             _prov_times = {p: r.get("provider_elapsed_minutes") for p, r in _banner_results.items()}
             if any(t is not None for t in _prov_times.values()):
-                _time_names = {"groq": "Groq", "anthropic": "Claude", "openai": "GPT-4o", "gemini": "Gemini"}
+                _time_names = {"groq": "Groq", "anthropic": "Claude", "openai": "GPT-5.6 Sol", "gemini": "Gemini"}
                 _time_parts = [
                     f"{_time_names.get(p, p)}: {t} " + ("دقيقة" if _is_ar else "min")
                     for p, t in _prov_times.items() if t is not None
@@ -3736,7 +3777,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             _results_by_prov = (_latest_run_for_usage or {}).get("results") or {}
 
             _card_colors = {"groq": "#F59E0B", "anthropic": "#A78BFA", "openai": "#34D399", "gemini": "#60A5FA"}
-            _card_names = {"groq": "Groq", "anthropic": "Claude", "openai": "GPT-4o", "gemini": "Gemini"}
+            _card_names = {"groq": "Groq", "anthropic": "Claude", "openai": "GPT-5.6 Sol", "gemini": "Gemini"}
 
             def _pct_color(pct):
                 if pct is None:
@@ -3857,7 +3898,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             _comp_running_key = "auto_comparison_running"
             _prov_display = {
                 "groq": "🟠 Groq", "anthropic": "🟣 Claude",
-                "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini",
+                "openai": "🟢 GPT-5.6 Sol", "gemini": "🔵 Gemini",
             }
             st.markdown(
                 f'<div dir="{_dir}" style="text-align:{_align};font-size:.85rem;color:#D1D5DB;margin-bottom:.4rem;">'
@@ -3971,7 +4012,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 _status_box = st.empty()
                 _prov_labels_map = {
                     "groq": "🟠 Groq (GPT-OSS-120b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)",
-                    "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)",
+                    "openai": "🟢 GPT-5.6 Sol", "gemini": "🔵 Gemini (2.5 Flash)",
                 }
 
                 def _on_progress(prov, cycle_no, step, total_steps):
@@ -4118,7 +4159,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                 scored = {p: compute_comparison_weighted_score(res.get(p, {})) for p in _COMPARISON_PROVIDERS}
                 valid_scores = {p: s for p, s in scored.items() if s is not None}
                 winner = max(valid_scores, key=valid_scores.get) if valid_scores else None
-                prov_labels = {"groq": "🟠 Groq (GPT-OSS-120b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)", "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini (2.5 Flash)"}
+                prov_labels = {"groq": "🟠 Groq (GPT-OSS-120b)", "anthropic": "🟣 Claude (claude-sonnet-4-6)", "openai": "🟢 GPT-5.6 Sol", "gemini": "🔵 Gemini (2.5 Flash)"}
 
                 def _fmt(v, suffix=""):
                     return f"{v}{suffix}" if v is not None else "—"
@@ -4172,7 +4213,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             if len(_history) >= 1:
                 _prov_labels_full = {
                     "groq": "🟠 Groq", "anthropic": "🟣 Claude",
-                    "openai": "🟢 GPT-4o", "gemini": "🔵 Gemini",
+                    "openai": "🟢 GPT-5.6 Sol", "gemini": "🔵 Gemini",
                 }
                 _win_counts = {p: 0 for p in _COMPARISON_PROVIDERS}
                 _score_sums = {p: [] for p in _COMPARISON_PROVIDERS}
