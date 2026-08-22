@@ -188,12 +188,24 @@ _METRICS_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "m
 # durability trade-off already accepted for runs.json/metrics.json.
 # =============================================================
 _AUTO_COMPARISON_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_comparisons.json")
+# GLOBAL (module-level) lock — NOT the per-run local `step_lock` inside
+# run_full_auto_comparison, which only serializes writers WITHIN one
+# call to that function. Confirmed live: two records sharing the same
+# timestamp ended up with different, conflicting content (one complete
+# 4-provider entry, one partial Gemini-only "ghost") — the classic
+# read-whole-file → modify → write-whole-file race, happening across
+# calls that a local lock can never see each other across (a stale
+# background thread from an abandoned/interrupted script run, a second
+# browser tab, etc.). This lock is created ONCE at import time and
+# shared by every save/load call in this process, closing that window.
+_AUTO_COMPARISON_FILE_LOCK = threading.RLock()
 
 def load_auto_comparisons():
     local = []
     try:
-        with open(_AUTO_COMPARISON_FILE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        with _AUTO_COMPARISON_FILE_LOCK:
+            with open(_AUTO_COMPARISON_FILE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
         if isinstance(data, list):
             local = data
     except Exception:
@@ -208,13 +220,14 @@ def save_auto_comparison(record):
     disk, then best-effort push it to the durable Google Sheets copy too
     (same pattern as save_run/push_run_to_gsheet) so it survives a
     container restart/redeploy that would otherwise wipe the local file."""
-    runs = load_auto_comparisons()
-    runs.append(record)
-    try:
-        with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(runs, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    with _AUTO_COMPARISON_FILE_LOCK:
+        runs = load_auto_comparisons()
+        runs.append(record)
+        try:
+            with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
+                json.dump(runs, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
     try:
         push_auto_comparison_to_gsheet(record)
     except Exception:
@@ -237,15 +250,16 @@ def save_auto_comparison_provider_partial(run_timestamp, elapsed_minutes, provid
     calling it with a single-provider "results" dict naturally produces
     one row per call instead of four at once."""
     try:
-        runs = load_auto_comparisons()
-        entry = next((r for r in runs if r.get("timestamp") == run_timestamp), None)
-        if entry is None:
-            entry = {"timestamp": run_timestamp, "elapsed_minutes": elapsed_minutes, "results": {}}
-            runs.append(entry)
-        entry["results"][provider] = provider_result
-        entry["elapsed_minutes"] = elapsed_minutes
-        with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(runs, f, ensure_ascii=False, indent=2)
+        with _AUTO_COMPARISON_FILE_LOCK:
+            runs = load_auto_comparisons()
+            entry = next((r for r in runs if r.get("timestamp") == run_timestamp), None)
+            if entry is None:
+                entry = {"timestamp": run_timestamp, "elapsed_minutes": elapsed_minutes, "results": {}}
+                runs.append(entry)
+            entry["results"][provider] = provider_result
+            entry["elapsed_minutes"] = elapsed_minutes
+            with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
+                json.dump(runs, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
     try:
@@ -3923,8 +3937,9 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                     use_container_width=True,
                 ):
                     try:
-                        with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
-                            json.dump([], f)
+                        with _AUTO_COMPARISON_FILE_LOCK:
+                            with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
+                                json.dump([], f)
                     except Exception:
                         pass
                     try:
@@ -4026,12 +4041,13 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
                     # — the Sheet already has all 4 provider rows and
                     # doesn't need touching again.
                     try:
-                        _runs_final = load_auto_comparisons()
-                        _entry_final = next((r for r in _runs_final if r.get("timestamp") == _run_ts), None)
-                        if _entry_final is not None:
-                            _entry_final["elapsed_minutes"] = _elapsed_min
-                            with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
-                                json.dump(_runs_final, f, ensure_ascii=False, indent=2)
+                        with _AUTO_COMPARISON_FILE_LOCK:
+                            _runs_final = load_auto_comparisons()
+                            _entry_final = next((r for r in _runs_final if r.get("timestamp") == _run_ts), None)
+                            if _entry_final is not None:
+                                _entry_final["elapsed_minutes"] = _elapsed_min
+                                with open(_AUTO_COMPARISON_FILE_PATH, "w", encoding="utf-8") as f:
+                                    json.dump(_runs_final, f, ensure_ascii=False, indent=2)
                     except Exception:
                         pass
                     st.session_state["_last_auto_comparison"] = _record
