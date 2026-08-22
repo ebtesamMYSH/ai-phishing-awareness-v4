@@ -757,32 +757,23 @@ def check_medical_relevance(result):
 # shows up with a low json_rate / high error_rate / more local fallback
 # — the run itself can never crash or stall on one bad provider.
 #
-# SCALABILITY NOTE: providers themselves are still processed one after
-# another (not simultaneously) — st.session_state["ai_provider"] is
-# shared, global, mutable state that every call_ai() invocation reads
-# to know which provider to hit, so running two DIFFERENT providers'
-# calls truly concurrently would let one provider's calls race and
-# silently land on the other provider's endpoint. Making that safe
-# would mean threading an explicit `provider` argument through
-# call_ai() and every function that calls it (generate_email,
-# generate_assess_email, and their whole AI-overlay chain) — a large,
-# invasive refactor with real regression risk for a rewrite already
-# tested extensively elsewhere. Instead, the ~100 individual generation
-# calls WITHIN one provider's 50-cycle turn (where ai_provider is
-# constant and never changes mid-flight) run concurrently via a thread
-# pool. This is the same "reduce total runtime through concurrent
-# execution" principle the benchmarking-framework literature describes,
-# applied at the safe granularity for this app's architecture.
+# SCALABILITY NOTE (UPDATED 2026-08-22): providers now run CONCURRENTLY,
+# one thread per provider, each running the SAME full 50-cycle plan at
+# the same time — total wall-clock time is roughly the slowest single
+# provider's turn instead of the sum of all four. This was previously
+# avoided because st.session_state["ai_provider"] was shared, global,
+# mutable state that every call_ai() invocation read to know which
+# provider to hit — running providers concurrently would have raced
+# multiple threads over that one variable. That race is now eliminated:
+# an explicit `provider` argument is threaded through call_ai() and
+# every function that calls it (generate_email, generate_assess_email,
+# and their whole AI-overlay chain), so each provider's thread is fully
+# self-contained. The ~100 individual generation calls WITHIN one
+# provider's 50-cycle turn still run concurrently via their own inner
+# thread pool exactly as before — this is just an added OUTER layer of
+# concurrency across providers, not a replacement for the inner one.
 # =============================================================
 _COMPARISON_PROVIDERS = ["groq", "anthropic", "openai", "gemini"]
-# Groq's own single-worker, 13s-paced turn is the single biggest time cost
-# in the automated comparison (see run_full_auto_comparison's docstring).
-# Capped at 15 cycles (30 calls) regardless of whether other providers are
-# also selected: 30 x 13s pacing = ~6.5 min minimum, comfortably under any
-# platform/connection ceiling even with several retries added on top —
-# versus 50 cycles' ~22+ minute minimum that was landing right at the
-# ~30-minute mark where runs were observed getting cut off.
-_GROQ_MAX_CYCLES = 15
 _COMPARISON_WEIGHTS = {
     "difficulty_score": 0.25,
     "quality_arabic_avg": 0.20,   # average of quality_score and arabic_score
@@ -844,41 +835,50 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
     before ever reaching a final save, silently losing every provider's
     results including ones that had already finished cleanly. Never
     raises: any per-email failure is caught and counted toward that
-    provider's error_rate instead of stopping the run. Within each
-    provider's turn, generations run concurrently (see module note
-    above) for a real speedup; providers themselves stay sequential for
-    correctness.
+    provider's error_rate instead of stopping the run. Providers now run
+    CONCURRENTLY (one thread per provider, each with its own inner
+    thread pool for that provider's ~100 individual generation calls —
+    see the module-level SCALABILITY NOTE above), so total wall-clock
+    time is roughly the slowest single provider's turn rather than the
+    sum of every provider's turn.
 
-    `providers`: which provider keys to actually run, in order — defaults
-    to all of _COMPARISON_PROVIDERS. When Groq is the ONLY selected
-    provider, its plan is automatically trimmed to the first 10 cycles
-    instead of the full 50: Groq's documented 8,000 TPM rate limit on
-    openai/gpt-oss-120b means even with proactive pacing, a full 50-cycle
-    Groq turn can take 8+ hours end to end — impractical to run on its
-    own. Ten cycles still gives a meaningful sample (~20 generations) in
-    well under half an hour. This trimming does NOT apply when Groq runs
-    alongside other providers, since its own turn happening in parallel
-    with faster providers' turns doesn't block the whole comparison the
-    same way."""
+    `providers`: which provider keys to actually run — defaults to all of
+    _COMPARISON_PROVIDERS. When Groq is the ONLY selected provider, its
+    plan is trimmed to the first 10 cycles instead of the full 50 — a
+    deliberate quick informal test, since running Groq completely alone
+    isn't part of a fairness comparison against other providers. When
+    Groq runs alongside others, every provider (including Groq) uses the
+    exact same full 50-cycle plan — no trimming, no fairness trade-off;
+    Groq's turn simply takes longer in real time (its documented 8,000
+    TPM rate limit on openai/gpt-oss-120b means real time floor of ~22
+    minutes for 50 cycles), but that no longer adds to the other three
+    providers' time since they're all running at once."""
     results = {}
     _selected_providers = providers if providers else list(_COMPARISON_PROVIDERS)
     _groq_solo = (_selected_providers == ["groq"])
     original_provider = st.session_state.get("ai_provider")
-    # UPDATED 2026-08-22: Groq is now capped at _GROQ_MAX_CYCLES regardless
-    # of whether it's running solo or alongside other providers. Providers
-    # run SEQUENTIALLY (this for-loop), never in parallel with each other —
-    # so Groq's own single-worker, 13s-paced bottleneck costs the same
-    # ~22+ minute minimum whether or not other providers are also
-    # selected. Confirmed live: a full 4-provider run with Groq at 50
-    # cycles was landing right around the ~30-minute mark and getting cut
-    # off (counter resetting to zero) before Groq's turn — and often
-    # before the run — could finish, almost certainly a platform/
-    # connection-level ceiling on one continuous long-running script, not
-    # a Groq outage (groqstatus.com shows fully operational). Capping
-    # Groq's turn to _GROQ_MAX_CYCLES keeps its worst case comfortably
-    # under 10 minutes even with several retries, leaving plenty of
-    # headroom for the other 3 providers' sequential turns afterward.
-    _plan_lengths = {p: (min(_GROQ_MAX_CYCLES, len(ROTATION_PLAN)) if p == "groq" else len(ROTATION_PLAN)) for p in _selected_providers}
+    # UPDATED 2026-08-22: providers now run CONCURRENTLY (one thread per
+    # provider) instead of one after another. This was previously ruled
+    # out (see the SCALABILITY NOTE above this function) because every
+    # generate_email/generate_assess_email call read the active provider
+    # from the single shared st.session_state["ai_provider"] — running
+    # providers in parallel would have raced multiple threads over that
+    # one variable, silently sending some calls to the wrong provider.
+    # That's now fixed: an explicit `provider=` argument is threaded all
+    # the way through generate_email/generate_assess_email → their
+    # _ai_full_*/_ai_overlay_content chain → call_ai, so each provider's
+    # thread is fully self-contained and never touches session_state for
+    # this. With that race eliminated, every provider can now run its
+    # full 50-cycle turn on its own thread at the same time — total
+    # wall-clock time becomes roughly the SLOWEST provider's turn (in
+    # practice Groq's, due to its tight per-minute rate limit) instead of
+    # the sum of all four turns, while every provider still runs the
+    # exact same 50-cycle plan — no fairness trade-off.
+    #
+    # Groq is trimmed to 10 cycles ONLY when it's the sole selected
+    # provider (a deliberate quick informal test, not part of a fairness
+    # comparison) — see the docstring above.
+    _plan_lengths = {p: (10 if (_groq_solo and p == "groq") else len(ROTATION_PLAN)) for p in _selected_providers}
     total_steps = sum(_plan_lengths.values()) * 2
     step_state = {"n": 0}
     step_lock = threading.Lock()
@@ -890,20 +890,22 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
     # that needs session_state: https://docs.streamlit.io/develop/concepts/design/multithreading
     _main_ctx = get_script_run_ctx() if get_script_run_ctx else None
 
-    for prov in _selected_providers:
+    def _run_provider_turn(prov):
+        if add_script_run_ctx and _main_ctx:
+            try:
+                add_script_run_ctx(threading.current_thread(), _main_ctx)
+            except Exception:
+                pass
         if prov == "groq":
             _groq_circuit_reset()
         _prov_plan = ROTATION_PLAN[:_plan_lengths[prov]]
-        st.session_state["ai_provider"] = prov
         scores = {"difficulty_score": [], "arabic_score": [], "quality_score": [], "medical_score": []}
         speeds = []; json_ok = 0; json_fail = 0; errors = 0; calls = 0; hashes = set()
         # Per-difficulty AI-vs-local tally for THIS provider's turn. Built
-        # up here in the main thread only (never inside a worker thread),
-        # from the "_gen_bucket"/"_gen_source" tags _tag_source() writes
-        # onto each returned result dict — a dict crossing back from a
-        # ThreadPoolExecutor future is always safe to read; a direct
-        # st.session_state write made *inside* the worker thread was the
-        # actual problem this replaces.
+        # up here — safe even with multiple providers running concurrently,
+        # since each provider's _run_provider_turn call has its OWN local
+        # usage_tally/scores/etc. (function-local variables, one call
+        # frame per provider thread, never shared between them).
         usage_tally = {
             "easy": {"api": 0, "local": 0}, "medium": {"api": 0, "local": 0}, "hard": {"api": 0, "local": 0},
             "legitimate_easy": {"api": 0, "local": 0}, "legitimate_medium": {"api": 0, "local": 0}, "legitimate_hard": {"api": 0, "local": 0},
@@ -923,7 +925,7 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
                     # The learning phase is inherently phishing-focused —
                     # matches the real app (it teaches trainees to spot
                     # phishing signs), so this stays as-is.
-                    r = generate_email(role_key, 0, lang, diff)
+                    r = generate_email(role_key, 0, lang, diff, provider=prov)
                     is_phishing = True
                 else:
                     # The assessment phase mixes phishing AND legitimate
@@ -933,7 +935,7 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
                     # "Legitimate email AI reliance" boxes get real data
                     # too instead of staying permanently empty.
                     is_phishing = (plan["cycle"] % 2 == 1)
-                    r = generate_assess_email(role_key, 0, is_phishing, lang, diff)
+                    r = generate_assess_email(role_key, 0, is_phishing, lang, diff, provider=prov)
                 _bucket = r.get("_gen_bucket") if isinstance(r, dict) else None
                 _source = r.get("_gen_source") if isinstance(r, dict) else None
                 return ("ok", r, time.time() - t0, diff, lang, _bucket, _source, is_phishing)
@@ -949,27 +951,32 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
                 with step_lock:
                     step_state["n"] += 1
                     _cur_step = step_state["n"]
+                # Locked: progress_callback/usage_callback ultimately touch
+                # Streamlit UI elements (st.progress/st.empty) that are not
+                # safe to write to from multiple threads at once now that
+                # several providers' _run_provider_turn calls can reach
+                # this point concurrently — the lock just serializes the
+                # actual UI write, it doesn't block the network calls
+                # themselves (those already finished before this point).
                 if progress_callback:
-                    try:
-                        progress_callback(prov, _plan["cycle"], _cur_step, total_steps)
-                    except Exception:
-                        pass
+                    with step_lock:
+                        try:
+                            progress_callback(prov, _plan["cycle"], _cur_step, total_steps)
+                        except Exception:
+                            pass
                 try:
                     status, r, dt, diff, lang, bucket, source, is_phishing = _future.result()
                 except Exception:
                     status, r, dt, diff, lang, bucket, source, is_phishing = "error", None, 0.0, None, None, None, None, True
                 calls += 1
-                # AI-vs-local tally + live callback — safe here: this whole
-                # loop body runs in the MAIN thread (as_completed yields
-                # control back to the thread that called it), never inside
-                # a worker.
                 if bucket in usage_tally and source in ("api", "local"):
                     usage_tally[bucket][source] += 1
                     if usage_callback:
-                        try:
-                            usage_callback(prov, bucket, source == "api")
-                        except Exception:
-                            pass
+                        with step_lock:
+                            try:
+                                usage_callback(prov, bucket, source == "api")
+                            except Exception:
+                                pass
                 if status == "ok" and isinstance(r, dict) and str(r.get("body", "")).strip() and "error" not in r:
                     speeds.append(dt)
                     json_ok += 1
@@ -1029,7 +1036,7 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
         error_rate = round(errors / calls * 100) if calls else None
         diversity_n = len(hashes)
 
-        results[prov] = {
+        prov_result = {
             "difficulty_score": _avg("difficulty_score"),
             "arabic_score": _avg("arabic_score"),
             "quality_score": _avg("quality_score"),
@@ -1043,12 +1050,32 @@ def run_full_auto_comparison(progress_callback=None, usage_callback=None, provid
             "ai_usage": usage_tally,
         }
         if provider_done_callback:
-            try:
-                provider_done_callback(prov, results[prov])
-            except Exception:
-                pass
+            with step_lock:
+                try:
+                    provider_done_callback(prov, prov_result)
+                except Exception:
+                    pass
+        return prov, prov_result
 
-    st.session_state["ai_provider"] = original_provider
+    # Dispatch every selected provider's ENTIRE turn concurrently — one
+    # outer thread per provider, each internally still using its own
+    # per-provider concurrency limit (_COMPARISON_MAX_WORKERS_BY_PROVIDER)
+    # for the ~100 individual generation calls within that turn, exactly
+    # as before. max_workers = number of providers since there are at
+    # most 4 — no benefit to capping lower here.
+    with _cf.ThreadPoolExecutor(max_workers=max(1, len(_selected_providers))) as _outer_executor:
+        _outer_futures = {_outer_executor.submit(_run_provider_turn, prov): prov for prov in _selected_providers}
+        for _outer_future in _cf.as_completed(_outer_futures):
+            try:
+                prov, prov_result = _outer_future.result()
+                results[prov] = prov_result
+            except Exception as e:
+                _failed_prov = _outer_futures[_outer_future]
+                try: _store_debug("provider_turn_failed", f"{_failed_prov}: {e}")
+                except Exception: pass
+
+    if original_provider is not None:
+        st.session_state["ai_provider"] = original_provider
     return results
 
 
@@ -3794,25 +3821,29 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             _groq_selected = ("groq" in _selected_providers)
             _groq_solo_selected = (_selected_providers == ["groq"])
             _n_sel = len(_selected_providers)
-            _n_others = _n_sel - (1 if _groq_selected else 0)
             if _n_sel == 0:
                 _btn_label_ar = "▶️ اختاري مزوّد واحد على الأقل"
                 _btn_label_en = "▶️ Select at least one provider"
             elif _groq_solo_selected:
-                _btn_label_ar = f"▶️ ابدأ المقارنة (Groq × {_GROQ_MAX_CYCLES} دورة)"
-                _btn_label_en = f"▶️ Start Comparison (Groq × {_GROQ_MAX_CYCLES} cycles)"
-            elif _groq_selected:
-                _btn_label_ar = f"▶️ ابدأ المقارنة (Groq × {_GROQ_MAX_CYCLES} دورة + {_n_others} مزوّد × 50 دورة)"
-                _btn_label_en = f"▶️ Start Comparison (Groq × {_GROQ_MAX_CYCLES} cycles + {_n_others} provider{'s' if _n_others != 1 else ''} × 50 cycles)"
+                _btn_label_ar = "▶️ ابدأ المقارنة (Groq × 10 دورات — اختبار سريع)"
+                _btn_label_en = "▶️ Start Comparison (Groq × 10 cycles — quick test)"
             else:
-                _btn_label_ar = f"▶️ ابدأ المقارنة ({_n_sel} مزوّد × 50 دورة)"
-                _btn_label_en = f"▶️ Start Comparison ({_n_sel} provider{'s' if _n_sel != 1 else ''} × 50 cycles)"
-            if _groq_selected:
+                _btn_label_ar = f"▶️ ابدأ المقارنة ({_n_sel} مزوّد × 50 دورة، بالتوازي)"
+                _btn_label_en = f"▶️ Start Comparison ({_n_sel} providers × 50 cycles, in parallel)"
+            if _groq_selected and not _groq_solo_selected:
                 st.markdown(
                     f'<div dir="{_dir}" style="text-align:{_align};font-size:.78rem;color:#FCD34D;margin-bottom:.5rem;">'
-                    + (f"⚠️ دور Groq مخفّض دائمًا لـ{_GROQ_MAX_CYCLES} دورة (بدل 50) بسبب حد الاستخدام الضيق عنده — يشتغل بمعدّل واحد بالمرة، فحتى مع الباقي، دوره لحاله ياخذ وقت. لو فشل عدة مرات متتالية، يتوقف تلقائيًا عن المحاولة ويكمل بالمحتوى المحلي البديل عشان ما يضيّع وقت التشغيلة كاملة."
+                    + ("⚠️ كل المزودين يشتغلون بنفس الـ50 دورة بالضبط — مقارنة عادلة 100%. المزودين يشتغلون بالتوازي (مو بالتتابع)، فالوقت الكلي = وقت أطول واحد بس (عادة Groq، بسبب حد استخدامه الضيق يخليه ياخذ ~20-22 دقيقة)، مو مجموع الأربعة. لو Groq فشل عدة مرات متتالية، يتوقف تلقائيًا ويكمل بالمحتوى المحلي البديل بدل ما يضيّع الوقت."
                        if _is_ar else
-                       f"⚠️ Groq's turn is always capped at {_GROQ_MAX_CYCLES} cycles (from 50) because of its tight rate limit — it runs one call at a time, so even alongside others its own turn takes real time. If it fails repeatedly in a row, it auto-stops trying and falls back to local content so it doesn't burn the whole run's time budget.")
+                       "⚠️ Every provider runs the exact same 50 cycles — a fully fair comparison. Providers run in parallel (not sequentially), so total time ≈ the slowest one alone (usually Groq, ~20-22 min due to its tight rate limit), not the sum of all four. If Groq fails repeatedly in a row, it auto-stops trying and falls back to local content instead of burning time.")
+                    + '</div>', unsafe_allow_html=True
+                )
+            elif _groq_solo_selected:
+                st.markdown(
+                    f'<div dir="{_dir}" style="text-align:{_align};font-size:.78rem;color:#FCD34D;margin-bottom:.5rem;">'
+                    + ("⚠️ Groq وحده محدّد — هذا اختبار سريع غير رسمي (10 دورات بس)، مو جزء من مقارنة عادلة. اختاري مزودين تانيين معه للمقارنة الكاملة العادلة (50 دورة للجميع)."
+                       if _is_ar else
+                       "⚠️ Groq alone is a quick informal test (10 cycles only), not part of a fair comparison. Select other providers alongside it for the full, fair 50-cycle comparison.")
                     + '</div>', unsafe_allow_html=True
                 )
             _comp_col1, _comp_col2 = st.columns([3, 1])
@@ -4707,8 +4738,9 @@ def _pace_groq_call():
         _GROQ_PACING_STATE["last_call_ts"] = _time_patch.time()
 
 
-def call_ai(prompt, max_tokens=1600):
-    provider = st.session_state.get("ai_provider", "groq")
+def call_ai(prompt, max_tokens=1600, provider=None):
+    if provider is None:
+        provider = st.session_state.get("ai_provider", "groq")
     # Circuit breaker check: if Groq has failed _GROQ_CIRCUIT_THRESHOLD
     # times in a row (post-retries) earlier in THIS run, skip the network
     # call entirely — fall straight to the error path so the caller's
@@ -8153,7 +8185,7 @@ def _text_leaks_recipient_name(text):
     return False
 
 
-def _ai_overlay_content(local_result, ar, is_phishing=True):
+def _ai_overlay_content(local_result, ar, is_phishing=True, provider=None):
 
     """Attempt an AI-authored rewrite of local_result's wording.
     Returns a new result dict on success, or None on any failure —
@@ -8224,7 +8256,7 @@ CONTENT: the message-content paragraphs must contain each of the following exact
 {frag_lines}
 Rules: body length within roughly 20% of the reference's word count; do not add any link, QR marker, or attachment reference other than the ones already listed above; do not mention "phishing" or "training" inside subject/body.{rules_extra}{ind_rules}{no_name_rule}{hospital_context_rule}"""
     try:
-        data = call_ai(instruction, max_tokens=1300)
+        data = call_ai(instruction, max_tokens=1300, provider=provider)
         if not isinstance(data, dict) or "error" in data:
             return None
         text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "")
@@ -8308,11 +8340,11 @@ def _tag_source(result, bucket, used_api):
     return result
 
 
-def _ai_full_easy(role, index, language, phase):
+def _ai_full_easy(role, index, language, phase, provider=None):
     ar = language == "Arabic"
     plan = _v33_plan(role, index, language, "easy", phase, True)
     local = _v33_easy_phishing(plan, role, index)
-    overlay = _ai_overlay_content(local, ar, True)
+    overlay = _ai_overlay_content(local, ar, True, provider=provider)
     if overlay:
         try:
             if _v33_validate(overlay, plan):
@@ -8322,10 +8354,10 @@ def _ai_full_easy(role, index, language, phase):
     return _tag_source(local, "easy", False)
 
 
-def _ai_full_medium(role, index, language, phase):
+def _ai_full_medium(role, index, language, phase, provider=None):
     ar = language == "Arabic"
     local = _v40_generate(role, index, language, "medium", True, phase == "assess")
-    overlay = _ai_overlay_content(local, ar, True)
+    overlay = _ai_overlay_content(local, ar, True, provider=provider)
     if overlay:
         try:
             if _v40_validate(overlay):
@@ -8335,12 +8367,12 @@ def _ai_full_medium(role, index, language, phase):
     return _tag_source(local, "medium", False)
 
 
-def _ai_full_hard(role, index, language, phase):
+def _ai_full_hard(role, index, language, phase, provider=None):
     ar = language == "Arabic"
     local = _v33_generate(role, index, language, "hard", True, phase == "assess")
     plan = local.get("scenario_meta") if isinstance(local.get("scenario_meta"), dict) else None
     if plan is not None:
-        overlay = _ai_overlay_content(local, ar, True)
+        overlay = _ai_overlay_content(local, ar, True, provider=provider)
         if overlay:
             try:
                 if _v31_validate(overlay, plan):
@@ -8350,14 +8382,14 @@ def _ai_full_hard(role, index, language, phase):
     return _tag_source(local, "hard", False)
 
 
-def _ai_full_legitimate(role, index, language, difficulty, phase):
+def _ai_full_legitimate(role, index, language, difficulty, phase, provider=None):
     ar = language == "Arabic"
     diff = str(difficulty or "medium").lower()
     if diff not in ("easy", "medium", "hard"):
         diff = "medium"
     plan = _v33_plan(role, index, language, diff, phase, False)
     local = _v33_legitimate(plan, role, index)
-    overlay = _ai_overlay_content(local, ar, False)
+    overlay = _ai_overlay_content(local, ar, False, provider=provider)
     if overlay:
         try:
             if _v33_validate(overlay, plan):
@@ -8367,30 +8399,30 @@ def _ai_full_legitimate(role, index, language, difficulty, phase):
     return _tag_source(local, f"legitimate_{diff}", False)
 
 
-def generate_email_v42(role, index, language, difficulty="medium"):
+def generate_email_v42(role, index, language, difficulty="medium", provider=None):
     diff = str(difficulty or "medium").lower()
     try:
         if diff == "easy":
-            return _ai_full_easy(role, index, language, "learn")
+            return _ai_full_easy(role, index, language, "learn", provider=provider)
         if diff == "hard":
-            return _ai_full_hard(role, index, language, "learn")
-        return _ai_full_medium(role, index, language, "learn")
+            return _ai_full_hard(role, index, language, "learn", provider=provider)
+        return _ai_full_medium(role, index, language, "learn", provider=provider)
     except Exception as e:
         try: _store_debug("generate_email_v42", str(e))
         except Exception: pass
         return _v40_generate(role, index, language, difficulty, True, False)
 
 
-def generate_assess_email_v42(role, index, is_phishing, language, difficulty="medium"):
+def generate_assess_email_v42(role, index, is_phishing, language, difficulty="medium", provider=None):
     diff = str(difficulty or "medium").lower()
     try:
         if not is_phishing:
-            return _ai_full_legitimate(role, index, language, diff, "assess")
+            return _ai_full_legitimate(role, index, language, diff, "assess", provider=provider)
         if diff == "easy":
-            return _ai_full_easy(role, index, language, "assess")
+            return _ai_full_easy(role, index, language, "assess", provider=provider)
         if diff == "hard":
-            return _ai_full_hard(role, index, language, "assess")
-        return _ai_full_medium(role, index, language, "assess")
+            return _ai_full_hard(role, index, language, "assess", provider=provider)
+        return _ai_full_medium(role, index, language, "assess", provider=provider)
     except Exception as e:
         try: _store_debug("generate_assess_email_v42", str(e))
         except Exception: pass
@@ -8400,6 +8432,12 @@ def generate_assess_email_v42(role, index, is_phishing, language, difficulty="me
 # generate_email / generate_assess_email above (v40) remain fully intact
 # and are used internally as the guaranteed local base + the ultimate
 # fallback. The app's call sites now route through the v42 wrappers.
+# Both accept an optional explicit `provider=` override — used by the
+# automated 4-provider comparison (see run_full_auto_comparison) so each
+# provider's turn can run in its own thread safely, without racing on the
+# shared st.session_state["ai_provider"]. Every other call site (the real
+# learning/assessment flow) omits it and keeps reading the admin's active
+# provider from session_state exactly as before.
 generate_email = generate_email_v42
 generate_assess_email = generate_assess_email_v42
 
