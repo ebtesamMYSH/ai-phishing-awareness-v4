@@ -4813,7 +4813,23 @@ def _compact_prompt_for_slow_provider(prompt):
 # even though Groq's own turn still takes real wall-clock time either way.
 _GROQ_PACING_LOCK = threading.Lock()
 _GROQ_PACING_STATE = {"last_call_ts": 0.0}
-_GROQ_MIN_GAP_SECONDS = 13.0  # ~4.6 calls/min, just under the ~4.7/min the 8,000 TPM ceiling allows
+_GROQ_MIN_GAP_SECONDS = 1.0
+# UPDATED 2026-08-24: this was 13.0s, calculated for Groq's OLD Free-tier
+# limit (8,000 TPM) — appropriate back when that was the account's actual
+# ceiling. The account was upgraded to the Developer (Pay-as-you-go) tier
+# much earlier in this project (250,000 TPM, 1K RPM on openai/gpt-oss-120b —
+# confirmed on console.groq.com/settings/limits), but this pacing constant
+# was never revisited to match, so every comparison run kept pacing Groq
+# ~30x slower than the account can actually sustain. That's the real reason
+# Groq's turn (single-worker, sequential within its own turn) kept taking
+# 20-26 minutes and landing right at whatever platform/connection time
+# ceiling was cutting runs off. At ~1,700 tokens/call average, 250,000 TPM
+# supports roughly 147 calls/min — a 1.0s gap (60 calls/min) stays
+# comfortably under that with margin, versus the ~4.6 calls/min the old
+# 13.0s gap allowed. This does not change what gets generated, the prompts,
+# the model, or how anything is scored — only how many seconds pass between
+# consecutive Groq network calls — so it has no effect on the validity of
+# comparisons already run and saved under the old pacing.
 
 # =============================================================
 # GROQ CIRCUIT BREAKER — added 2026-08-22
