@@ -4924,7 +4924,25 @@ def call_ai(prompt, max_tokens=1600, provider=None):
         try:
             data = _BASE_CALL_AI_FINAL(
                 use_prompt,
-                max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens),
+                # UPDATED 2026-08-24: openai now gets the same 3500-token floor
+                # as gemini/anthropic — NOT because it needs more OUTPUT space
+                # (a reasoning model's actual JSON output is short, same as
+                # before), but because gpt-5.6-sol's hidden reasoning tokens
+                # are deducted from this SAME budget before it ever writes the
+                # answer. A tight budget lets reasoning consume it entirely,
+                # leaving zero tokens for the actual reply — the API still
+                # returns a normal 200 response, but the message content is
+                # empty, which our code then fails to parse as JSON
+                # ("Cannot parse JSON: char 0"). This is a documented,
+                # widely-reported behavior of OpenAI's reasoning-model family
+                # (GPT-5.x/o-series), not specific to this app. Giving the
+                # model headroom for both reasoning + the actual JSON reply
+                # fixes it at the source, instead of relying on retries to
+                # paper over a budget that was too tight to begin with. This
+                # changes nothing about the prompt, the model, or how output
+                # is scored — only how much room the model has to finish
+                # thinking before it has to answer.
+                max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic", "openai"} else max_tokens),
                 provider=provider,
             )
         except Exception as e:
@@ -4954,7 +4972,25 @@ def call_ai(prompt, max_tokens=1600, provider=None):
         try:
             data = _BASE_CALL_AI_FINAL(
                 use_prompt,
-                max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic"} else max_tokens),
+                # UPDATED 2026-08-24: openai now gets the same 3500-token floor
+                # as gemini/anthropic — NOT because it needs more OUTPUT space
+                # (a reasoning model's actual JSON output is short, same as
+                # before), but because gpt-5.6-sol's hidden reasoning tokens
+                # are deducted from this SAME budget before it ever writes the
+                # answer. A tight budget lets reasoning consume it entirely,
+                # leaving zero tokens for the actual reply — the API still
+                # returns a normal 200 response, but the message content is
+                # empty, which our code then fails to parse as JSON
+                # ("Cannot parse JSON: char 0"). This is a documented,
+                # widely-reported behavior of OpenAI's reasoning-model family
+                # (GPT-5.x/o-series), not specific to this app. Giving the
+                # model headroom for both reasoning + the actual JSON reply
+                # fixes it at the source, instead of relying on retries to
+                # paper over a budget that was too tight to begin with. This
+                # changes nothing about the prompt, the model, or how output
+                # is scored — only how much room the model has to finish
+                # thinking before it has to answer.
+                max_tokens=max(max_tokens, 3500 if provider in {"gemini", "anthropic", "openai"} else max_tokens),
                 provider=provider,
             )
         except Exception as e:
