@@ -2612,7 +2612,7 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
 @media(max-width:950px){{.hero-grid{{grid-template-columns:1fr;}}.features-grid{{grid-template-columns:1fr;}}.footer-bar{{flex-direction:column;gap:1rem;text-align:center;}}}}
 .hero-card{{position:relative;overflow:hidden;}}
 .hero-grid{{position:relative;z-index:1;}}
-.hero-doctor-bg{{position:absolute;top:0;left:0;right:0;bottom:0;background-image:url(data:image/jpeg;base64,{DOCTOR_IMG_B64});background-size:cover;background-position:center;opacity:.5;-webkit-mask-image:radial-gradient(ellipse 65% 85% at center,transparent 25%,black 78%);mask-image:radial-gradient(ellipse 65% 85% at center,transparent 25%,black 78%);pointer-events:none;z-index:0;}}
+.hero-doctor-bg{{position:absolute;top:0;left:0;right:0;bottom:0;background-image:url(data:image/jpeg;base64,{DOCTOR_IMG_B64});background-size:cover;background-position:center 70%;opacity:.62;-webkit-mask-image:radial-gradient(ellipse 40% 46% at 52% 46%,transparent 10%,black 62%);mask-image:radial-gradient(ellipse 40% 46% at 52% 46%,transparent 10%,black 62%);pointer-events:none;z-index:0;}}
 @media(max-width:950px){{.hero-doctor-bg{{display:none;}}}}
 </style>""", unsafe_allow_html=True)
 
