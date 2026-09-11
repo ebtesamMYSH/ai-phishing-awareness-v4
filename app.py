@@ -135,7 +135,7 @@ st.set_page_config(
 _PROVIDER_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "provider_config.json")
 _VALID_PROVIDERS = {"groq", "anthropic", "openai", "gemini"}
 
-def load_persistent_provider(default="openai"):
+def load_persistent_provider(default="gemini"):
     try:
         with open(_PROVIDER_CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -1267,7 +1267,7 @@ def evaluate_and_log_auto_scores(result, difficulty, language, is_phishing=True)
     next saved manual rating can snapshot this cycle's averages."""
     if not isinstance(result, dict) or "error" in result:
         return
-    provider = st.session_state.get("ai_provider", "groq")
+    provider = st.session_state.get("ai_provider", "gemini")
     is_ar = (language == "Arabic")
     rec = {
         "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
@@ -1315,7 +1315,7 @@ def snapshot_and_clear_pending_cycle(provider, language):
 for k, v in [("language","English"),("page","home"),("role",""),
               ("example_index",0),("emails",{}),("difficulty","medium"),
               ("user_name",""),("user_email",""),
-              ("ai_provider", load_persistent_provider("openai")),
+              ("ai_provider", load_persistent_provider("gemini")),
               ("admin_authenticated",False),
               ("metrics", load_metrics_file()),  # {provider: {speed:[], json_ok:int, json_fail:int, errors:int, calls:int, hashes:[]}} — loaded from disk so it survives refresh
               ("manual_ratings",{}),  # legacy in-session structure, kept for backward compatibility
@@ -1791,7 +1791,7 @@ def call_ai(prompt, max_tokens=1600, provider=None):
     # not given, for any other caller still using the old calling
     # convention.
     if provider is None:
-        provider = st.session_state.get("ai_provider", "groq")
+        provider = st.session_state.get("ai_provider", "gemini")
     system_prompt = get_system_prompt()
 
     def get_secret(key):
@@ -2834,7 +2834,7 @@ button[kind="primary"]:hover,button[kind="primary"]:focus{{background:linear-gra
                 "anthropic": "🟣 Claude  (claude-sonnet-4-6) — Best writing quality",
                 "gemini":    "🔵 Gemini  (2.5 Flash) — Fastest growing",
             }
-            cur_provider = st.session_state.get("ai_provider", "openai")
+            cur_provider = st.session_state.get("ai_provider", "gemini")
             prov_cols = st.columns(2)
             prov_items = list(provider_options.items())
             for i, (pk, plbl) in enumerate(prov_items):
@@ -3558,7 +3558,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
 
     tab1, tab2, tab3 = st.tabs([T('tab_provider'), T('tab_score'), "🐞 Debug Log"])
 
-    _persist_pk = st.session_state.get("ai_provider", load_persistent_provider("openai"))
+    _persist_pk = st.session_state.get("ai_provider", load_persistent_provider("gemini"))
     _persist_labels = {
         "groq":      "🟠 Groq (GPT-OSS-120b)",
         "anthropic": "🟣 Claude (claude-sonnet-4-6)",
@@ -3586,7 +3586,7 @@ div[data-baseweb="select"] > div{{background:rgba(15,23,42,.78)!important;border
             "gemini":    {"label": "🔵 Gemini — 2.5 Flash",          "secret": "GEMINI_API_KEY",    "color": "#3B82F6"},
         }
 
-        cur = st.session_state.get("ai_provider", "openai")
+        cur = st.session_state.get("ai_provider", "gemini")
 
         st.markdown(f'<div dir="{_dir}" style="font-weight:800;color:#D1FAE5;margin-bottom:.8rem;">{T("select_provider")}</div>', unsafe_allow_html=True)
         cols = st.columns(4)
@@ -4898,7 +4898,7 @@ def _pace_groq_call():
 
 def call_ai(prompt, max_tokens=1600, provider=None):
     if provider is None:
-        provider = st.session_state.get("ai_provider", "groq")
+        provider = st.session_state.get("ai_provider", "gemini")
     # Circuit breaker check: if Groq has failed _GROQ_CIRCUIT_THRESHOLD
     # times in a row (post-retries) earlier in THIS run, skip the network
     # call entirely — fall straight to the error path so the caller's
@@ -7844,7 +7844,7 @@ def _v40_api_copy(plan, recipient, domain, link, attachment, evidence_phrase, wo
     if recent_list:
         sample = recent_list[-6:]
         quoted = "; ".join(f"\"{s}\"" for s in sample)
-        avoid_rule = f"\nDIVERSITY RULE: Do NOT reuse the opening sentence, phrasing, or structure of any of these recently generated emails: {quoted}. Write a genuinely different opening idea and sentence structure this time."
+        avoid_rule = f"\nDIVERSITY RULE — CRITICAL: Do NOT reuse the opening sentence, phrasing, urgency trigger, or narrative structure of any of these recently generated emails: {quoted}. You MUST write a completely different scenario — change the department, the event type, and the tone. Variety is essential."
     hospital_context_rule = ""
     if plan.get("role_type") != "clinical":
         hospital_context_rule = (
@@ -8439,7 +8439,16 @@ def _ai_overlay_content(local_result, ar, is_phishing=True, provider=None):
                       "title and a one-sentence description explaining that specific red flag naturally in context.")
     closing_rule = (f'\n- The VERY LAST paragraph must be exactly this text block and nothing else (it may itself span two lines, e.g. a "regards" line plus a name — keep it exactly as given): "{closing_line}"'
                      if closing_line else "")
-    instruction = f"""Rewrite the wording of a {'phishing-awareness training' if is_phishing else 'legitimate internal'} hospital email in {lang_name}, for a Saudi hospital staff member. Keep the same context and meaning as the reference below, but use genuinely fresh phrasing throughout — do not reuse generic templated sentences.
+    _recent_subjs = []
+    try:
+        _recent_subjs = st.session_state.get("_generated_subjects", [])[-8:]
+    except Exception:
+        pass
+    _subj_avoid_rule = ""
+    if _recent_subjs:
+        _sq = "; ".join(f'\"{s}\"' for s in _recent_subjs)
+        _subj_avoid_rule = f"\nSUBJECT DIVERSITY: The subject MUST be completely different from all of these recently used subjects: {_sq}. Choose a fresh, distinct subject angle."
+    instruction = f"""Rewrite the wording of a {'phishing-awareness training' if is_phishing else 'legitimate internal'} hospital email in {lang_name}, for a Saudi hospital staff member. Keep the same context and meaning as the reference below, but use genuinely fresh phrasing throughout — do not reuse generic templated sentences. Use a fresh, specific scenario angle each time — vary the department context, urgency trigger, and narrative hook.
 Reference email (for context only; do not copy its wording beyond the mandatory fragments listed below):
 ---
 {body0}
@@ -8450,7 +8459,7 @@ STRUCTURE — the "body" must be formatted as separate paragraphs divided by a B
 - Then one or more paragraphs of message content, each separated by a blank line.{closing_rule}
 CONTENT: the message-content paragraphs must contain each of the following exact fragments verbatim and unchanged, somewhere in the text (reorder and rewrite everything else around them freely):
 {frag_lines}
-Rules: body length within roughly 20% of the reference's word count; do not add any link, QR marker, or attachment reference other than the ones already listed above; do not mention "phishing" or "training" inside subject/body.{rules_extra}{ind_rules}{no_name_rule}{hospital_context_rule}"""
+Rules: body length within roughly 20% of the reference's word count; do not add any link, QR marker, or attachment reference other than the ones already listed above; do not mention "phishing" or "training" inside subject/body.{rules_extra}{ind_rules}{no_name_rule}{hospital_context_rule}{_subj_avoid_rule}"""
     try:
         data = call_ai(instruction, max_tokens=1300, provider=provider)
         if not isinstance(data, dict) or "error" in data:
@@ -8483,6 +8492,13 @@ Rules: body length within roughly 20% of the reference's word count; do not add 
         new_result = dict(local_result)
         new_result["subject"] = subject
         new_result["body"] = body
+        # Track generated subjects for session-wide diversity
+        try:
+            _subj_hist = st.session_state.setdefault("_generated_subjects", [])
+            _subj_hist.append(subject)
+            st.session_state["_generated_subjects"] = _subj_hist[-20:]
+        except Exception:
+            pass
         if is_phishing:
             why = str(obj.get("why_risky", "")).strip()
             tip = str(obj.get("learning_tip", "")).strip()
