@@ -4737,7 +4737,13 @@ _PROVIDER_RETRYABLE_PATTERNS = re.compile(
     # (single-threaded, 13s-paced, so already ~22+ min minimum).
     r"503|UNAVAILABLE|high demand|temporar|try again|rate limit|overloaded|timeout|timed out|deadline"
     r"|cannot parse json|expecting value|char 0|connection reset|connection aborted|remote end closed"
-    r"|connectionerror|readtimeout|chunkedencodingerror",
+    r"|connectionerror|readtimeout|chunkedencodingerror"
+    # BUGFIX 2026-09-13: Gemini quota/rate-limit errors use different wording
+    # from other providers. Gemini 429 responses carry status=RESOURCE_EXHAUSTED
+    # and message="Resource has been exhausted (e.g. check quota)." — none of
+    # the patterns above matched these, so quota hits were treated as permanent
+    # failures (no retry, no extended backoff). Added Gemini-specific patterns.
+    r"|RESOURCE_EXHAUSTED|resource has been exhausted|quota|too many requests",
     re.I,
 )
 # Rate-limit errors specifically need a MUCH longer wait than a transient
@@ -4751,7 +4757,12 @@ _PROVIDER_RETRYABLE_PATTERNS = re.compile(
 # time — so it fell back to local on almost every single call, which then
 # unfairly deflated that provider's "AI success rate" relative to
 # providers with a more generous or unthrottled limit.
-_RATE_LIMIT_PATTERN = re.compile(r"rate limit", re.I)
+_RATE_LIMIT_PATTERN = re.compile(
+    # Also matches Gemini quota errors (RESOURCE_EXHAUSTED / "too many requests")
+    # so they get the extended 8s→16s→20s backoff, not the generic 1.2s one.
+    r"rate limit|RESOURCE_EXHAUSTED|resource has been exhausted|too many requests|quota",
+    re.I,
+)
 
 # Keep the original network caller, then wrap it with provider-aware retry.
 _BASE_CALL_AI_FINAL = call_ai
